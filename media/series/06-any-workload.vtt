@@ -1,31 +1,31 @@
 WEBVTT
 
-00:00:00.000 --> 00:00:05.739
+00:00:00.000 --> 00:00:04.725
 The Cannabis compute client uses a general-purpose workload contract. Package your
 
-00:00:05.739 --> 00:00:11.478
+00:00:04.725 --> 00:00:09.450
 software, declare its runtime, specify inputs and outputs, and set resource
 
-00:00:11.478 --> 00:00:12.000
+00:00:09.450 --> 00:00:09.880
 limits.
 
-00:00:12.300 --> 00:00:16.590
+00:00:10.160 --> 00:00:13.946
 New adapters can extend the format. A script, a virtual machine
 
-00:00:16.590 --> 00:00:20.880
+00:00:13.946 --> 00:00:17.732
 checkpoint, a renderer, or coordinated model training can each describe what
 
-00:00:20.880 --> 00:00:21.660
+00:00:17.732 --> 00:00:18.420
 they need.
 
-00:00:21.960 --> 00:00:26.461
+00:00:18.740 --> 00:00:22.631
 Whole jobs can target one suitable node. Workloads with declared dependencies
 
-00:00:26.461 --> 00:00:30.961
+00:00:22.631 --> 00:00:26.522
 can form a task graph. Distributed programs can request compatible groups.
 
-00:00:30.961 --> 00:00:35.462
+00:00:26.522 --> 00:00:30.413
 The runtime and splitting rules preserve what your program is meant
 
-00:00:35.462 --> 00:00:36.280
+00:00:30.413 --> 00:00:31.120
 to do.

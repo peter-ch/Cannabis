@@ -1,27 +1,27 @@
 {
-  "id": "03-claims",
-  "scriptSHA256": "0782ccfeea4883cac4bb3fb9e5af3da28c5d4b6aba5da0236057f3e5561300db",
   "text": "Ninety-nine percent of the capped Cannabis coin supply is allocated to community claims. The published design gives four hundred and twenty tokens to each eligible verified person, once.\nUp to nine hundred and ninety thousand people can participate. Everyone starts from the same public opening time.\nA zero-knowledge membership proof checks eligibility while keeping the underlying membership identity out of the public claim. Enrollment will open after the verification provider and launch requirements complete review.",
   "segments": [
     {
       "start": 0.0,
-      "end": 11.36,
+      "end": 10.56,
       "text": "Ninety-nine percent of the capped Cannabis coin supply is allocated to community claims. The published design gives four hundred and twenty tokens to each eligible verified person, once."
     },
     {
-      "start": 11.66,
-      "end": 18.3,
+      "start": 10.64,
+      "end": 17.08,
       "text": "Up to nine hundred and ninety thousand people can participate. Everyone starts from the same public opening time."
     },
     {
-      "start": 18.6,
-      "end": 31.88,
+      "start": 17.38,
+      "end": 29.1,
       "text": "A zero-knowledge membership proof checks eligibility while keeping the underlying membership identity out of the public claim. Enrollment will open after the verification provider and launch requirements complete review."
     }
   ],
+  "seconds": 29.36,
   "sampleRate": 24000,
-  "seconds": 31.88,
-  "peak": 0.4921875,
+  "scriptSHA256": "0782ccfeea4883cac4bb3fb9e5af3da28c5d4b6aba5da0236057f3e5561300db",
+  "wavSHA256": "ab8e8a32d19cb77e1f8d9ac48fba820e79751bfc6692a8f3d1b8f6f19ac21ced",
+  "peak": 0.7265625,
   "clippedSamples": 0,
-  "wavSHA256": "b87278ea86447d99bf44319372621ac9c238963fcbecee25ec1d2ad36e5f480d"
+  "id": "03-claims"
 }

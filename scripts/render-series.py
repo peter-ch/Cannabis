@@ -89,17 +89,17 @@ PlayResY: {h}
 WrapStyle: 0
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Title,Arial,{heading},&H00E7F5D9,&H000000FF,&H00152312,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,8,65,65,{170 if portrait else 90},1
-Style: Label,Arial,{26 if portrait else 25},&H00D8EDCB,&H000000FF,&H00152312,&H00000000,0,0,0,0,100,100,2,0,1,2,0,8,55,55,{90 if portrait else 40},1
-Style: Caption,Arial,{caption},&H00FFFFFF,&H000000FF,&H00152312,&HAA000000,0,0,0,0,100,100,0,0,3,2,0,2,65,65,{290 if portrait else 125},1
-Style: Footer,Arial,{24 if portrait else 23},&H00D8EDCB,&H000000FF,&H00152312,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,50,50,{110 if portrait else 40},1
+Style: Title,Segoe UI,{heading},&H00E9F3F1,&H000000FF,&H00152312,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,8,65,65,{170 if portrait else 90},1
+Style: Label,Segoe UI,{26 if portrait else 25},&H0091F8D3,&H000000FF,&H00152312,&H00000000,0,0,0,0,100,100,2,0,1,2,0,8,55,55,{90 if portrait else 40},1
+Style: Caption,Segoe UI,{caption},&H00FFFFFF,&H000000FF,&H00152312,&HAA000000,0,0,0,0,100,100,0,0,3,2,0,2,65,65,{290 if portrait else 125},1
+Style: Footer,Segoe UI,{24 if portrait else 23},&H0091F8D3,&H000000FF,&H00152312,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,50,50,{110 if portrait else 40},1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 '''
     def event(a,b,style,text):return f'Dialogue: 0,{ass_time(a)},{ass_time(b)},{style},,0,0,0,,{text}\n'
     ass+=event(0,duration,'Label','CANNABIS / '+film['id'][:2])
     ass+=event(0,duration,'Title','\\N'.join(textwrap.wrap(display_text(film['title']),width=24 if portrait else 46)))
-    ass+=event(0,duration,'Footer','peter-ch.github.io/Cannabis\\NPreparing mainnet launch · Open code. Visible rules.')
+    ass+=event(0,duration,'Footer','peter-ch.github.io/Cannabis\\NPreparing mainnet launch · A little wild. A lot of purpose.')
     for s in chunks:ass+=event(s['start'],s['end'],'Caption','\\N'.join(textwrap.wrap(s['text'],width=34 if portrait else 76)))
     subtitle=BUILD/f"{film['id']}-{fmt}.ass";subtitle.write_text(ass,encoding='utf-8-sig', newline='\n')
     args=['ffmpeg','-y','-hide_banner','-loglevel','warning','-filter_complex_threads','2']

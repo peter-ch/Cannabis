@@ -1,23 +1,23 @@
 1
-00:00:00,000 --> 00:00:07,280
-Meet Cannabis. A bold idea. A little green energy. A community ready to grow.
+00:00:00,000 --> 00:00:04,860
+Meet Cannabis, a community working to put computing power to useful work.
 
 2
-00:00:07,530 --> 00:00:13,370
-We're building a memecoin for efficient networks, with privacy at the heart of community claims.
+00:00:05,400 --> 00:00:11,380
+We're building a community currency for efficient networks, with privacy at the heart of community claims.
 
 3
-00:00:13,620 --> 00:00:18,980
-No proof-of-work. No competitive hash grinding. Bring your energy to the community.
+00:00:11,900 --> 00:00:19,560
+There is no proof-of-work mining race, so participation does not depend on competitive hash grinding.
 
 4
-00:00:19,230 --> 00:00:24,750
-Ninety-nine percent for the community. One percent for the founder, vested over twenty-four months.
+00:00:20,720 --> 00:00:30,200
+Ninety-nine percent of the supply is allocated to the community, with one percent for the founder, vested over twenty-four months.
 
 5
-00:00:25,000 --> 00:00:33,480
-Zero-knowledge proofs protect eligibility privacy. One verified person. One claim. Public launch ahead.
+00:00:31,200 --> 00:00:39,560
+Zero-knowledge proofs protect eligibility privacy, with one claim for each verified person when the public launch opens.
 
 6
-00:00:33,730 --> 00:00:37,250
-Cannabis. Grow something wild. Build it together.
+00:00:40,920 --> 00:00:46,360
+You can explore Cannabis, follow its development and help build the community.

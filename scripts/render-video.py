@@ -33,16 +33,16 @@ PlayResY: {h}
 WrapStyle: 0
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Title,Arial,{font},&H00D7F4C3,&H000000FF,&H00102211,&H00000000,-1,0,0,0,100,100,0,0,1,3,1,8,70,70,{190 if portrait else 100},1
-Style: Caption,Arial,{caption_size},&H00FFFFFF,&H000000FF,&H00121C13,&HAA000000,0,0,0,0,100,100,0,0,3,2,0,2,80,80,{margin_v},1
-Style: Label,Arial,{24 if portrait else 22},&H00DCE9D8,&H000000FF,&H00121C13,&H00000000,0,0,0,0,100,100,1,0,1,2,0,8,50,50,{85 if portrait else 40},1
-Style: Footer,Arial,{23 if portrait else 22},&H00E1E8DB,&H000000FF,&H00121C13,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,50,50,{95 if portrait else 35},1
+Style: Title,Segoe UI,{font},&H00D7F4C3,&H000000FF,&H00102211,&H00000000,-1,0,0,0,100,100,0,0,1,3,1,8,70,70,{190 if portrait else 100},1
+Style: Caption,Segoe UI,{caption_size},&H00FFFFFF,&H000000FF,&H00121C13,&HAA000000,0,0,0,0,100,100,0,0,3,2,0,2,80,80,{margin_v},1
+Style: Label,Segoe UI,{24 if portrait else 22},&H00DCE9D8,&H000000FF,&H00121C13,&H00000000,0,0,0,0,100,100,1,0,1,2,0,8,50,50,{85 if portrait else 40},1
+Style: Footer,Segoe UI,{23 if portrait else 22},&H00E1E8DB,&H000000FF,&H00121C13,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,50,50,{95 if portrait else 35},1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 '''
     def event(start, end, style, text):
         return f'Dialogue: 0,{ass_time(start)},{ass_time(end)},{style},,0,0,0,,{{\\fad(180,180)}}{text}\n'
-    text = header + event(0, duration, 'Label', 'CANNABIS / GROW SOMETHING WILD')
+    text = header + event(0, duration, 'Label', 'CANNABIS / THE PUBLIC OPENING')
     text += event(0, duration, 'Footer', 'Public launch ahead.\\NOpen code. Visible rules.' if not silent else 'Public launch ahead.\\NOpen code. Visible rules.')
     titles = ['Cannabis.', 'Efficient by design.', '99% community.\\N1% founder vesting.', 'Privacy. Community.\\NBuild it together.']
     for i, title in enumerate(titles):
@@ -55,7 +55,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     args = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'warning']
     scene_frames = math.ceil(duration * 30 / 4)
     scene_duration = scene_frames / 30
-    assets = ['hero.png', 'network.png', 'network.png', 'hero.png']
+    assets = ['crystal-prestige.png', 'crystal-prism.png', 'crystal-purity.png', 'crystal-aurora.png']
     for image in assets:
         args += ['-loop', '1', '-framerate', '30', '-t', str(scene_duration), '-i', str(ROOT / 'web/assets' / image)]
     if not silent:

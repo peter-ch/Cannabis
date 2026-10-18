@@ -1,17 +1,17 @@
 {
-  "id": "00-crystal-introduction",
-  "text": "Meet Cannabis coin. A bold community, a brilliant identity, and an ambitious idea: put computing power to useful work.",
-  "scriptSHA256": "f873989602e85b69a3dfb38349febe926efa077c3046319f0487f8dd42f19601",
+  "text": "Meet Cannabis coin, a community built around a simple idea: putting computing power to useful work.",
   "segments": [
     {
-      "start": 0,
-      "end": 8.16,
-      "text": "Meet Cannabis coin. A bold community, a brilliant identity, and an ambitious idea: put computing power to useful work."
+      "start": 0.0,
+      "end": 6.9,
+      "text": "Meet Cannabis coin, a community built around a simple idea: putting computing power to useful work."
     }
   ],
+  "seconds": 7.2,
   "sampleRate": 24000,
-  "seconds": 8.16,
-  "peak": 0.54296875,
+  "scriptSHA256": "a77941e04524d08b357fcd9aa7f296058b4e713c63baec07ce1c7902f1125816",
+  "wavSHA256": "f1cd8f00ee561bd68004363447b68f796659a24c0e59df1df6641cc5b798331c",
+  "peak": 0.4609375,
   "clippedSamples": 0,
-  "wavSHA256": "df0dbe9df95d6c613c554881d25c559e157c7027ab7a1afd5fb1cf1f3c81cfa3"
+  "id": "00-crystal-introduction"
 }

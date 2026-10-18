@@ -1,27 +1,27 @@
 {
-  "id": "08-confidentiality",
-  "scriptSHA256": "2f304ecd951471991675e917c1872552e9212cf280cd1519eb68c8b5b7d8a84f",
-  "text": "Your code, inputs, checkpoints, and outputs belong to your job. Cannabis coin requires encryption in storage and transit, plus protection while the program is running.\nThe execution design releases keys only into an attested environment that meets the job's policy. Each participating accelerator and network path must support that protection.\nOrdinary hardware compatibility alone is not enough. The confidential worker service still needs integration and review. Public payments and some scheduling metadata remain visible. Explore the design and help strengthen it.",
+  "text": "Your code, inputs, checkpoints and outputs belong to your job. Cannabis coin requires encryption for stored files and network transfers, as well as protection while your program runs.\nThe execution design releases keys only into an attested environment that meets the job's policy. Each participating accelerator and network path must support that protection.\nOrdinary hardware compatibility alone is not enough. The confidential worker service still needs integration and review. Public payments and some scheduling metadata remain visible. Explore the design and help strengthen it.",
   "segments": [
     {
       "start": 0.0,
-      "end": 12.4,
-      "text": "Your code, inputs, checkpoints, and outputs belong to your job. Cannabis coin requires encryption in storage and transit, plus protection while the program is running."
+      "end": 11.28,
+      "text": "Your code, inputs, checkpoints and outputs belong to your job. Cannabis coin requires encryption for stored files and network transfers, as well as protection while your program runs."
     },
     {
-      "start": 12.7,
-      "end": 23.66,
+      "start": 11.7,
+      "end": 22.32,
       "text": "The execution design releases keys only into an attested environment that meets the job's policy. Each participating accelerator and network path must support that protection."
     },
     {
-      "start": 23.96,
-      "end": 38.84,
+      "start": 22.9,
+      "end": 37.08,
       "text": "Ordinary hardware compatibility alone is not enough. The confidential worker service still needs integration and review. Public payments and some scheduling metadata remain visible. Explore the design and help strengthen it."
     }
   ],
+  "seconds": 37.2,
   "sampleRate": 24000,
-  "seconds": 38.84,
-  "peak": 0.58203125,
+  "scriptSHA256": "c15f815b78d4c2f582f6e70ea157d5d4f98fa143895db6dcfbba4dec15d74890",
+  "wavSHA256": "1c0dd1b909111fb16fc474bb4f4193c3983646ce6711a759c37e1143bd04e1ec",
+  "peak": 0.41796875,
   "clippedSamples": 0,
-  "wavSHA256": "56f9bae8dc9c92c3b1911617cce4c7547e1082d0eddaeb1ef8a9ef2f03d2a8b4"
+  "id": "08-confidentiality"
 }

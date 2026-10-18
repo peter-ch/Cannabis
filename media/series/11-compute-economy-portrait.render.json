@@ -1,7 +1,7 @@
 {
-  "signature": "26064bb3692452eca88000f2e71dba2d44b62f2bf6b473cab69803930daf2777",
-  "scriptSHA256": "64231f40c9a61f7089cb8e555920cf91f5eb59bd9f24282b8b1dbb3181da876a",
-  "voiceSHA256": "60d1d627272b242e0d14201df35b67a2926e12438dc9f0852ebf4c2044363b21",
+  "signature": "028356760f17e0bf3d22ac0b63b278dc027b1e247758fdadb7b7b569bbf4cb77",
+  "scriptSHA256": "8afdd3cc302d8b328b79a0be81b1b37b5d50c5d97ddbf4185238dd524670a57b",
+  "voiceSHA256": "3d25f5ee15dd8ea1f42d650d0fbae2175664d16be1af6dc48446bc6165e3a19b",
   "sources": [
     "media/series/broll/crystal-aurora.mp4",
     "web/assets/diagrams/compute-network-client.png",
@@ -18,18 +18,18 @@
     "forward/reverse with matched endpoints"
   ],
   "audio": "English narration only",
-  "seconds": 44.083333,
+  "seconds": 33.5,
   "width": 1080,
   "height": 1920,
   "fps": 24,
   "videoCodec": "h264",
   "audioCodec": "aac",
   "audioStreams": 1,
-  "bytes": 13205023,
-  "sha256": "30544cd47126b56bb8d547ad7bb9529c3b95074101421a136c982c1b232c07ac",
+  "bytes": 9505033,
+  "sha256": "33994c8cd60c3f75ddc925d3c10c0412f407a63765d195fa302a2841927669ef",
   "captionTiming": "proportional within narration segments",
   "captionsSHA256": {
-    "srt": "040309b7c8629ec38f03ffeeed676fa3a20bc196f18d02fcf00d936288e9f97b",
-    "vtt": "9a6eff0b8d090a22079794a27364994d0a2ba622cfc4cdfbe1233c3884bf6aae"
+    "srt": "d1d7c5900be00ac6e4712963c79f709956c26b50223cfa0daeb6a24e95fe75c7",
+    "vtt": "e47a46799fcbae9b771eb7f3678a486eb4ef11e2bdcc75f0f1289067b5bd7493"
   }
 }

@@ -1,7 +1,7 @@
 {
-  "signature": "67a1abc9aef5b8d7bdf946d073700065763cae383c58a6800d199a21535dbffc",
-  "scriptSHA256": "9cd3f9a6a9bf7ac408d9448e6cc288da47a0a79eb7886cb39d2ce099121219b5",
-  "voiceSHA256": "fdf2bdcc6397f7a8692d87f0f980a0d831a2727d756491c104089a2271280dc4",
+  "signature": "9420fe9b7fe75d996054fe9e255e1ac98de6a822b419d81069dbbb6472e5e07b",
+  "scriptSHA256": "7411b77cff835f646fff4d36a973ac5dd428c509b930ca1b347b07b981456ed4",
+  "voiceSHA256": "0662a8f2102eaedbb001485cf230d1e32fbda3d80800dc8d61265fb448dc0cd9",
   "sources": [
     "media/series/broll/crystal-aurora.mp4",
     "media/series/broll/crystal-monolith.mp4",
@@ -18,18 +18,18 @@
     "forward/reverse with matched endpoints"
   ],
   "audio": "English narration only",
-  "seconds": 26.875,
+  "seconds": 29.708333,
   "width": 1080,
   "height": 1920,
   "fps": 24,
   "videoCodec": "h264",
   "audioCodec": "aac",
   "audioStreams": 1,
-  "bytes": 13029109,
-  "sha256": "d3fd7a43dc4304c88016bb80fa15b7098f939105ec7e096267d77eaf402abf22",
+  "bytes": 14491968,
+  "sha256": "8f078548007ba1d854906b01b1feb368abbb66c13683013768a5c121777ff551",
   "captionTiming": "proportional within narration segments",
   "captionsSHA256": {
-    "srt": "b698833a42660de3d4cd2590b7990756fe7c7806300957bcc96ba774f0b4e0b4",
-    "vtt": "cd1c5252c107b255a2f4395fa09263c0538698fa353fd399e985082395236901"
+    "srt": "185c8c2a213842c2655abfdc645e2801ba8e084bf29c350002233852008ce9e7",
+    "vtt": "ffa4b474c43f566276e9bd4bfae6fdd4a66d58e43c2f108b0675145b25fc219a"
   }
 }

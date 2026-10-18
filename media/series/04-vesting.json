@@ -1,27 +1,27 @@
 {
-  "id": "04-vesting",
-  "scriptSHA256": "128fe9c2aa26bc7b2370a272ee8b6802147af44ac5dbf4a563e423caf6576a74",
   "text": "Cannabis coin has a fixed maximum supply of four hundred and twenty million tokens. Ninety-nine percent is reserved for community claims.\nThe founder allocation is one percent: four point two million tokens, locked at creation and released gradually over twenty-four calendar months from the public opening.\nThat schedule is written into the contract design. The separate compute service fee is one percent of accepted paid work. Explore the source and see how the rules fit together.",
   "segments": [
     {
       "start": 0.0,
-      "end": 8.24,
+      "end": 7.38,
       "text": "Cannabis coin has a fixed maximum supply of four hundred and twenty million tokens. Ninety-nine percent is reserved for community claims."
     },
     {
-      "start": 8.54,
-      "end": 18.54,
+      "start": 7.66,
+      "end": 17.56,
       "text": "The founder allocation is one percent: four point two million tokens, locked at creation and released gradually over twenty-four calendar months from the public opening."
     },
     {
-      "start": 18.84,
-      "end": 31.24,
+      "start": 17.8,
+      "end": 27.56,
       "text": "That schedule is written into the contract design. The separate compute service fee is one percent of accepted paid work. Explore the source and see how the rules fit together."
     }
   ],
+  "seconds": 27.84,
   "sampleRate": 24000,
-  "seconds": 31.24,
-  "peak": 0.8671875,
+  "scriptSHA256": "128fe9c2aa26bc7b2370a272ee8b6802147af44ac5dbf4a563e423caf6576a74",
+  "wavSHA256": "92c91d8a868a1daac1b4986f6273352ecb400c2e710baf2f763f4f2c01569566",
+  "peak": 0.494140625,
   "clippedSamples": 0,
-  "wavSHA256": "963e2a82f9d6e2f879698cbd31815107cae088769db92cc4d77a3b548f82aec0"
+  "id": "04-vesting"
 }

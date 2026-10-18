@@ -1,7 +1,7 @@
 {
-  "signature": "85c28c2bf355e0de7a11fef896c455b5f6a7fec6166544b3bd55476549700213",
-  "scriptSHA256": "f873989602e85b69a3dfb38349febe926efa077c3046319f0487f8dd42f19601",
-  "voiceSHA256": "df0dbe9df95d6c613c554881d25c559e157c7027ab7a1afd5fb1cf1f3c81cfa3",
+  "signature": "acf4993c089d16a565cac2ab68bbac7154b9cf1cfbf04022c335a72abcece3ff",
+  "scriptSHA256": "a77941e04524d08b357fcd9aa7f296058b4e713c63baec07ce1c7902f1125816",
+  "voiceSHA256": "f1cd8f00ee561bd68004363447b68f796659a24c0e59df1df6641cc5b798331c",
   "sources": [
     "media/series/broll/crystal-prism.mp4"
   ],
@@ -12,18 +12,18 @@
     "forward/reverse with matched endpoints"
   ],
   "audio": "English narration only",
-  "seconds": 8.541667,
+  "seconds": 7.583333,
   "width": 1920,
   "height": 1080,
   "fps": 24,
   "videoCodec": "h264",
   "audioCodec": "aac",
   "audioStreams": 1,
-  "bytes": 6399577,
-  "sha256": "36f85d9ed10a715ca0fd469ca361b4b17b9cd021f23a0e335dd9c837f47e4fb8",
+  "bytes": 5592957,
+  "sha256": "6a82b32b138b9e1f04d00a06d339da897d738c2dd0a9682dd8d88565a24beca7",
   "captionTiming": "proportional within narration segments",
   "captionsSHA256": {
-    "srt": "f71e4bf4c6be65981a36dca8d241df5ca2981be942f58f9d6e62092f0eebf4c3",
-    "vtt": "63f7bf15cb4d853d12e45b22926966d9ac4412f0b8dae5019cf5f49d60b80b29"
+    "srt": "478ab76d5f2fbbafdee09f23e1970c90c46a0b655b672598c9a09290413e4860",
+    "vtt": "10a0bf319ccc5c6deec69c279b1ec066aedfd180bb3f9ca2f471e4093f8b9e9f"
   }
 }

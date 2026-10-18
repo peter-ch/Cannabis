@@ -1,7 +1,7 @@
 {
-  "signature": "3b60ef25b74e3d3691b6876ed8eb9c948bd3a11b7b1ac8d44eef48a6aed104e8",
+  "signature": "905398c2503ab4d261bb86fac6c7c6b090141bbc3f452d90bae38ff9d75676f1",
   "scriptSHA256": "0463a661f4e6e04e9eb0aac6b99f4be4969e777329f238f7b9b67b4fb7e64a66",
-  "voiceSHA256": "dce3e343ece71a3a91269c1e50a8ca8ef66ce41c97b89e27a9de20ed87fc0458",
+  "voiceSHA256": "e492880c0a742dff225f844ce8b2b9b70c9afbd59d4494b45aa8d92caea961d3",
   "sources": [
     "media/series/broll/crystal-monolith.mp4",
     "web/assets/diagrams/compute-packages.png",
@@ -18,18 +18,18 @@
     "forward/reverse with matched endpoints"
   ],
   "audio": "English narration only",
-  "seconds": 36.666667,
+  "seconds": 31.63,
   "width": 1080,
   "height": 1920,
   "fps": 24,
   "videoCodec": "h264",
   "audioCodec": "aac",
   "audioStreams": 1,
-  "bytes": 16707277,
-  "sha256": "82e9b188be64f99f79d97b172d426aa1feb9b7c3db319c95b53a4e49d8681fc2",
+  "bytes": 14362640,
+  "sha256": "0f6d8e370718f520a90cc51c5cf7fc5b92e2abd513e75aecf9ad320e36c0e661",
   "captionTiming": "proportional within narration segments",
   "captionsSHA256": {
-    "srt": "ff6b6a24887154dfe778035e26d3e6532b320c0f1fe0adcedda3170a34e4fcf3",
-    "vtt": "0bbdc359007e3cec35f040d122b95f67ad4de29f9be4c896aa40429991008b60"
+    "srt": "dd929b7b254dff6ec6b2f7fd2933ddec20e2081950ecdaf3cb385b71a14684f9",
+    "vtt": "6bff71f911c46df4bdfff32d739aac922231174c3b979f5017d000e90296e956"
   }
 }

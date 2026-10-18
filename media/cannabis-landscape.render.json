@@ -1,11 +1,11 @@
 {
-  "scriptSHA256": "bba2ac704338524752c994d3530e7833cf3325f06a433705e4a59e2920fe3821",
-  "voiceSHA256": "18f4ae24fe5ac01c64cc911f9eae26e124f9baf88ea04ea679e1b0e84f4dd1e6",
-  "sha256": "211bee37104984607b5592a05a2eb35959fc1907e0398efd131629f4d4c3fa64",
-  "bytes": 15563513,
-  "seconds": 37.266667,
+  "scriptSHA256": "3bee2b0db573ad1af62de1320c99949f3d31e143709cdd4362bc80fa4348f07c",
+  "voiceSHA256": "9312fe6e61d5219266f41e9e366474f0f257bc6a850bc7607623c5afedec3638",
+  "sha256": "65bc1f9822c5be0128eb84c68e1bd6793b08325406a2dba1255d6e53ceb58ed3",
+  "bytes": 13100475,
+  "seconds": 46.733333,
   "width": 1920,
   "height": 1080,
   "audio": "English narration only",
-  "captionsSHA256": "2288acee39738b54de7f9f8c5fb662e21d6cf7ad1e1f6aa68a1e792f195f027a"
+  "captionsSHA256": "3bcc8f0975bdce2e752675475291f4b18ddf2b15deedc6496994c55db67dd610"
 }

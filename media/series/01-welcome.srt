@@ -1,23 +1,27 @@
 1
-00:00:00,000 --> 00:00:04,987
-Meet Cannabis. A bold community, a brilliant identity, and an ambitious
+00:00:00,000 --> 00:00:04,972
+Meet Cannabis, a community built around a simple idea: putting computing
 
 2
-00:00:04,987 --> 00:00:08,160
-idea: put computing power to useful work.
+00:00:04,972 --> 00:00:06,780
+power to useful work.
 
 3
-00:00:08,460 --> 00:00:13,300
-Open code. Visible rules. Privacy at the heart of the design.
+00:00:07,620 --> 00:00:13,426
+The project brings together open code, clear rules and privacy-conscious design,
 
 4
-00:00:13,300 --> 00:00:16,380
-And a community allocation built around people.
+00:00:13,426 --> 00:00:17,120
+with a community allocation built around people.
 
 5
-00:00:16,680 --> 00:00:21,600
-We are preparing the public launch. Explore the project, bring your
+00:00:17,960 --> 00:00:22,433
+As we prepare the public launch, you can explore the source,
 
 6
-00:00:21,600 --> 00:00:26,520
-skills, and help shape what comes next. Let's grow something wild.
+00:00:22,433 --> 00:00:26,907
+contribute your skills and help shape what comes next. We look
+
+7
+00:00:26,907 --> 00:00:28,940
+forward to building it together.

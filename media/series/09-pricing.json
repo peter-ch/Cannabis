@@ -1,27 +1,27 @@
 {
-  "id": "09-pricing",
-  "scriptSHA256": "f2a407d101d482ac294c3db5f453b785067e313c17b9a4607641b008f742078c",
   "text": "Fair compute pricing starts with clear quotes. Each provider declares the resources, expected delivery time, and price before the requester commits a budget.\nThe proposed pricing model can include a delivery bonus, agreed in advance and earned only when the complete result meets the deadline and acceptance rules.\nOn the Cannabis coin network, an accepted payment of one hundred tokens sends ninety-nine to workers and one to the founder. Refunded amounts earn no founder fee. Estimates guide selection; verified results and agreed terms determine acceptance.",
   "segments": [
     {
       "start": 0.0,
-      "end": 9.36,
+      "end": 9.8,
       "text": "Fair compute pricing starts with clear quotes. Each provider declares the resources, expected delivery time, and price before the requester commits a budget."
     },
     {
-      "start": 9.66,
-      "end": 19.42,
+      "start": 10.12,
+      "end": 19.12,
       "text": "The proposed pricing model can include a delivery bonus, agreed in advance and earned only when the complete result meets the deadline and acceptance rules."
     },
     {
-      "start": 19.72,
-      "end": 36.68,
+      "start": 19.46,
+      "end": 35.22,
       "text": "On the Cannabis coin network, an accepted payment of one hundred tokens sends ninety-nine to workers and one to the founder. Refunded amounts earn no founder fee. Estimates guide selection; verified results and agreed terms determine acceptance."
     }
   ],
+  "seconds": 35.76,
   "sampleRate": 24000,
-  "seconds": 36.68,
-  "peak": 0.69140625,
+  "scriptSHA256": "f2a407d101d482ac294c3db5f453b785067e313c17b9a4607641b008f742078c",
+  "wavSHA256": "04b35ddae5ce9571cbf367a060831f52eba95c521bed5a17a9e6dc8a5089e0e9",
+  "peak": 0.70703125,
   "clippedSamples": 0,
-  "wavSHA256": "3c3bae435854aa8d026f2750aa5534345371a0dfde60ec00e466ce21dfd662d4"
+  "id": "09-pricing"
 }

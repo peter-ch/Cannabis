@@ -1,27 +1,27 @@
 {
-  "id": "01-welcome",
-  "scriptSHA256": "9cd3f9a6a9bf7ac408d9448e6cc288da47a0a79eb7886cb39d2ce099121219b5",
-  "text": "Meet Cannabis coin. A bold community, a brilliant identity, and an ambitious idea: put computing power to useful work.\nOpen code. Visible rules. Privacy at the heart of the design. And a community allocation built around people.\nWe are preparing the public launch. Explore the project, bring your skills, and help shape what comes next. Let's grow something wild.",
+  "text": "Meet Cannabis coin, a community built around a simple idea: putting computing power to useful work.\nThe project brings together open code, clear rules and privacy-conscious design, with a community allocation built around people.\nAs we prepare the public launch, you can explore the source, contribute your skills and help shape what comes next. We look forward to building it together.",
   "segments": [
     {
       "start": 0.0,
-      "end": 8.16,
-      "text": "Meet Cannabis coin. A bold community, a brilliant identity, and an ambitious idea: put computing power to useful work."
+      "end": 6.78,
+      "text": "Meet Cannabis coin, a community built around a simple idea: putting computing power to useful work."
     },
     {
-      "start": 8.46,
-      "end": 16.38,
-      "text": "Open code. Visible rules. Privacy at the heart of the design. And a community allocation built around people."
+      "start": 7.62,
+      "end": 17.12,
+      "text": "The project brings together open code, clear rules and privacy-conscious design, with a community allocation built around people."
     },
     {
-      "start": 16.68,
-      "end": 26.52,
-      "text": "We are preparing the public launch. Explore the project, bring your skills, and help shape what comes next. Let's grow something wild."
+      "start": 17.96,
+      "end": 28.94,
+      "text": "As we prepare the public launch, you can explore the source, contribute your skills and help shape what comes next. We look forward to building it together."
     }
   ],
+  "seconds": 29.34,
   "sampleRate": 24000,
-  "seconds": 26.52,
-  "peak": 0.64453125,
+  "scriptSHA256": "7411b77cff835f646fff4d36a973ac5dd428c509b930ca1b347b07b981456ed4",
+  "wavSHA256": "0662a8f2102eaedbb001485cf230d1e32fbda3d80800dc8d61265fb448dc0cd9",
+  "peak": 0.435546875,
   "clippedSamples": 0,
-  "wavSHA256": "fdf2bdcc6397f7a8692d87f0f980a0d831a2727d756491c104089a2271280dc4"
+  "id": "01-welcome"
 }

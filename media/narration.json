@@ -1,42 +1,41 @@
 {
-  "text": "Meet Cannabis coin. A bold idea. A little green energy. A community ready to grow.\nWe're building a memecoin for efficient networks, with privacy at the heart of community claims.\nNo proof-of-work. No competitive hash grinding. Bring your energy to the community.\nNinety-nine percent for the community. One percent for the founder, vested over twenty-four months.\nZero-knowledge proofs protect eligibility privacy. One verified person. One claim. Public launch ahead.\nCannabis coin. Grow something wild. Build it together.",
-  "sample_rate": 24000,
-  "seconds": 37.25,
+  "text": "Meet Cannabis coin, a community working to put computing power to useful work.\nWe're building a community currency for efficient networks, with privacy at the heart of community claims.\nThere is no proof-of-work mining race, so participation does not depend on competitive hash grinding.\nNinety-nine percent of the supply is allocated to the community, with one percent for the founder, vested over twenty-four months.\nZero-knowledge proofs protect eligibility privacy, with one claim for each verified person when the public launch opens.\nYou can explore Cannabis coin, follow its development and help build the community.",
   "segments": [
     {
       "start": 0.0,
-      "end": 7.28,
-      "text": "Meet Cannabis coin. A bold idea. A little green energy. A community ready to grow."
+      "end": 4.86,
+      "text": "Meet Cannabis coin, a community working to put computing power to useful work."
     },
     {
-      "start": 7.53,
-      "end": 13.37,
-      "text": "We're building a memecoin for efficient networks, with privacy at the heart of community claims."
+      "start": 5.4,
+      "end": 11.38,
+      "text": "We're building a community currency for efficient networks, with privacy at the heart of community claims."
     },
     {
-      "start": 13.62,
-      "end": 18.98,
-      "text": "No proof-of-work. No competitive hash grinding. Bring your energy to the community."
+      "start": 11.9,
+      "end": 19.56,
+      "text": "There is no proof-of-work mining race, so participation does not depend on competitive hash grinding."
     },
     {
-      "start": 19.23,
-      "end": 24.75,
-      "text": "Ninety-nine percent for the community. One percent for the founder, vested over twenty-four months."
+      "start": 20.72,
+      "end": 30.2,
+      "text": "Ninety-nine percent of the supply is allocated to the community, with one percent for the founder, vested over twenty-four months."
     },
     {
-      "start": 25.0,
-      "end": 33.48,
-      "text": "Zero-knowledge proofs protect eligibility privacy. One verified person. One claim. Public launch ahead."
+      "start": 31.2,
+      "end": 39.56,
+      "text": "Zero-knowledge proofs protect eligibility privacy, with one claim for each verified person when the public launch opens."
     },
     {
-      "start": 33.73,
-      "end": 37.25,
-      "text": "Cannabis coin. Grow something wild. Build it together."
+      "start": 40.92,
+      "end": 46.36,
+      "text": "You can explore Cannabis coin, follow its development and help build the community."
     }
   ],
-  "scriptSHA256": "bba2ac704338524752c994d3530e7833cf3325f06a433705e4a59e2920fe3821",
+  "seconds": 46.72,
   "sampleRate": 24000,
-  "wavSHA256": "18f4ae24fe5ac01c64cc911f9eae26e124f9baf88ea04ea679e1b0e84f4dd1e6",
-  "peak": 0.6953125,
+  "scriptSHA256": "3bee2b0db573ad1af62de1320c99949f3d31e143709cdd4362bc80fa4348f07c",
+  "wavSHA256": "9312fe6e61d5219266f41e9e366474f0f257bc6a850bc7607623c5afedec3638",
+  "peak": 0.56640625,
   "clippedSamples": 0
 }

@@ -1,27 +1,27 @@
 {
-  "id": "11-compute-economy",
-  "scriptSHA256": "64231f40c9a61f7089cb8e555920cf91f5eb59bd9f24282b8b1dbb3181da876a",
-  "text": "Cannabis coin is being built as money for useful computing. Requesters buy services. Providers earn for accepted delivery. Clear commitments connect the currency to work people need.\nA provider offer specifies the computing service, price, availability, and delivery terms. The reservation system must prevent overbooking. Protected workers return encrypted results for your client to verify and assemble.\nThe founder receives one percent of accepted payments. Service backing requires real available capacity and fulfilled commitments. Those provider integrations are being prepared. Explore the economic design and help build a network that earns its place through useful work.",
+  "text": "Cannabis coin is being built as money for useful computing, connecting requesters who need services with providers who earn for accepted delivery.\nEach provider offer specifies the service, price, availability and delivery terms. The reservation system must prevent overbooking, while protected workers return encrypted results for your client to verify and assemble.\nThe founder receives one percent of accepted payments. Service backing requires available capacity and fulfilled provider commitments. These integrations are being prepared, and you can help develop the economic design.",
   "segments": [
     {
       "start": 0.0,
-      "end": 10.64,
-      "text": "Cannabis coin is being built as money for useful computing. Requesters buy services. Providers earn for accepted delivery. Clear commitments connect the currency to work people need."
+      "end": 7.32,
+      "text": "Cannabis coin is being built as money for useful computing, connecting requesters who need services with providers who earn for accepted delivery."
     },
     {
-      "start": 10.94,
-      "end": 25.9,
-      "text": "A provider offer specifies the computing service, price, availability, and delivery terms. The reservation system must prevent overbooking. Protected workers return encrypted results for your client to verify and assemble."
+      "start": 7.68,
+      "end": 20.32,
+      "text": "Each provider offer specifies the service, price, availability and delivery terms. The reservation system must prevent overbooking, while protected workers return encrypted results for your client to verify and assemble."
     },
     {
-      "start": 26.2,
-      "end": 43.72,
-      "text": "The founder receives one percent of accepted payments. Service backing requires real available capacity and fulfilled commitments. Those provider integrations are being prepared. Explore the economic design and help build a network that earns its place through useful work."
+      "start": 20.62,
+      "end": 32.78,
+      "text": "The founder receives one percent of accepted payments. Service backing requires available capacity and fulfilled provider commitments. These integrations are being prepared, and you can help develop the economic design."
     }
   ],
+  "seconds": 33.12,
   "sampleRate": 24000,
-  "seconds": 43.72,
-  "peak": 0.65625,
+  "scriptSHA256": "8afdd3cc302d8b328b79a0be81b1b37b5d50c5d97ddbf4185238dd524670a57b",
+  "wavSHA256": "3d25f5ee15dd8ea1f42d650d0fbae2175664d16be1af6dc48446bc6165e3a19b",
+  "peak": 0.5,
   "clippedSamples": 0,
-  "wavSHA256": "60d1d627272b242e0d14201df35b67a2926e12438dc9f0852ebf4c2044363b21"
+  "id": "11-compute-economy"
 }

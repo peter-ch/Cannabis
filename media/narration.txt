@@ -1,6 +1,6 @@
-Meet Cannabis coin. A bold idea. A little green energy. A community ready to grow.
-We're building a memecoin for efficient networks, with privacy at the heart of community claims.
-No proof-of-work. No competitive hash grinding. Bring your energy to the community.
-Ninety-nine percent for the community. One percent for the founder, vested over twenty-four months.
-Zero-knowledge proofs protect eligibility privacy. One verified person. One claim. Public launch ahead.
-Cannabis coin. Grow something wild. Build it together.
+Meet Cannabis coin, a community working to put computing power to useful work.
+We're building a community currency for efficient networks, with privacy at the heart of community claims.
+There is no proof-of-work mining race, so participation does not depend on competitive hash grinding.
+Ninety-nine percent of the supply is allocated to the community, with one percent for the founder, vested over twenty-four months.
+Zero-knowledge proofs protect eligibility privacy, with one claim for each verified person when the public launch opens.
+You can explore Cannabis coin, follow its development and help build the community.

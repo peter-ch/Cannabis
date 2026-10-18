@@ -1,7 +1,7 @@
 1
-00:00:00,000 --> 00:00:04,987
-Meet Cannabis. A bold community, a brilliant identity, and an ambitious
+00:00:00,000 --> 00:00:05,060
+Meet Cannabis, a community built around a simple idea: putting computing
 
 2
-00:00:04,987 --> 00:00:08,160
-idea: put computing power to useful work.
+00:00:05,060 --> 00:00:06,900
+power to useful work.

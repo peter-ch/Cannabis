@@ -1,27 +1,27 @@
 {
-  "id": "10-payments",
-  "scriptSHA256": "bbb0bd1cffdec65fa988c51955c5fa59cc711aaa08fb57e33ad33490a0ff0f1a",
   "text": "The Cannabis coin escrow contract implementation records the budget, worker shares, deadlines, review period, and dispute resolver before work begins. Every worker must accept the terms.\nA requester reviews the encrypted delivery and can approve it or open a dispute. The contract also defines cancellation, refunds, and timeout outcomes.\nPay attention to the review window: an undisputed delivery becomes payable when that window expires. The contract still needs independent review and deployment. Read the payment guide, understand the terms, and help build a dependable service.",
   "segments": [
     {
       "start": 0.0,
-      "end": 11.84,
+      "end": 12.24,
       "text": "The Cannabis coin escrow contract implementation records the budget, worker shares, deadlines, review period, and dispute resolver before work begins. Every worker must accept the terms."
     },
     {
-      "start": 12.14,
-      "end": 23.58,
+      "start": 12.54,
+      "end": 23.28,
       "text": "A requester reviews the encrypted delivery and can approve it or open a dispute. The contract also defines cancellation, refunds, and timeout outcomes."
     },
     {
-      "start": 23.88,
-      "end": 38.84,
+      "start": 24.16,
+      "end": 39.6,
       "text": "Pay attention to the review window: an undisputed delivery becomes payable when that window expires. The contract still needs independent review and deployment. Read the payment guide, understand the terms, and help build a dependable service."
     }
   ],
+  "seconds": 40.16,
   "sampleRate": 24000,
-  "seconds": 38.84,
-  "peak": 0.5859375,
+  "scriptSHA256": "bbb0bd1cffdec65fa988c51955c5fa59cc711aaa08fb57e33ad33490a0ff0f1a",
+  "wavSHA256": "be0c17dd208990e8782856a3106e476eddc07dbe0eaafd7e9fb7beb80cdaf760",
+  "peak": 0.76171875,
   "clippedSamples": 0,
-  "wavSHA256": "41174609b598e2b123ef179f41a80a3943229f728c872ab98eee4fb518c47321"
+  "id": "10-payments"
 }

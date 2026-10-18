@@ -1,27 +1,27 @@
 {
-  "id": "06-any-workload",
-  "scriptSHA256": "0463a661f4e6e04e9eb0aac6b99f4be4969e777329f238f7b9b67b4fb7e64a66",
   "text": "The Cannabis coin compute client uses a general-purpose workload contract. Package your software, declare its runtime, specify inputs and outputs, and set resource limits.\nNew adapters can extend the format. A script, a virtual machine checkpoint, a renderer, or coordinated model training can each describe what they need.\nWhole jobs can target one suitable node. Workloads with declared dependencies can form a task graph. Distributed programs can request compatible groups. The runtime and splitting rules preserve what your program is meant to do.",
   "segments": [
     {
       "start": 0.0,
-      "end": 12.0,
+      "end": 9.88,
       "text": "The Cannabis coin compute client uses a general-purpose workload contract. Package your software, declare its runtime, specify inputs and outputs, and set resource limits."
     },
     {
-      "start": 12.3,
-      "end": 21.66,
+      "start": 10.16,
+      "end": 18.42,
       "text": "New adapters can extend the format. A script, a virtual machine checkpoint, a renderer, or coordinated model training can each describe what they need."
     },
     {
-      "start": 21.96,
-      "end": 36.28,
+      "start": 18.74,
+      "end": 31.12,
       "text": "Whole jobs can target one suitable node. Workloads with declared dependencies can form a task graph. Distributed programs can request compatible groups. The runtime and splitting rules preserve what your program is meant to do."
     }
   ],
+  "seconds": 31.28,
   "sampleRate": 24000,
-  "seconds": 36.28,
-  "peak": 0.71484375,
+  "scriptSHA256": "0463a661f4e6e04e9eb0aac6b99f4be4969e777329f238f7b9b67b4fb7e64a66",
+  "wavSHA256": "e492880c0a742dff225f844ce8b2b9b70c9afbd59d4494b45aa8d92caea961d3",
+  "peak": 0.58203125,
   "clippedSamples": 0,
-  "wavSHA256": "dce3e343ece71a3a91269c1e50a8ca8ef66ce41c97b89e27a9de20ed87fc0458"
+  "id": "06-any-workload"
 }

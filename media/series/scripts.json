@@ -13,9 +13,9 @@
         "crystal-crown"
       ],
       "lines": [
-        "Meet Cannabis coin. A bold community, a brilliant identity, and an ambitious idea: put computing power to useful work.",
-        "Open code. Visible rules. Privacy at the heart of the design. And a community allocation built around people.",
-        "We are preparing the public launch. Explore the project, bring your skills, and help shape what comes next. Let's grow something wild."
+        "Meet Cannabis coin, a community built around a simple idea: putting computing power to useful work.",
+        "The project brings together open code, clear rules and privacy-conscious design, with a community allocation built around people.",
+        "As we prepare the public launch, you can explore the source, contribute your skills and help shape what comes next. We look forward to building it together."
       ]
     },
     {
@@ -27,9 +27,9 @@
         "crystal-dawn"
       ],
       "lines": [
-        "There is more than one way to help Cannabis coin grow. Developers can review code. Creators can share original artwork. Curious people can ask good questions.",
-        "Start with the official project website and GitHub repository. Read the published rules, follow release updates, and join the discussion.",
-        "When enrollment opens, use the verified instructions and your own wallet. Keep your recovery secrets private. Your next step today: explore, contribute, and stay connected."
+        "You can help Cannabis coin grow in several ways, from reviewing code and sharing original artwork to asking questions that improve the project.",
+        "The official website and GitHub repository are good places to start. There, you can read the published rules, follow release updates and join the discussion.",
+        "When enrollment opens, follow the verified instructions and use your own wallet, keeping your recovery secrets private. For now, you can explore the project and find a way to contribute."
       ]
     },
     {
@@ -69,9 +69,9 @@
         "crystal-dew"
       ],
       "lines": [
-        "Cannabis coin is built around efficient participation. There is no proof-of-work mining race and no competition to burn computation for new tokens.",
-        "The target network uses Ethereum proof-of-stake settlement. Useful computation happens separately, for tasks that requesters actually need and agree to pay for.",
-        "Training, rendering, analysis, simulation, and other software workloads can fit the architecture. The goal is productive computing, with measured costs and clear results. Bring a useful problem. Help build a useful network."
+        "Cannabis coin is designed for efficient participation, without a proof-of-work mining race or a competition to spend computation on new tokens.",
+        "The target network uses Ethereum proof-of-stake settlement. Useful computation happens separately, through tasks that requesters need and agree to pay for.",
+        "These tasks can include training, rendering, analysis, simulation and other software workloads. The aim is to put computing resources to productive use, with measured costs and clear results."
       ]
     },
     {
@@ -111,7 +111,7 @@
         "crystal-facets"
       ],
       "lines": [
-        "Your code, inputs, checkpoints, and outputs belong to your job. Cannabis coin requires encryption in storage and transit, plus protection while the program is running.",
+        "Your code, inputs, checkpoints and outputs belong to your job. Cannabis coin requires encryption for stored files and network transfers, as well as protection while your program runs.",
         "The execution design releases keys only into an attested environment that meets the job's policy. Each participating accelerator and network path must support that protection.",
         "Ordinary hardware compatibility alone is not enough. The confidential worker service still needs integration and review. Public payments and some scheduling metadata remain visible. Explore the design and help strengthen it."
       ]
@@ -153,9 +153,9 @@
         "crystal-aurora"
       ],
       "lines": [
-        "Cannabis coin is being built as money for useful computing. Requesters buy services. Providers earn for accepted delivery. Clear commitments connect the currency to work people need.",
-        "A provider offer specifies the computing service, price, availability, and delivery terms. The reservation system must prevent overbooking. Protected workers return encrypted results for your client to verify and assemble.",
-        "The founder receives one percent of accepted payments. Service backing requires real available capacity and fulfilled commitments. Those provider integrations are being prepared. Explore the economic design and help build a network that earns its place through useful work."
+        "Cannabis coin is being built as money for useful computing, connecting requesters who need services with providers who earn for accepted delivery.",
+        "Each provider offer specifies the service, price, availability and delivery terms. The reservation system must prevent overbooking, while protected workers return encrypted results for your client to verify and assemble.",
+        "The founder receives one percent of accepted payments. Service backing requires available capacity and fulfilled provider commitments. These integrations are being prepared, and you can help develop the economic design."
       ]
     },
     {
@@ -165,7 +165,7 @@
         "crystal-prism"
       ],
       "lines": [
-        "Meet Cannabis coin. A bold community, a brilliant identity, and an ambitious idea: put computing power to useful work."
+        "Meet Cannabis coin, a community built around a simple idea: putting computing power to useful work."
       ]
     }
   ]

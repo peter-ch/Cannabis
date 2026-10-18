@@ -1,27 +1,27 @@
 1
-00:00:00,000 --> 00:00:05,029
-Cannabis is built around efficient participation. There is no proof-of-work mining
+00:00:00,000 --> 00:00:05,126
+Cannabis is designed for efficient participation, without a proof-of-work mining race
 
 2
-00:00:05,029 --> 00:00:09,600
-race and no competition to burn computation for new tokens.
+00:00:05,126 --> 00:00:09,320
+or a competition to spend computation on new tokens.
 
 3
-00:00:09,900 --> 00:00:14,980
+00:00:09,660 --> 00:00:15,181
 The target network uses Ethereum proof-of-stake settlement. Useful computation happens separately,
 
 4
-00:00:14,980 --> 00:00:20,060
-for tasks that requesters actually need and agree to pay for.
+00:00:15,181 --> 00:00:20,200
+through tasks that requesters need and agree to pay for.
 
 5
-00:00:20,360 --> 00:00:24,842
-Training, rendering, analysis, simulation, and other software workloads can fit the
+00:00:21,180 --> 00:00:26,546
+These tasks can include training, rendering, analysis, simulation and other software
 
 6
-00:00:24,842 --> 00:00:29,325
-architecture. The goal is productive computing, with measured costs and clear
+00:00:26,546 --> 00:00:31,913
+workloads. The aim is to put computing resources to productive use,
 
 7
-00:00:29,325 --> 00:00:33,400
-results. Bring a useful problem. Help build a useful network.
+00:00:31,913 --> 00:00:34,840
+with measured costs and clear results.

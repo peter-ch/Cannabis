@@ -1,31 +1,31 @@
 1
-00:00:00,000 --> 00:00:06,864
-There is more than one way to help Cannabis grow. Developers
+00:00:00,000 --> 00:00:03,800
+You can help Cannabis grow in several ways, from reviewing code
 
 2
-00:00:06,864 --> 00:00:13,728
-can review code. Creators can share original artwork. Curious people can
+00:00:03,800 --> 00:00:07,600
+and sharing original artwork to asking questions that improve the project.
 
 3
-00:00:13,728 --> 00:00:15,600
-ask good questions.
+00:00:08,080 --> 00:00:12,066
+The official website and GitHub repository are good places to start.
 
 4
-00:00:15,900 --> 00:00:20,784
-Start with the official project website and GitHub repository. Read the
+00:00:12,066 --> 00:00:16,053
+There, you can read the published rules, follow release updates and
 
 5
-00:00:20,784 --> 00:00:24,780
-published rules, follow release updates, and join the discussion.
+00:00:16,053 --> 00:00:17,140
+join the discussion.
 
 6
-00:00:25,080 --> 00:00:30,360
-When enrollment opens, use the verified instructions and your own wallet.
+00:00:17,760 --> 00:00:21,779
+When enrollment opens, follow the verified instructions and use your own
 
 7
-00:00:30,360 --> 00:00:35,640
-Keep your recovery secrets private. Your next step today: explore, contribute,
+00:00:21,779 --> 00:00:25,797
+wallet, keeping your recovery secrets private. For now, you can explore
 
 8
-00:00:35,640 --> 00:00:37,080
-and stay connected.
+00:00:25,797 --> 00:00:28,720
+the project and find a way to contribute.
