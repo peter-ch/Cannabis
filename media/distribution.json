@@ -1,8 +1,31 @@
 {
   "schema": "cannabis.media-distribution.v1",
-  "promotionalFilms": ["00-crystal-introduction", "01-welcome", "02-join", "05-efficiency", "06-any-workload", "08-confidentiality"],
-  "termsFilms": ["03-claims", "04-vesting", "07-task-graph", "09-pricing", "10-payments", "11-compute-economy"],
-  "termsDiagrams": ["compute-network-client", "compute-pricing"],
-  "termsOverviews": ["cannabis-landscape.mp4", "cannabis-portrait.mp4"],
-  "disclosures": "../docs/tokenomics.md"
+  "promotionalFilms": [
+    "00-crystal-introduction",
+    "01-welcome",
+    "02-join",
+    "05-efficiency",
+    "06-any-workload",
+    "08-confidentiality"
+  ],
+  "termsFilms": [
+    "03-claims",
+    "04-vesting",
+    "07-task-graph",
+    "09-pricing",
+    "10-payments",
+    "11-compute-economy"
+  ],
+  "termsDiagrams": [
+    "compute-network-client",
+    "compute-pricing"
+  ],
+  "termsOverviews": [
+    "cannabis-landscape.mp4",
+    "cannabis-portrait.mp4"
+  ],
+  "disclosures": "../docs/tokenomics.md",
+  "withheldFilms": [
+    "03-claims"
+  ]
 }

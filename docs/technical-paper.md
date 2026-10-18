@@ -22,7 +22,7 @@ Anyone may relay a proof, but the reward always reaches the proof-bound recipien
 
 ## Membership operations
 
-Only the current root is accepted. This prevents use of an earlier, smaller membership snapshot to bypass the anonymity threshold. Enrollment batches may invalidate in-flight proofs, so the provider must publish stable claim windows and support regeneration before submission.
+Only the current root is accepted. This prevents use of an earlier, smaller membership snapshot to bypass the anonymity threshold. Enrollment batches may invalidate in-flight proofs, so Cannabis ceremony operators must publish stable claim windows and support regeneration before submission.
 
 The count measures distinct commitments, not an independently proven number of humans. Registrar integrity and one-person enrollment/recovery rules remain essential. A lost identity must not simply be replaced with another commitment that allows a second claim.
 

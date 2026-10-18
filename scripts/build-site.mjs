@@ -55,11 +55,17 @@ for (const name of ['cannabis-landscape.mp4', 'cannabis-portrait.mp4', 'narratio
 }
 
 fs.mkdirSync(path.join(out, 'media/series'), { recursive: true });
+const withheldFilms = new Set(JSON.parse(fs.readFileSync(path.join(root, 'media/distribution.json'))).withheldFilms ?? []);
 for (const entry of fs.readdirSync(path.join(root, 'media/series'), { withFileTypes: true })) {
+  if ([...withheldFilms].some(id => entry.name.startsWith(id + '.') || entry.name.startsWith(id + '-'))) continue;
   if (entry.isFile() && /\.(mp4|srt|vtt|txt|json)$/.test(entry.name)) {
     const source = path.join(root, 'media/series', entry.name);
     const target = path.join(out, 'media/series', entry.name);
-    if (entry.name.endsWith('.txt')) fs.writeFileSync(target, displayText(fs.readFileSync(source, 'utf8')));
+    if (entry.name === 'scripts.json') {
+      const catalog = JSON.parse(fs.readFileSync(source));
+      catalog.films = catalog.films.filter(film => !withheldFilms.has(film.id));
+      fs.writeFileSync(target, JSON.stringify(catalog, null, 2) + '\n');
+    } else if (entry.name.endsWith('.txt')) fs.writeFileSync(target, displayText(fs.readFileSync(source, 'utf8')));
     else fs.copyFileSync(source, target);
   }
 }

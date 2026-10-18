@@ -39,7 +39,7 @@ Make a recovery configuration using the same vault and the commitment you just r
 node scripts/claim-identity.mjs inspect --config recovery-config.json --out recovery-check.json
 ~~~
 
-`recoveryVerified: true` means that this owner key recovered the expected commitment from that vault. Keep a separate recoverable backup of the owner key and encrypted vault. Verify recovery before enrolling; losing the secret after append-only enrollment can prevent a claim. A provider must prevent recovery or re-enrollment from enabling a second allocation. Share the commitment only as required for enrollment; do not attach it to your public claim or publish it alongside your receiving wallet.
+`recoveryVerified: true` means that this owner key recovered the expected commitment from that vault. Keep a separate recoverable backup of the owner key and encrypted vault. Verify recovery before enrolling; losing the secret after append-only enrollment can prevent a claim. Cannabis registry reviewers must prevent re-enrollment from enabling a second allocation; recovery restores the same secret and commitment. Share the commitment only as required for enrollment; do not attach it to your public claim or publish it alongside your receiving wallet.
 
 ## Prepare an offline proof
 
@@ -87,4 +87,4 @@ Only `proof.json` belongs in the unsigned [claim preparation](community-claims.m
 
 The CLI uses no RPC, web request, wallet key or broadcast. Recovery pipes the age owner key into the local age process; it creates only a temporary ciphertext copy. Secret values never appear in arguments, environment variables, returned reports or intentional log output. Errors are deliberately generic. Mutable secret buffers are cleared where possible, but JavaScript strings, BigInts, engine copies, operating-system swap and crash dumps cannot be guaranteed erased by this code. Use a trusted, protected client device. Do not expose these operations as a shared server endpoint.
 
-The public proof includes its nullifier, recipient and group root. Ledger activity remains visible. A CLI recovery check is not an independent custody audit, and an offline proof is not evidence that enrollment or a mainnet claim has occurred. A reviewed graphical custody flow, authenticated snapshot distribution, provider recovery policy and production relayer remain release work.
+The public proof includes its nullifier, recipient and group root. Ledger activity remains visible. A CLI recovery check is not an independent custody audit, and an offline proof is not evidence that enrollment or a mainnet claim has occurred. A reviewed graphical custody flow, authenticated snapshot distribution, reviewed registry continuity and recovery policy and production relayer remain release work.

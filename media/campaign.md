@@ -42,7 +42,7 @@ The computing economy is central: requesters buy useful services, providers earn
 
 Useful work. Clear prices. Cannabis. 🌱 We are building money for real computing services, with signed provider offers, encrypted workloads and transparent payment rules. Capacity redemption and protected workers are the next integration steps. Explore the design: https://cannabis-coin.online/network.html
 
-The source, claim contracts, launch preparation, original artwork and English narrated films are public. We are preparing mainnet launch through provider integration, independent security/privacy review and the applicable launch requirements.
+The source, claim contracts, launch preparation, original artwork and English narrated films are public. We are preparing mainnet launch through Cannabis-run enrollment ceremonies, confidential worker integration, independent security/privacy review and the applicable launch requirements.
 
 Bring a good idea, a clear bug report or a creative contribution. Let’s grow something useful.
 
