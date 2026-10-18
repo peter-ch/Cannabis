@@ -6,13 +6,13 @@ Spoken naming: every voiceover must call the project "Cannabis coin". Visual nam
 
 ## Project identity
 
-Cannabis. Grow something wild. Build it together.
+Cannabis. A little wild. A lot of purpose.
 
 Candidate handle: CannabisCommunity (availability not checked). Declare project/founder affiliation. The currency is named exactly Cannabis. Use one truthful project identity and identify sponsored content.
 
 ## Short announcement
 
-Cannabis is growing. 🌱 Efficient by design. Privacy at heart. No proof-of-work. Useful computing. A community built around people. Preparing mainnet launch. Bring your ideas. Grow something wild.
+Cannabis. A little wild. A lot of purpose. 🌱 An open community building a currency for useful computing. Bring your ideas, explore the code and help shape what comes next. Preparing mainnet launch.
 
 [Explore Cannabis](https://peter-ch.github.io/Cannabis/) · [Open source](https://github.com/peter-ch/Cannabis)
 
@@ -24,7 +24,7 @@ The job service is planned. Do not advertise available jobs, earnings, customers
 
 ## Video caption
 
-Grow something wild. Build it together. 🌱 Cannabis brings big character, open code and privacy-preserving community claims to an efficient-network design. Public launch ahead. Original artwork and English narration.
+Good ideas need good company. 🌱 Explore Cannabis: useful computing, open code and a community with room for your ideas. Preparing mainnet launch. Find your place: https://peter-ch.github.io/Cannabis/#join
 
 ## Technical blog
 
@@ -44,7 +44,15 @@ Useful work. Clear prices. Cannabis. 🌱 We are building money for real computi
 
 The source, claim contracts, launch preparation, original artwork and English narrated films are public. We are preparing mainnet launch through provider integration, independent security/privacy review and the applicable launch requirements.
 
-Bring a good idea, a clear bug report or a creative contribution. Grow something wild. Build it together.
+Bring a good idea, a clear bug report or a creative contribution. Let’s grow something useful.
+
+## Campaign graphics
+
+Use the [sharing library](https://peter-ch.github.io/Cannabis/share.html) for nine composed graphics: three messages, each in landscape, square and portrait. The website and films use the same emerald, crystal and lime identity. Keep launch status intact and link to the project.
+
+- Purpose: “A little wild. A lot of purpose.” Invite people to explore the wider idea.
+- Computing: “Grow something useful.” Invite builders to read the code and architecture.
+- Community: “Bring your curiosity. Leave a mark.” Invite thoughtful contributions and conversation.
 
 ## Distribution
 

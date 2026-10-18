@@ -1,12 +1,12 @@
 # Cannabis
 
-**Grow something wild. Build it together.**
+**A little wild. A lot of purpose.**
 
 Cannabis is a production cryptocurrency project built around efficient community participation and privacy-preserving eligibility. **Status: preparing mainnet launch.** [Explore Cannabis](https://peter-ch.github.io/Cannabis/).
 
 **Money for useful computing.** The economic objective is real service demand: people pay in Cannabis for accepted computing work, while providers publish capacity and enforceable redemption terms. Read the [compute economy and backing requirements](docs/compute-economy.md). Service backing becomes operational only when defined provider commitments can actually be redeemed and fulfilled.
 
-![Cannabis crystal collection](web/assets/crystal-lustre.png)
+![Cannabis — A little wild. A lot of purpose.](web/assets/campaign/purpose-landscape.png)
 
 The contracts define a fixed supply cap and one-time verified-person community claims with a common public opening. Read the [allocation, vesting and service terms](docs/tokenomics.md) before participating.
 
@@ -51,6 +51,7 @@ The suite checks real zero-knowledge proofs, replay and recipient-substitution a
 - [Participation risks](docs/risks.md)
 - [Launch review](docs/launch-review.md)
 - [Campaign copy](media/campaign.md)
+- [Ready-to-share graphics](https://peter-ch.github.io/Cannabis/share.html)
 - [English narrated films](media/README.md)
 - [General-purpose workload packaging and result reconstruction](docs/universal-compute.md)
 - [Compute escrow and transparent pricing](docs/compute-payments.md)
