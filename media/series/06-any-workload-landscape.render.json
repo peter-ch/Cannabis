@@ -1,0 +1,35 @@
+{
+  "signature": "931b5280b7aa00d085b72498bea4bdb7560780ffa74feb02bacb9173e0d5ce98",
+  "scriptSHA256": "0463a661f4e6e04e9eb0aac6b99f4be4969e777329f238f7b9b67b4fb7e64a66",
+  "voiceSHA256": "dce3e343ece71a3a91269c1e50a8ca8ef66ce41c97b89e27a9de20ed87fc0458",
+  "sources": [
+    "media/series/broll/crystal-prism.mp4",
+    "web/assets/diagrams/compute-packages.png",
+    "media/series/broll/crystal-monolith.mp4"
+  ],
+  "sourceKinds": [
+    "animation",
+    "diagram",
+    "animation"
+  ],
+  "motionLoops": [
+    "forward/reverse with matched endpoints",
+    "static",
+    "forward/reverse with matched endpoints"
+  ],
+  "audio": "English narration only",
+  "seconds": 36.666667,
+  "width": 1920,
+  "height": 1080,
+  "fps": 24,
+  "videoCodec": "h264",
+  "audioCodec": "aac",
+  "audioStreams": 1,
+  "bytes": 18974013,
+  "sha256": "65e7788fbe6789dbca6fcab88571de8859271ab8c686289ffb5d642b8f403b61",
+  "captionTiming": "proportional within narration segments",
+  "captionsSHA256": {
+    "srt": "ff6b6a24887154dfe778035e26d3e6532b320c0f1fe0adcedda3170a34e4fcf3",
+    "vtt": "0bbdc359007e3cec35f040d122b95f67ad4de29f9be4c896aa40429991008b60"
+  }
+}

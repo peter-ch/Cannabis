@@ -107,7 +107,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for i,(p,kind) in enumerate(zip(inputs,kinds)):
         start=meta['segments'][i]['start'];end=meta['segments'][i+1]['start'] if i+1<len(inputs) else duration
         seconds=end-start;spans.append(seconds)
-        # Wan inputs must be finite: reverse needs their end. Loop matched endpoints
+        # Animation inputs must be finite: reverse needs their end. Loop matched endpoints
         # in the filter graph, avoiding a camera jump from the last frame to the first.
         args+=([] if kind=='animation' else ['-loop','1','-framerate','24'])+['-i',str(p)]
         main_index=input_count;input_count+=1;head_index=None
@@ -126,7 +126,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if kind=='animation':
             source=json.loads(subprocess.check_output(['ffprobe','-v','error','-count_frames','-select_streams','v:0','-show_entries','stream=avg_frame_rate,nb_read_frames','-of','json',str(inputs[i])]))['streams'][0]
             count=int(source['nb_read_frames'])
-            if Fraction(source['avg_frame_rate'])!=24 or count!=121:raise RuntimeError('Expected the reviewed 121-frame Wan shot at 24 fps')
+            if Fraction(source['avg_frame_rate'])!=24 or count!=121:raise RuntimeError('Expected the reviewed 121-frame animation at 24 fps')
             # Buffer at the native shot resolution, before upscaling, to limit memory.
             main_index,head_index=source_indices[i]
             motion,mode=clip_motion_filters(i,count,head_index is not None,main_index,head_index)

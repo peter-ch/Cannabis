@@ -1,0 +1,35 @@
+{
+  "signature": "26064bb3692452eca88000f2e71dba2d44b62f2bf6b473cab69803930daf2777",
+  "scriptSHA256": "64231f40c9a61f7089cb8e555920cf91f5eb59bd9f24282b8b1dbb3181da876a",
+  "voiceSHA256": "60d1d627272b242e0d14201df35b67a2926e12438dc9f0852ebf4c2044363b21",
+  "sources": [
+    "media/series/broll/crystal-aurora.mp4",
+    "web/assets/diagrams/compute-network-client.png",
+    "media/series/broll/crystal-aurora.mp4"
+  ],
+  "sourceKinds": [
+    "animation",
+    "diagram",
+    "animation"
+  ],
+  "motionLoops": [
+    "forward/reverse with matched endpoints",
+    "static",
+    "forward/reverse with matched endpoints"
+  ],
+  "audio": "English narration only",
+  "seconds": 44.083333,
+  "width": 1080,
+  "height": 1920,
+  "fps": 24,
+  "videoCodec": "h264",
+  "audioCodec": "aac",
+  "audioStreams": 1,
+  "bytes": 13205023,
+  "sha256": "30544cd47126b56bb8d547ad7bb9529c3b95074101421a136c982c1b232c07ac",
+  "captionTiming": "proportional within narration segments",
+  "captionsSHA256": {
+    "srt": "040309b7c8629ec38f03ffeeed676fa3a20bc196f18d02fcf00d936288e9f97b",
+    "vtt": "9a6eff0b8d090a22079794a27364994d0a2ba622cfc4cdfbe1233c3884bf6aae"
+  }
+}
