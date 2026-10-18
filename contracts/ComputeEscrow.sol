@@ -14,6 +14,8 @@ contract ComputeEscrow is ReentrancyGuard {
     uint16 public constant FEE_BPS = 100;
     uint16 public constant BPS = 10_000;
     uint16 public constant MAX_WORKERS = 128;
+    uint16 public constant MAX_BATCH = 128;
+    uint256 public constant PAYMENT_QUANTUM = 100;
     uint32 public constant MIN_REVIEW_SECONDS = 1 days;
     uint32 public constant MAX_REVIEW_SECONDS = 14 days;
     uint32 public constant MIN_DISPUTE_SECONDS = 1 days;
@@ -66,6 +68,7 @@ contract ComputeEscrow is ReentrancyGuard {
     error AlreadyAccepted();
     error NothingToWithdraw();
     error InexactTokenTransfer();
+    error InexactFeeAmount();
 
     event Funded(bytes32 indexed orderId, address indexed requester, bytes32 indexed jobHash, uint256 budget);
     event WorkerAccepted(bytes32 indexed orderId, address indexed worker);
@@ -89,6 +92,7 @@ contract ComputeEscrow is ReentrancyGuard {
     function fund(Terms calldata terms, address[] calldata accounts, uint16[] calldata sharesBps)
         external nonReentrant returns (bytes32 id)
     {
+        if (terms.budget % PAYMENT_QUANTUM != 0) revert InexactFeeAmount();
         if (terms.jobHash == bytes32(0) || terms.budget == 0 ||
             terms.adjudicator == address(0) || terms.adjudicator == address(this) ||
             terms.adjudicator == msg.sender || terms.adjudicator == founderRecipient ||
@@ -166,6 +170,16 @@ contract ComputeEscrow is ReentrancyGuard {
     }
 
     function approve(bytes32 id) external {
+        _approve(id);
+    }
+
+    /// @notice Approve several reviewed results atomically, preserving each order's fee.
+    function approveBatch(bytes32[] calldata ids) external {
+        if (ids.length == 0 || ids.length > MAX_BATCH) revert InvalidTerms();
+        for (uint256 i; i < ids.length; ++i) _approve(ids[i]);
+    }
+
+    function _approve(bytes32 id) private {
         Order storage order = orders[id];
         if (order.state != State.Delivered) revert InvalidState();
         if (msg.sender != order.requester) revert Unauthorized();
@@ -208,7 +222,10 @@ contract ComputeEscrow is ReentrancyGuard {
     }
 
     function _settle(bytes32 id, Order storage order, uint256 grossPaid) private {
-        uint256 fee = grossPaid / 100; // Exactly 1%, rounded down to a token base unit.
+        // Every nonzero award has an exact, nonzero 1% fee. Never silently round
+        // away small fees or increase the requester's agreed charge.
+        if (grossPaid % PAYMENT_QUANTUM != 0) revert InexactFeeAmount();
+        uint256 fee = grossPaid / PAYMENT_QUANTUM;
         uint256 refund = order.terms.budget - grossPaid;
         order.state = State.Settled;
         order.grossPaid = grossPaid;
@@ -230,11 +247,22 @@ contract ComputeEscrow is ReentrancyGuard {
     }
 
     function withdrawWorker(bytes32 id, address recipient) external nonReentrant {
-        uint256 amount = workerDue(id, msg.sender);
+        _withdraw(recipient, _collectWorker(id));
+    }
+
+    /// @notice Collect multiple orders with one transfer; recipients remain caller-controlled.
+    function withdrawWorkers(bytes32[] calldata ids, address recipient) external nonReentrant {
+        if (ids.length == 0 || ids.length > MAX_BATCH) revert InvalidTerms();
+        uint256 amount;
+        for (uint256 i; i < ids.length; ++i) amount += _collectWorker(ids[i]);
+        _withdraw(recipient, amount);
+    }
+
+    function _collectWorker(bytes32 id) private returns (uint256 amount) {
+        amount = workerDue(id, msg.sender);
         if (amount == 0) revert NothingToWithdraw();
         uint16 index = workerIndexPlusOne[id][msg.sender];
         orders[id].withdrawnBitmap |= uint256(1) << (index - 1);
-        _withdraw(recipient, amount);
     }
 
     function withdrawCredit(address recipient) external nonReentrant {

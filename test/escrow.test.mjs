@@ -4,8 +4,9 @@ import net from 'node:net';
 import { ContractFactory, parseEther, ZeroAddress, ZeroHash, keccak256, toUtf8Bytes } from 'ethers';
 import { compile } from '../scripts/compile.mjs';
 import { startNode } from '../scripts/lib.mjs';
-import { prepareFunding, inspectOrder, prepareAcceptance } from '../scripts/compute-escrow.mjs';
+import { prepareFunding, inspectOrder, prepareAcceptance, prepareBatchApproval, prepareWorkerWithdrawal, prepareCreditWithdrawal } from '../scripts/compute-escrow.mjs';
 import { policy } from '../scripts/compute-plan.mjs';
+import publishedABI from '../compute/escrow-abi.json' with { type: 'json' };
 
 let node, provider, artifacts, asset, escrow, owner, founder, first, second, adjudicator, outsider, initial;
 const hash = value => keccak256(toUtf8Bytes(value));
@@ -51,6 +52,10 @@ async function withdrawAll(id) {
   for(const signer of [owner,founder])if(await escrow.credits(await signer.getAddress())>0n)
     await (await escrow.connect(signer).withdrawCredit(await signer.getAddress())).wait();
 }
+test('published escrow ABI matches the compiled exact-fee contract',()=>{
+  assert.deepEqual(publishedABI,artifacts.ComputeEscrow.abi);
+});
+
 test('funded multi-worker job pays exactly 1% and preserves all token units',async t=>{
   await reset();const {id,receipt}=await create();
   assert.equal(await escrow.totalLiability(),amount);
@@ -129,13 +134,80 @@ test('adjudicator inactivity cannot lock funds permanently or collect a founder 
   assert.equal(await escrow.credits(await owner.getAddress()),amount);assert.equal(await escrow.credits(await founder.getAddress()),0n);
 });
 test('worker-share rounding conserves indivisible units and zero rewards cannot be collected',async()=>{
-  await reset();const {id}=await create({budget:101n,shares:[3333,6667]});await activate(id);await deliver(id);await (await escrow.approve(id)).wait();
+  await reset();const {id}=await create({budget:100n,shares:[3333,6667]});await activate(id);await deliver(id);await (await escrow.approve(id)).wait();
   assert.equal(await escrow.credits(await founder.getAddress()),1n);
-  assert.equal(await escrow.workerDue(id,await first.getAddress()),33n);assert.equal(await escrow.workerDue(id,await second.getAddress()),67n);
+  assert.equal(await escrow.workerDue(id,await first.getAddress()),32n);assert.equal(await escrow.workerDue(id,await second.getAddress()),67n);
   await withdrawAll(id);assert.equal(await escrow.totalLiability(),0n);
-  const tiny=await create({budget:1n,name:'tiny',shares:[1,9999]});await activate(tiny.id);await deliver(tiny.id);await (await escrow.approve(tiny.id)).wait();
+  const tiny=await create({budget:100n,name:'tiny',shares:[1,9999]});await activate(tiny.id);await deliver(tiny.id);await (await escrow.approve(tiny.id)).wait();
   assert.equal(await escrow.workerDue(tiny.id,await first.getAddress()),0n);await withdrawAll(tiny.id);assert.equal(await escrow.totalLiability(),0n);
 });
+test('every positive payment has exactly 1% fees; nonrepresentable budgets and awards fail',async()=>{
+  await reset();
+  for (const budget of [1n, 99n, 101n, 199n, (1n << 256n) - 1n])
+    await assert.rejects(create({budget,name:'invalid-'+budget}),error=>error.data===escrow.interface.getError('InexactFeeAmount').selector);
+  assert.equal(await escrow.totalLiability(),0n);
+  for (const budget of [100n, 200n, 1000n, 100000000000000n]) {
+    const {id}=await create({budget,name:'exact-'+budget});await activate(id);await deliver(id);
+    await (await escrow.dispute(id,hash('partial award'))).wait();
+    await assert.rejects(escrow.connect(adjudicator).resolve.staticCall(id,1n),/InexactFeeAmount/);
+    assert.equal((await escrow.orders(id)).state,4n);
+    const accepted=budget===100n?100n:budget-100n;
+    const before=await escrow.credits(await founder.getAddress());
+    await (await escrow.connect(adjudicator).resolve(id,accepted)).wait();
+    assert.equal(await escrow.credits(await founder.getAddress())-before,accepted/100n);
+    assert.equal((await escrow.orders(id)).workerPool*100n,accepted*99n);
+    await withdrawAll(id);
+  }
+  assert.equal(await escrow.totalLiability(),0n);
+  assert.equal(await asset.balanceOf(await escrow.getAddress()),0n);
+});
+
+test('batch approval and withdrawal retain individual fees and consolidate actual transfers',async()=>{
+  await reset();const ids=[];
+  for (const budget of [100n, 200n, 300n]) {
+    const {id}=await create({budget,name:'batch-'+budget});await activate(id);await deliver(id);ids.push(id);
+  }
+  const receipt=await (await escrow.approveBatch(ids)).wait();
+  const settlements=receipt.logs.map(log=>{try{return escrow.interface.parseLog(log);}catch{return null;}}).filter(x=>x?.name==='Settled');
+  assert.deepEqual(settlements.map(x=>x.args.founderFee),[1n,2n,3n]);
+  assert.equal(await escrow.credits(await founder.getAddress()),6n);
+  for (const worker of [first,second]) {
+    const account=await worker.getAddress();
+    const expected=(await Promise.all(ids.map(id=>escrow.workerDue(id,account)))).reduce((a,b)=>a+b,0n);
+    const before=await asset.balanceOf(account);
+    await (await escrow.connect(worker).withdrawWorkers(ids,account)).wait();
+    assert.equal(await asset.balanceOf(account)-before,expected);
+    for (const id of ids) assert.equal(await escrow.workerDue(id,account),0n);
+    await assert.rejects(escrow.connect(worker).withdrawWorkers.staticCall(ids,account),/NothingToWithdraw/);
+  }
+  assert.equal(await escrow.totalLiability(),6n);
+  await (await escrow.connect(founder).withdrawCredit(await founder.getAddress())).wait();
+  assert.equal(await asset.balanceOf(await founder.getAddress()),6n);
+  assert.equal(await escrow.totalLiability(),0n);
+  assert.equal(await asset.balanceOf(await escrow.getAddress()),0n);
+});
+
+test('invalid batches cannot settle or consume a valid prefix, redirect another account or replay',async()=>{
+  await reset();const {id}=await create({budget:100n});await activate(id);await deliver(id);
+  for (const ids of [[],[id,hash('missing')],[id,id],Array(129).fill(id)]) {
+    await assert.rejects(async()=>{await (await escrow.approveBatch(ids,{gasLimit:1000000})).wait();});
+    assert.equal((await escrow.orders(id)).state,3n);
+    assert.equal(await escrow.credits(await founder.getAddress()),0n);
+  }
+  await assert.rejects(escrow.connect(outsider).approveBatch.staticCall([id]),/Unauthorized/);
+  await (await escrow.approveBatch([id])).wait();
+  const due=await escrow.workerDue(id,await first.getAddress());
+  for (const ids of [[],[id,hash('missing')],[id,id],Array(129).fill(id)]) {
+    await assert.rejects(async()=>{await (await escrow.connect(first).withdrawWorkers(ids,await first.getAddress(),{gasLimit:1000000})).wait();});
+    assert.equal(await escrow.workerDue(id,await first.getAddress()),due);
+    assert.equal(await escrow.totalLiability(),100n);
+  }
+  await assert.rejects(escrow.connect(outsider).withdrawWorkers.staticCall([id],await outsider.getAddress()),/NothingToWithdraw/);
+  await assert.rejects(escrow.connect(first).withdrawWorkers.staticCall([id],ZeroAddress),/InvalidTerms/);
+  await assert.rejects(escrow.connect(first).withdrawWorkers.staticCall([id],await escrow.getAddress()),/InvalidTerms/);
+  await withdrawAll(id);assert.equal(await escrow.totalLiability(),0n);
+});
+
 test('duplicate jobs and malformed roles, schedules and worker shares are rejected',async()=>{
   await reset();const {terms,id}=await create();
   const accounts=[await first.getAddress(),await second.getAddress()];
@@ -195,4 +267,23 @@ test('unsigned funding and worker acceptance verify code, fee, chain and complet
   await assert.rejects(inspectOrder({...options,orderId:package_.orderId,tokenCodeHash:ZeroHash}),/Runtime code/);
   await assert.rejects(prepareFunding({...options,escrow:await escrow.getAddress(),escrowCodeHash:keccak256(await provider.getCode(await escrow.getAddress()))}),/fee policy/);
   await assert.rejects(prepareFunding({...options,job:{...job,id:'new-job',payment:{...job.payment,totalBudget:'1000000000000'}}}),/balance is below/);
+  await(await target.connect(second).accept(package_.orderId)).wait();
+  await(await target.connect(first).deliver(package_.orderId,hash('verified-encrypted-result'))).wait();
+  const approvalOptions={...options,requester:await owner.getAddress(),approvals:[{orderId:package_.orderId,expectedTermsDigest:package_.termsDigest,expectedOutputDigest:hash('verified-encrypted-result')}]};
+  await assert.rejects(prepareBatchApproval({...approvalOptions,approvals:[{...approvalOptions.approvals[0],expectedOutputDigest:hash('substitution')}]}),/differs/);
+  await assert.rejects(prepareBatchApproval({...approvalOptions,requester:await outsider.getAddress()}),/differs/);
+  await assert.rejects(prepareBatchApproval({...approvalOptions,approvals:[...approvalOptions.approvals,...approvalOptions.approvals]}),/distinct/);
+  const approval=await prepareBatchApproval(approvalOptions);
+  assert.equal(approval.sent,false);assert.equal(approval.founderFeeAtomic,parseEther('1').toString());
+  assert.equal((await target.orders(package_.orderId)).state,3n);
+  await(await owner.sendTransaction(approval.transaction)).wait();
+  const withdrawalOptions={...options,worker:await first.getAddress(),recipient:await first.getAddress(),orderIds:[package_.orderId]};
+  const withdrawal=await prepareWorkerWithdrawal(withdrawalOptions);
+  assert.equal(withdrawal.sent,false);assert.equal(withdrawal.amountAtomic,parseEther('59.4').toString());
+  await assert.rejects(prepareWorkerWithdrawal({...withdrawalOptions,worker:await outsider.getAddress()}),/positive unwithdrawn/);
+  await(await first.sendTransaction(withdrawal.transaction)).wait();
+  await assert.rejects(prepareWorkerWithdrawal(withdrawalOptions),/positive unwithdrawn/);
+  const credit=await prepareCreditWithdrawal({...options,account:policy.founderRecipient,recipient:policy.founderRecipient});
+  assert.equal(credit.sent,false);assert.equal(credit.amountAtomic,parseEther('1').toString());
+  assert.equal(await target.credits(policy.founderRecipient),parseEther('1'));
 });

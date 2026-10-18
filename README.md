@@ -55,6 +55,7 @@ The suite checks real zero-knowledge proofs, replay and recipient-substitution a
 - [English narrated films](media/README.md)
 - [General-purpose workload packaging and result reconstruction](docs/universal-compute.md)
 - [Compute escrow and transparent pricing](docs/compute-payments.md)
+- [Small jobs, exact fees and reproducible integration checks](docs/microjobs.md)
 - [Signed capacity commitments and reservation controls](docs/capacity-commitments.md)
 - [Trustee attestation checks and single-use challenges](docs/trustee-attestation.md)
 - [Per-job encryption keys and requester recovery](docs/job-key-custody.md)

@@ -26,9 +26,17 @@ Only an encrypted result digest is submitted on-chain. The contract does not rea
 
 ## Exact amounts
 
-For a gross accepted amount of 100 Cannabis, the founder earns 1 and the worker pool receives 99. The founder fee is computed once on the awarded gross amount, rounded down in token base units. Worker payouts use cumulative basis-point rounding so their sum exactly equals the pool. Refunded amounts incur no founder fee. Network transaction fees are separate.
+For a gross accepted amount of 100 Cannabis, the founder earns 1 and the worker pool receives 99. Every funded budget and nonzero award must be an exact multiple of 100 token base units. This makes the 1% fee exact and nonzero for every accepted paid job, including the smallest supported amount. The contract and clients reject unrepresentable amounts instead of rounding the fee away or increasing the charge. Partial dispute awards follow the same rule; a zero award is a full refund.
+
+Cannabis uses 18 decimals, so the minimum and increment are 0.0000000000000001 Cannabis. This is a token precision rule, not a fiat price. Worker payouts use cumulative basis-point rounding so their sum exactly equals the pool. Refunded amounts incur no founder fee. Network transaction fees are separate.
 
 Withdrawals use pull payments and reentrancy protection. The escrow tracks outstanding liabilities. Neither a file hash nor an unsigned transaction review is evidence that any real-world service was delivered or paid.
+
+## Small jobs and aggregated withdrawals
+
+Each accepted job immediately credits its fee to the founder's withdrawable contract balance. `withdrawCredit` collects accumulated fees in one token transfer; a separate transfer is not required for every tiny fee. `approveBatch` approves up to 128 independently reviewed orders belonging to the caller. `withdrawWorkers` combines positive, unwithdrawn payments from up to 128 orders into one transfer controlled by that worker. A duplicate, invalid or unauthorized item reverts the entire batch. An approval batch still emits a separate settlement event for every order.
+
+Aggregation reduces transaction overhead; it does not make Ethereum mainnet gas disappear. A viable fraction-of-a-cent service needs a compatible low-cost settlement network or a separately reviewed payment-channel design, economical provider quotes and an explicit all-in budget. No live microjob prices or paid service are advertised yet. See [microjob verification and economics](microjobs.md).
 
 ## Wallet review commands
 
@@ -36,9 +44,14 @@ Withdrawals use pull payments and reentrancy protection. The escrow tracks outst
 npm run compute:escrow -- fund funding-config.json unsigned-funding.json
 npm run compute:escrow -- inspect inspection-config.json order-review.json
 npm run compute:escrow -- accept acceptance-config.json unsigned-acceptance.json
+npm run compute:escrow -- approve-batch approvals-config.json unsigned-approvals.json
+npm run compute:escrow -- withdraw-workers withdrawals-config.json unsigned-withdrawals.json
+npm run compute:escrow -- withdraw-credit credit-config.json unsigned-credit.json
 ```
 
 These commands verify chain identity, escrow/token runtime hashes, fee and founder recipient. Funding preparation quotes an exact-budget token allowance and exports unsigned approval/funding transactions. Worker acceptance requires a digest of the full immutable settlement terms. The commands do not sign or send transactions.
+
+Batch approval additionally requires `requester` and an `approvals` array containing `orderId`, `expectedTermsDigest` and `expectedOutputDigest` for each verified result. The tool checks the delivered state and exact commitments and simulates the approval. It cannot determine output quality; requester acceptance remains required. Worker withdrawal takes `worker`, `recipient` and `orderIds`. Credit withdrawal takes `account` and `recipient`. All use the same RPC, chain, escrow, token and runtime-hash pins as inspection. These commands also simulate without signing or sending.
 
 Arbitrary workloads use a `cannabis.compute.order.v2` job object containing an opaque `id`, `requester`, the encrypted `packageSHA256`, confidential `policySHA256`, encrypted `acceptanceSHA256`, and `payment: {totalBudget, feeBasisPoints, founderRecipient}`. SHA256 fields are lowercase 64-character hex strings without `0x`; the budget is an exact decimal token amount. This binds the universal client's package to payment without exposing its adapter launch instructions or restricting its application type. The legacy `cannabis.compute.job.v1` format remains accepted for earlier manifests.
 

@@ -37,6 +37,14 @@ class ClientTests(unittest.TestCase):
     def tearDown(self):self.tmp.cleanup()
     def pack(self):
         p=self.root/'job.age';d=pack_workload(self.spec,self.source,self.recipient,p,self.age);return p,d
+    def test_placement_rejects_quotes_that_would_erase_or_round_the_fee(self):
+        for gross in (0,1,99,101,199):
+            with self.assertRaisesRegex(ValueError,'exact 1% fee'):
+                plan(self.spec,[worker('dust',price=gross)],10000)
+        result=plan(self.spec,[worker('minimum',price=100)],100)
+        self.assertEqual(result['quotedFounderBaseUnits'],'1')
+        self.assertEqual(result['quotedWorkerBaseUnits'],'99')
+
     def test_arbitrary_adapter_private_streaming_roundtrip(self):
         p,d=self.pack();raw=p.read_bytes()
         self.assertNotIn(b'customer-secret-code',raw);self.assertNotIn('private-customer-label',json.dumps(d));self.assertNotIn('program.bin',json.dumps(d))

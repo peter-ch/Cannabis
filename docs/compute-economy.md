@@ -24,7 +24,7 @@ Public claims about backing must state their scope: the actual providers, servic
 
 Providers compete on compatible resources, total price, delivery time and verified service history. Requesters choose a budget and deadline. Any metering rules, assembly charges or completion bonus must be agreed before work starts and bounded by the funded maximum. A bonus is earned only for the accepted complete result, including assembly and transfer, by the agreed deadline.
 
-For a gross accepted payment of 100 Cannabis, workers share 99 and the founder receives 1. A refunded amount earns no founder service fee. Token transfers use exact integer base units; the [payment guide](compute-payments.md) describes rounding and all timeout outcomes. Network transaction fees are separate from the service budget.
+For a gross accepted payment of 100 Cannabis, workers share 99 and the founder receives 1. A refunded amount earns no founder service fee. Token transfers use exact integer base units; the [payment guide](compute-payments.md) describes exact fee increments, worker-share rounding, accumulated withdrawals and all timeout outcomes. Network transaction fees are separate from the service budget.
 
 The implemented escrow uses a fixed budget and pre-agreed worker shares. It does not yet meter resource consumption or verify delivery-speed bonuses. Those features require reviewed evidence, dispute rules and settlement integration before they become live pricing options.
 

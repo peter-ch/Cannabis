@@ -22,6 +22,7 @@
     "quote:launch": "node scripts/quote-launch.mjs",
     "participant": "node scripts/participant.mjs",
     "exercise:local": "node scripts/exercise-activity.mjs",
+    "exercise:microjobs": "node scripts/exercise-microjobs.mjs",
     "check:dependencies": "node scripts/check-dependencies.mjs"
   },
   "license": "MIT",

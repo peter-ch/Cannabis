@@ -25,6 +25,8 @@ jobs:
       - run: npm test
       - name: Verify generic compute client and placement
         run: python -m unittest discover -s test -p 'test_compute_client.py' -v
+      - name: Execute owned microjob fixtures and verify exact settlement
+        run: npm run exercise:microjobs
       - name: Check guest image tooling syntax
         run: python -m py_compile scripts/build-guest-image.py scripts/verify-guest-boot.py compute/guest-image/boot-check.py
       - run: npm audit --audit-level=high

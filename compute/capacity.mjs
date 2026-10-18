@@ -39,6 +39,7 @@ export function reservationPayload(context,reservation) {
   const d=domain(context);exact(reservation,reservationTypes.CapacityReservation.map(x=>x.name));
   for(const key of ['reservationId','offerDigest','jobSHA256'])if(!hash(reservation[key]))throw Error('Invalid reservation commitment');
   address(reservation.requester);for(const key of ['start','end','holdUntil'])number(reservation[key]);number(reservation.units,100000);amount(reservation.grossBaseUnits);
+  if (BigInt(reservation.grossBaseUnits) % 100n !== 0n) throw Error('Reservation gross must be a multiple of 100 base units for an exact 1% fee');
   if(reservation.end<=reservation.start)throw Error('Invalid reservation interval');
   return {domain:d,types:reservationTypes,value:reservation,digest:TypedDataEncoder.hash(d,reservationTypes,reservation)};
 }

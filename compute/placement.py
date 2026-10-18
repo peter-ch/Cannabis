@@ -25,7 +25,8 @@ def plan(spec, workers, budget_base_units, *, objective='fastest', deadline_seco
         integer(w.get('availableInSeconds',0),'availability')
         for q in w.get('quotes',[]):
             if q.get('feeBasisPoints')!=100:raise ValueError('Quotes must include the fixed 1% founder fee')
-            integer(q.get('grossBaseUnits'),'gross quote')
+            gross=integer(q.get('grossBaseUnits'),'gross quote')
+            if gross<100 or gross%100:raise ValueError('Paid quotes must be positive multiples of 100 base units for an exact 1% fee')
             if integer(q.get('runSeconds'),'run time')<1:raise ValueError('Positive run time required')
             integer(q.get('transferSeconds',0),'transfer time')
     by_task={t['id']:t for t in spec['tasks']};finish={};free={};assignments=[];spent=0

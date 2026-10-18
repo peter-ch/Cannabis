@@ -61,8 +61,8 @@ async function connect(options) {
     if(codes.some(c=>c==='0x') || keccak256(codes[0]).toLowerCase()!==options.escrowCodeHash.toLowerCase() ||
        keccak256(codes[1]).toLowerCase()!==options.tokenCodeHash.toLowerCase())throw Error('Runtime code does not match the reviewed release');
     const contract=new Contract(escrow,escrowABI,provider),asset=new Contract(token,erc20,provider);
-    const [boundToken,fee,recipient]=await Promise.all([contract.token(),contract.FEE_BPS(),contract.founderRecipient()]);
-    if(boundToken!==token || fee!==100n || recipient!==getAddress(policy.founderRecipient))throw Error('Escrow token or fee policy does not match');
+    const [boundToken,fee,recipient,quantum]=await Promise.all([contract.token(),contract.FEE_BPS(),contract.founderRecipient(),contract.PAYMENT_QUANTUM()]);
+    if(boundToken!==token || fee!==100n || quantum!==100n || recipient!==getAddress(policy.founderRecipient))throw Error('Escrow token or fee policy does not match');
     return {provider,contract,asset,chainId,escrow,token,founderRecipient:recipient};
   }catch(error){provider.destroy();throw error;}
 }
@@ -125,13 +125,57 @@ export async function prepareAcceptance(options){
       sent:false,executionAuthorized:false,keyReleaseAuthorized:false,review};
   }finally{c.provider.destroy();}
 }
+function batchIds(ids) {
+  if(!Array.isArray(ids)||ids.length<1||ids.length>128||ids.some(id=>typeof id!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(id))||new Set(ids.map(id=>id.toLowerCase())).size!==ids.length)
+    throw Error('Require 1 to 128 distinct order IDs');
+  return ids;
+}
+export async function prepareBatchApproval(options) {
+  if(!Array.isArray(options.approvals))throw Error('Reviewed result approvals required');
+  const ids=batchIds(options.approvals.map(a=>a.orderId)),requester=getAddress(options.requester);
+  const reviewed=[];let gross=0n;
+  for(const approval of options.approvals) {
+    const order=await inspectOrder({...options,orderId:approval.orderId});
+    if(order.requester!==requester||order.state!==3||order.termsDigest!==approval.expectedTermsDigest||order.outputDigest!==approval.expectedOutputDigest)
+      throw Error('Requester, delivered state, terms or encrypted result differs from the reviewed approval');
+    gross+=BigInt(order.terms.budget);reviewed.push(order);
+  }
+  const c=await connect(options);
+  try {
+    await c.contract.approveBatch.staticCall(ids,{from:requester});
+    return {status:'UNSIGNED_COMPUTE_BATCH_APPROVAL',orders:reviewed,grossAtomic:gross.toString(),founderFeeAtomic:(gross/100n).toString(),
+      transaction:transaction(c,requester,c.escrow,c.contract.interface.encodeFunctionData('approveBatch',[ids])),sent:false,
+      review:[...review,'Verify and accept every private result before signing; this command cannot judge output quality']};
+  }finally{c.provider.destroy();}
+}
+export async function prepareWorkerWithdrawal(options) {
+  const ids=batchIds(options.orderIds),worker=getAddress(options.worker),recipient=getAddress(options.recipient),c=await connect(options);
+  try {
+    const amounts=await Promise.all(ids.map(id=>c.contract.workerDue(id,worker)));
+    if(amounts.some(amount=>amount===0n))throw Error('Every selected order must have a positive unwithdrawn worker payment');
+    await c.contract.withdrawWorkers.staticCall(ids,recipient,{from:worker});
+    return {status:'UNSIGNED_COMPUTE_WORKER_WITHDRAWAL',orderIds:ids,worker,recipient,
+      amountAtomic:amounts.reduce((a,b)=>a+b,0n).toString(),
+      transaction:transaction(c,worker,c.escrow,c.contract.interface.encodeFunctionData('withdrawWorkers',[ids,recipient])),sent:false,review};
+  }finally{c.provider.destroy();}
+}
+export async function prepareCreditWithdrawal(options) {
+  const account=getAddress(options.account),recipient=getAddress(options.recipient),c=await connect(options);
+  try {
+    const amount=await c.contract.credits(account);
+    await c.contract.withdrawCredit.staticCall(recipient,{from:account});
+    return {status:'UNSIGNED_COMPUTE_CREDIT_WITHDRAWAL',account,recipient,amountAtomic:amount.toString(),
+      transaction:transaction(c,account,c.escrow,c.contract.interface.encodeFunctionData('withdrawCredit',[recipient])),sent:false,review};
+  }finally{c.provider.destroy();}
+}
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   const [action,file,out,...extra]=process.argv.slice(2);
-  if(!['fund','inspect','accept'].includes(action)||!file||!out||extra.length)throw Error('Usage: compute-escrow.mjs fund|inspect|accept config.json output.json');
+  const actions={fund:prepareFunding,inspect:inspectOrder,accept:prepareAcceptance,'approve-batch':prepareBatchApproval,'withdraw-workers':prepareWorkerWithdrawal,'withdraw-credit':prepareCreditWithdrawal};
+  if(!Object.hasOwn(actions,action)||!file||!out||extra.length)throw Error('Usage: compute-escrow.mjs fund|inspect|accept|approve-batch|withdraw-workers|withdraw-credit config.json output.json');
   if(fs.statSync(file).size>1048576)throw Error('Configuration exceeds 1 MiB');
   if(fs.existsSync(out))throw Error('Output exists; select a new file');
   const options=JSON.parse(fs.readFileSync(file,'utf8'));
-  const result=await ({fund:prepareFunding,inspect:inspectOrder,accept:prepareAcceptance}[action])(options);
+  const result=await actions[action](options);
   fs.writeFileSync(out,JSON.stringify(result,null,2)+'\n',{flag:'wx'});
   console.log(JSON.stringify({output:path.resolve(out),status:result.status??'READ_ONLY_INSPECTION',sent:false}));
 }

@@ -27,6 +27,11 @@
   },
   {
     "inputs": [],
+    "name": "InexactFeeAmount",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "InexactTokenTransfer",
     "type": "error"
   },
@@ -263,6 +268,19 @@
   },
   {
     "inputs": [],
+    "name": "MAX_BATCH",
+    "outputs": [
+      {
+        "internalType": "uint16",
+        "name": "",
+        "type": "uint16"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "MAX_DISPUTE_SECONDS",
     "outputs": [
       {
@@ -327,6 +345,19 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "PAYMENT_QUANTUM",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "bytes32",
@@ -348,6 +379,19 @@
       }
     ],
     "name": "approve",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32[]",
+        "name": "ids",
+        "type": "bytes32[]"
+      }
+    ],
+    "name": "approveBatch",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -733,6 +777,24 @@
       }
     ],
     "name": "withdrawWorker",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32[]",
+        "name": "ids",
+        "type": "bytes32[]"
+      },
+      {
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      }
+    ],
+    "name": "withdrawWorkers",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

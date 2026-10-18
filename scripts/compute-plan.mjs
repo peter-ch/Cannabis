@@ -21,11 +21,12 @@ export function quotePayment(totalBudget) {
   if (typeof totalBudget !== 'string' || !/^(0|[1-9]\d*)(\.\d{1,18})?$/.test(totalBudget)) throw Error('Budget must be an exact decimal Cannabis amount');
   const total = parseUnits(totalBudget, 18);
   if (total <= 0n || total > (1n << 256n) - 1n) throw Error('Budget outside token amount range');
+  if (total % 100n !== 0n) throw Error('Budget must use multiples of 0.0000000000000001 Cannabis for an exact 1% fee');
   const fee = total * BigInt(policy.feeBasisPoints) / 10000n;
   return { totalAtomic: total.toString(), founderFeeAtomic: fee.toString(), workerPoolAtomic: (total - fee).toString(),
     totalCannabis: formatUnits(total, 18), founderFeeCannabis: formatUnits(fee, 18), workerPoolCannabis: formatUnits(total - fee, 18),
     feeBasisPoints: policy.feeBasisPoints, founderRecipient: getAddress(policy.founderRecipient),
-    feeAppliesTo: policy.feeAppliesTo, networkFeesIncluded: false };
+    feeAppliesTo: policy.feeAppliesTo, paymentQuantumAtomic: '100', networkFeesIncluded: false };
 }
 export function validateJob(job) {
   exact(job, ['schema', 'id', 'requester', 'kind', 'runtime', 'collectiveBackend', 'execution', 'confidentiality', 'resources', 'payment', 'acceptance'], 'job');

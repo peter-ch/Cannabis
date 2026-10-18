@@ -5,6 +5,7 @@
   "tokenName": "Cannabis",
   "tokenDecimals": 18,
   "feeAppliesTo": "accepted-paid-work",
-  "feeRounding": "down-to-token-base-unit",
+  "feeRounding": "exact-reject-unrepresentable-gross",
+  "paymentQuantumAtomic": "100",
   "status": "preparing-service"
 }

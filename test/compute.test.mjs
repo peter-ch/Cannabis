@@ -20,11 +20,11 @@ function worker(id, runtime = 'cpu') {
 }
 test('1% founder fee uses integer arithmetic and preserves the exact total', () => {
   const quote = quotePayment('100'); assert.equal(quote.founderFeeCannabis, '1.0'); assert.equal(quote.workerPoolCannabis, '99.0');
-  for (const amount of ['0.000000000000000001', '0.000000000000000199', '123456789123456789.123456789123456789']) {
+  for (const amount of ['0.0000000000000001', '0.0000000000000002', '123456789123456789.1234567891234567']) {
     const q = quotePayment(amount), total = BigInt(q.totalAtomic), fee = BigInt(q.founderFeeAtomic);
     assert.equal(fee + BigInt(q.workerPoolAtomic), total); assert.equal(fee, total / 100n);
   }
-  for (const value of ['0', '-1', '1e20', '1.0000000000000000001', '9'.repeat(90), 1]) assert.throws(() => quotePayment(value));
+  for (const value of ['0', '-1', '1e20', '0.000000000000000001', '0.000000000000000199', '1.0000000000000000001', '9'.repeat(90), 1]) assert.throws(() => quotePayment(value));
 });
 test('job cannot silently remove the founder fee, change its recipient or use mutable code', () => {
   for (const alter of [

@@ -39,7 +39,7 @@ test('expired holds release capacity; altered prices, unauthorized reservations 
   l.reserve(await reservation(digest,{units:2,grossBaseUnits:'2000'}),now);
   l.reserve(await reservation(digest,{reservationId:h(14),units:2,grossBaseUnits:'2000',holdUntil:now+800}),now+501);
   for(const changes of [{reservationId:h(15),grossBaseUnits:'999'},{reservationId:h(16),holdUntil:now+5000},{reservationId:h(17),start:now-1}]){
-    const r=await reservation(digest,changes);assert.throws(()=>l.reserve(r,now));
+    await assert.rejects(async()=>{const r=await reservation(digest,changes);l.reserve(r,now);});
   }
   const r=await reservation(digest,{reservationId:h(18)});r.providerSignature=r.requesterSignature;assert.throws(()=>l.reserve(r,now),/Provider reservation/);
   assert.throws(()=>l.addOffer({offer:{},signature:'0x'},now));
