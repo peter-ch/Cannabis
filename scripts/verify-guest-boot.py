@@ -62,6 +62,20 @@ def main():
         'requestedEvidence':False, 'acceptedJobKeys':False, 'hardwareValidated':False}
     if result.get('initializationChecks') != expected_initialization:
         raise ValueError('Initialization enforcement did not pass its negative checks')
+    resources = result.get('resourceChecks', {})
+    checks = resources.get('checks', {})
+    refusals = {'changedLimitsRejected', 'missingControllersRejected', 'ordinaryFilesystemRejected', 'intermediateSymlinkRejected'}
+    expected_checks = {'normalExit', 'cpuQuota', 'wholeGroupOOM', 'forkLimit', 'deadlineTreeKill', 'cancelTreeKill'} | refusals
+    if resources.get('schema') != 'cannabis.guest-resources-check.v1' or resources.get('kernel') != report['kernelRelease'] or resources.get('customerCodeExecuted') is not False or resources.get('hardwareValidated') is not False or set(checks) != expected_checks:
+        raise ValueError('Guest resource enforcement checks are missing')
+    for name in expected_checks - refusals:
+        if checks[name].get('removed') is not True or checks[name].get('populated') is not False:
+            raise ValueError('Guest resource cleanup did not complete')
+    if (checks['cpuQuota']['cpu']['nr_throttled'] < 1 or checks['wholeGroupOOM']['memory']['oom_group_kill'] < 1
+            or checks['wholeGroupOOM']['memory']['oom_kill'] < 2 or checks['forkLimit']['pids']['max'] < 1
+            or checks['deadlineTreeKill']['reason'] != 'deadline' or checks['cancelTreeKill']['reason'] != 'cancelled'
+            or checks['normalExit']['reason'] != 'empty' or any(checks[name] is not True for name in refusals)):
+        raise ValueError('Guest kernel did not enforce its resource limits')
     if result['schema'] != 'cannabis.guest-boot-check.v1' or result['kernel'] != report['kernelRelease'] or result['imageFilesVerified'] != report['embeddedFiles'] or result['tee'] != 'sample' or result['profileChecks'] != [{'profile':p, 'unsupportedHardwareRejected':True} for p in ['snp','tdx']] or any(result[k] is not False for k in ['requestedEvidence','acceptedJobKeys','launchedCustomerWork','hardwareValidated']):
         raise ValueError('Unexpected guest result')
     final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}

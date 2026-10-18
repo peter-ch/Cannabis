@@ -73,7 +73,15 @@ def main():
         PHASE = 'initialization_gate'
         initialized = subprocess.run(['/usr/local/bin/node', '/opt/cannabis/scripts/check-guest-initialization.mjs'], capture_output=True, timeout=90, check=True)
         initialization_checks = json.loads(initialized.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        PHASE = 'resource_enforcement'
+        resources = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-resources.py'], capture_output=True, timeout=90)
+        if resources.returncode:
+            # This command runs only checked-in owned programs. Its bounded
+            # diagnostics contain no customer input, evidence or job keys.
+            print('CANNABIS_RESOURCE_FAILURE ' + resources.stderr.decode(errors='replace')[-4096:].replace('\n', ' | '), flush=True)
+            raise RuntimeError('Kernel resource acceptance failed')
+        resource_checks = json.loads(resources.stdout)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:

@@ -2,7 +2,7 @@
 
 `scripts/build-guest-image.py` assembles a Linux kernel and complete in-memory boot filesystem containing the [pinned guest evidence services](guest-service-build.md), Node, Python, age and the Cannabis control-plane modules. The current entry point checks those components and powers off. It has no customer-job intake, operating worker endpoint or confidential-hardware authorization.
 
-This image is a step toward the measured worker described in [worker deployment](worker-deployment.md). It is not a mainnet service release. Assignment initialization is integrated into the control-plane startup API; its hardware acceptance, the workload launcher, protected runtime, resource limits and authenticated transport remain required.
+This image is a step toward the measured worker described in [worker deployment](worker-deployment.md). It is not a mainnet service release. Assignment initialization and kernel resource enforcement are integrated into its checks. Hardware acceptance, the isolated workload launcher, protected storage, authenticated transport and independent review remain required.
 
 ## Inputs and assembly
 
@@ -47,6 +47,49 @@ Inside the VM, the entry point mounts ephemeral runtime storage, disables core d
 The boot check also runs the [initialization gate](guest-initialization.md) with both CPU profiles. It requires exact refusal on unsupported hardware and verifies that child services and sockets are removed. A cancelled startup, changed service binary and occupied loopback port must fail. An existing listener is never queried as if it were the spawned bridge.
 
 The check deliberately does not treat execution on real SNP/TDX hardware as an accepted deployment: that requires the separate initialization, measurement, negative-case and full workload acceptance run. Do not turn an ordinary boot result into an attestation policy.
+
+## Resource enforcement inside the guest
+
+`compute/guest_resources.py` supplies a cgroup-v2 boundary for the trusted launcher.
+It creates one fresh group beneath an already configured, empty parent, without
+changing ancestor limits or moving other services. It requires the real kernel
+filesystem, root-owned paths without writable ancestors or symlinks, and enabled
+CPU, memory and process controllers. Ordinary files cannot stand in for enforcement.
+
+The boundary sets a CPU quota, aggregate memory ceiling, process/thread ceiling,
+whole-group out-of-memory handling, and zero swap allowance. It disables compressed
+swap where that control exists and prevents child cgroups. Controls are read back
+before admission. A single-threaded trusted helper moves itself into the group
+before starting customer execution, so its descendants inherit the limits.
+Normal scheduling is required; the isolated runtime must remove capabilities and
+real-time scheduling privileges that could bypass these controls.
+
+The live supervisor waits for completion, cancellation or a monotonic wall deadline.
+Cleanup uses the kernel's tree-wide kill operation, checks that no processes remain,
+then removes only the group it created. A new process session does not escape that
+cleanup. Failure to prove cleanup is an error requiring guest retirement. A separate
+watchdog must still dispose of the guest if the supervisor itself crashes. These
+semantics follow the [Linux cgroup-v2 interface](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html).
+
+The boot check executes bounded owned programs to verify CPU throttling, whole-group
+memory exhaustion, fork refusal, successful completion, cancellation and deadline
+cleanup. It also rejects changed limits, missing controllers, ordinary directories
+and intermediate symlinks. CI runs the same kernel checks on Linux. They do not
+use customer data, job keys or payments. To run them on a disposable Linux system
+whose root hierarchy already enables CPU, memory and process controllers:
+
+```sh
+sudo python3 -I -B scripts/check-guest-resources.py
+```
+
+These controls are one part of runtime isolation. They do not hide the control
+plane, implement a root filesystem or network policy, reserve provider capacity,
+or bound scratch storage and output logs. Memory already charged outside the
+group is not transferred by moving a process; staging buffers and input storage
+need their own protected budgets. Kernel counters are operational evidence, not
+trusted billing or proof of useful work. Admission must bind the actual loaded
+adapter, all resource limits, devices, network peers and funded assignment before
+any customer program or content key is exposed to it.
 
 ## Connect these artifacts to measured launch
 
