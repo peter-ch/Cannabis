@@ -5,9 +5,11 @@ import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from compute.guest_workload import prepare_guest_workload
 from compute.job_keys import RecoveredJobKey
+from compute.guest_process import contain_guest_helper
 
 
 def main():
+    contain_guest_helper()
     if sys.stdin.isatty() or sys.stdout.isatty():raise ValueError('Anonymous guest pipes required')
     raw=sys.stdin.buffer.read(65537)
     if len(raw)>65536:raise ValueError('Guest pipe request exceeds bound')

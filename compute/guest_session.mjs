@@ -61,7 +61,7 @@ export async function probeGuestAgent({ agentUrl = 'http://127.0.0.1:8006', agen
 
 export class GuestEvidenceSession {
   #policy; #challenge; #requester; #jobId; #key; #publicKey; #clock; #agent; #timer;
-  #abort = new AbortController(); #state = 'ready'; #evidence;
+  #abort = new AbortController(); #state = 'ready'; #evidence; #preparationAbort;
   constructor(guard, options, key, publicKey) {
     if (guard !== construction) throw Error('Use GuestEvidenceSession.create');
     this.#policy = options.policy; this.#challenge = options.challenge;
@@ -137,14 +137,18 @@ export class GuestEvidenceSession {
   }
   async prepare(envelope, expected, source, options = {}) {
     expected = structuredClone(expected); source = structuredClone(source); options = structuredClone(options);
-    const key = await this.open(envelope, expected, options);
-    const binding = Object.fromEntries(['packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256'].map(k => [k, expected.value[k].slice(2)]));
-    for (const k of ['attempt', 'rank', 'worldSize']) binding[k] = expected.value[k];
-    binding.acceleratorClass = this.#challenge.binding.acceleratorClass;
-    return prepareGuestWorkload(source, key, binding, options);
+    if (this.#preparationAbort) throw Error('Guest workload preparation already in progress');
+    const preparation = new AbortController(); this.#preparationAbort = preparation;
+    try {
+      const key = await this.open(envelope, expected, options);
+      const binding = Object.fromEntries(['packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256'].map(k => [k, expected.value[k].slice(2)]));
+      for (const k of ['attempt', 'rank', 'worldSize']) binding[k] = expected.value[k];
+      binding.acceleratorClass = this.#challenge.binding.acceleratorClass;
+      return await prepareGuestWorkload(source, key, binding, { ...options, signal: preparation.signal });
+    } finally { this.#preparationAbort = undefined; }
   }
   #dispose(state) {
     clearTimeout(this.#timer); this.#abort.abort(); this.#key = undefined; this.#evidence = undefined; this.#state = state;
   }
-  close() { this.#dispose(this.#state === 'consumed' ? 'consumed' : 'closed'); }
+  close() { this.#preparationAbort?.abort(); this.#dispose(this.#state === 'consumed' ? 'consumed' : 'closed'); }
 }

@@ -425,3 +425,29 @@ test('guest-held channel opens and prepares the funded task once without exposin
     await assert.rejects(guest.open(record.envelope,payload),/closed|expired/);
   }finally{guest?.close();if(as)await new Promise(resolve=>as.close(resolve));await agent.close();d.cleanup();}
 });
+
+test('closing a consumed guest session cancels preparation and cannot reopen its key',async()=>{
+  const d=await deliverySetup(),agent=await guestAgentFixture();let guest,pending;
+  try {
+    guest=await GuestEvidenceSession.create({policy:d.attestationPolicy,challenge:d.challenge,expectedBinding:d.challenge.binding,
+      requester:d.payload.requester,jobId:d.payload.jobId,agentUrl:agent.url},{clock:d.clock});
+    const evidence=await guest.evidence(),request={...d.request,channelJwk:evidence.channelJwk};
+    const payload=keyDeliveryPayload(d.ledger,d.attestations,request,d.clock());
+    const approval={request,requesterSignature:await owner.signTypedData(payload.domain,payload.types,payload.value)};
+    const record=await sealJobKeyDelivery(d.ledger,d.attestations,approval,earFixture({...d,channel:evidence.channelJwk}),d.network,d.load,{clock:d.clock});
+    const source={python:d.info.source.python,age:d.info.source.age,ciphertext:path.join(d.dir,'job/workload.age'),destination:path.join(d.dir,'cancelled-guest')};
+    let settled=false;
+    pending=guest.prepare(record.envelope,payload,source,{maxBytes:1024*1024})
+      .then(value=>{settled=true;return {value};},error=>{settled=true;return {error};});
+    await assert.rejects(guest.prepare(record.envelope,payload,source,{maxBytes:1024*1024}),/already in progress/);
+    const deadline=Date.now()+5000;
+    while(guest.status.state!=='consumed') {
+      assert.ok(!settled && Date.now()<deadline,'Observe consumption before preparation finishes');
+      await new Promise(resolve=>setTimeout(resolve,1));
+    }
+    assert.equal(settled,false);guest.close();
+    assert.match((await pending).error?.message||'',/preparation failed/);
+    assert.equal(guest.status.state,'consumed');assert.equal(guest.status.executionAuthorized,false);
+    await assert.rejects(guest.open(record.envelope,payload),/closed|expired/);
+  } finally {guest?.close();if(pending)await pending;await agent.close();d.cleanup();}
+});
