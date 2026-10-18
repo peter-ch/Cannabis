@@ -11,6 +11,7 @@ media/build/
 media/*-silent.mp4
 media/narration-sample.*
 dist-site/
+dist-work/
 __pycache__/
 *.pyc
 *.age

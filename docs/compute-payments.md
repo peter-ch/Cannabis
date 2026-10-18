@@ -6,7 +6,7 @@
 
 The requester chooses the total budget, encrypted job commitment, worker roster and basis-point shares, delivery manager, independent dispute resolver, acceptance deadline, delivery deadline, review window and dispute-resolution window. Every worker must accept before the job becomes active. Up to 128 worker payment recipients are supported by this escrow version; larger compute groups need a separately reviewed settlement design.
 
-The founder recipient and fee are immutable. The token is fixed at escrow creation. The contract has no mint function, administrator withdrawal or upgrade mechanism. Deposits must transfer the exact budget; tokens that deduct transfer fees are rejected.
+The founder recipient and fee are immutable. The asset is fixed at escrow creation: a Cannabis token address, or the zero token address for native ETH. The contract has no mint function, administrator withdrawal or upgrade mechanism. Token deposits must transfer the exact budget; tokens that deduct transfer fees are rejected. Native ETH funding requires exactly the budget in `msg.value`; token escrows reject attached ETH. Native withdrawals use the same pull-payment accounting and reentrancy protection, and failed transfers preserve the recipient's credit.
 
 ## Delivery and deadlines
 
@@ -49,7 +49,7 @@ npm run compute:escrow -- withdraw-workers withdrawals-config.json unsigned-with
 npm run compute:escrow -- withdraw-credit credit-config.json unsigned-credit.json
 ```
 
-These commands verify chain identity, escrow/token runtime hashes, fee and founder recipient. Funding preparation quotes an exact-budget token allowance and exports unsigned approval/funding transactions. Worker acceptance requires a digest of the full immutable settlement terms. The commands do not sign or send transactions.
+These commands verify chain identity, escrow/token runtime hashes, fee and founder recipient. For native ETH, configure the zero token address and `tokenCodeHash: null`; the escrow runtime hash remains mandatory. Native funding exports one unsigned transaction with the exact budget as its value, without token approval. Token funding quotes an exact-budget allowance and exports unsigned approval/funding transactions. Worker acceptance requires a digest of the full immutable settlement terms. The commands do not sign or send transactions. See [website orders](website-orders.md) for guest recovery, optional accounts and browser result decryption.
 
 Batch approval additionally requires `requester` and an `approvals` array containing `orderId`, `expectedTermsDigest` and `expectedOutputDigest` for each verified result. The tool checks the delivered state and exact commitments and simulates the approval. It cannot determine output quality; requester acceptance remains required. Worker withdrawal takes `worker`, `recipient` and `orderIds`. Credit withdrawal takes `account` and `recipient`. All use the same RPC, chain, escrow, token and runtime-hash pins as inspection. These commands also simulate without signing or sending.
 

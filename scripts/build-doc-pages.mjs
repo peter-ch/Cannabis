@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import MarkdownIt from 'markdown-it';
 import { page } from './build-media-pages.mjs';
+import { artName, editorialArt } from './editorial-art.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -19,6 +20,7 @@ export const guideGroups = [
     ['compute-economy', 'The computing economy', 'How payments, service commitments and real delivery connect.'],
     ['universal-compute', 'Package a workload', 'Runtime adapters, task graphs and requester-side result assembly.'],
     ['compute-payments', 'Job payments', 'Budgets, acceptance, review windows, disputes and refunds.'],
+    ['website-orders', 'Website orders', 'Guest recovery, optional accounts, payment readiness and local result decryption.'],
     ['microjobs', 'Small jobs', 'Exact fees and ways to reduce transaction overhead for small payments.'],
     ['capacity-commitments', 'Provider capacity', 'Signed offers, reservations and fulfillment commitments.'],
     ['../compute/README', 'Compute software', 'Commands, job manifests and the software components.'],
@@ -117,6 +119,7 @@ export function buildDocPages(out) {
     const related = group.guides.filter(other => other !== guide).map(other => `<a href="/${other.target}">${escape(other.label)}<span aria-hidden="true">↗</span></a>`).join('');
     const body = `<div class="guide-breadcrumb"><a href="/docs/index.html">Guides</a><span aria-hidden="true">/</span><a href="/docs/index.html#${group.id}">${group.title}</a></div>
       <div class="guide-layout"><article class="guide-article"><header class="guide-header"><p class="eyebrow">${group.title.toUpperCase()} <span aria-hidden="true">/</span> ${guide.minutes} MIN READ</p><h1>${escape(guide.title)}</h1><p class="guide-deck">${escape(guide.summary)}</p></header>
+      ${editorialArt(artName(guide.source), 'editorial-art guide-art', 'eager')}
       ${toc ? `<details class="guide-mobile-toc"><summary>On this page</summary><nav aria-label="Sections on this page">${toc}</nav></details>` : ''}
       <div class="guide-prose">${guide.html}</div><div class="guide-end"><a class="text-link" href="/docs/index.html">← All guides</a><a class="text-link" href="https://github.com/peter-ch/Cannabis/blob/main/${guide.source}">View source on GitHub ↗</a></div></article>
       <aside class="guide-sidebar">${toc ? `<div><p class="eyebrow">ON THIS PAGE</p><nav aria-label="Sections on this page">${toc}</nav></div>` : ''}<div><p class="eyebrow">${group.title.toUpperCase()}</p><nav aria-label="Related guides">${related}</nav></div><a class="guide-sidebar-all" href="/docs/index.html">Browse all guides <span aria-hidden="true">↗</span></a></aside></div>`;
@@ -124,7 +127,7 @@ export function buildDocPages(out) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, page(guide.title, guide.summary, body, { mainClass: 'documentation', showIntro: false }));
   }
-  const hero = `<section class="guides-hero"><div><p class="eyebrow">CANNABIS / THE KNOWLEDGE GARDEN</p><h1>Big ideas.<br><span class="accent">Clear answers.</span></h1><p>Find your starting point. Explore the community, understand the network, or get into the details of building with Cannabis.</p><a class="text-link" href="/docs/windows-setup.html">New here? Start with the Windows guide ↗</a></div><img src="/assets/crystal-prism.webp" alt="Light passing through an emerald crystal sculpture" width="1672" height="941"></section>`;
+  const hero = `<section class="guides-hero"><div><p class="eyebrow">CANNABIS / THE KNOWLEDGE GARDEN</p><h1>Big ideas.<br><span class="accent">Clear answers.</span></h1><p>Find your starting point. Explore the community, understand the network, or get into the details of building with Cannabis.</p><a class="text-link" href="/docs/windows-setup.html">New here? Start with the Windows guide ↗</a></div><img src="/assets/editorial/knowledge-prism.webp" alt="A fan of crystal pages refracting sunlight" width="1440" height="720"></section>`;
   const search = `<div class="guide-search" data-guide-search hidden><label for="guide-query">Find a guide</label><div><input id="guide-query" type="search" placeholder="Try privacy, payments or Windows" autocomplete="off"><span data-guide-count role="status" aria-live="polite">${routes.size} guides</span></div></div>`;
   const categories = `<nav class="guide-categories" aria-label="Guide topics">${catalog.map(group => `<a href="#${group.id}">${group.title}</a>`).join('')}</nav>`;
   const sections = catalog.map((group, index) => `<section class="guide-group" id="${group.id}" data-guide-group><div class="guide-group-heading"><span class="eyebrow">0${index + 1}</span><div><h2>${group.title}</h2><p>${group.description}</p></div></div><div class="guide-grid">${group.guides.map(guide => `<a class="guide-card" href="/${guide.target}" data-guide-card><span class="guide-card-arrow" aria-hidden="true">↗</span><h3>${escape(guide.label)}</h3><p>${escape(guide.summary)}</p><span class="guide-card-meta">${guide.minutes} min read</span></a>`).join('')}</div></section>`).join('');

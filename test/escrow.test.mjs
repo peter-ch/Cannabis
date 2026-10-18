@@ -26,6 +26,15 @@ contract InexactAsset is ERC20 {
   if (from != address(0) && to != address(0)) { super._update(from, address(0), 1); value -= 1; }
   super._update(from, to, value);
  }
+}
+contract RejectETH { receive() external payable { revert(); } }
+contract ReenterETH {
+ address public target; bool public blocked;
+ constructor(address t) { target=t; }
+ receive() external payable {
+  (bool ok, bytes memory data)=target.call(abi.encodeWithSignature("withdrawCredit(address)", address(this)));
+  blocked=!ok && bytes4(data)==bytes4(keccak256("ReentrancyGuardReentrantCall()"));
+ }
 }` } });
   node=await startNode(await freePort(),'escrow-test-node.log'); provider=node.provider;
   [owner,founder,first,second,adjudicator,outsider]=await Promise.all(Array.from({length:6},(_,i)=>provider.getSigner(i)));
@@ -35,6 +44,47 @@ contract InexactAsset is ERC20 {
   initial=await provider.send('evm_snapshot',[]);
 });
 after(async()=>{provider?.destroy();node?.child.kill();});
+test('native ETH enforces exact deposits, preserves credits on failure and blocks withdrawal reentry', async () => {
+  await reset(); const tokenEscrow = escrow;
+  try {
+    const { terms } = await create({ budget: 100n, name: 'native-small-job' });
+    const accounts = [await first.getAddress(), await second.getAddress()];
+    await assert.rejects(tokenEscrow.fund.staticCall({ ...terms, jobHash: hash('attached-eth') }, accounts, [6000,4000], { value: 100n }), /InexactNativePayment/);
+    escrow = await new ContractFactory(artifacts.ComputeEscrow.abi, artifacts.ComputeEscrow.bytecode, owner).deploy(ZeroAddress, await founder.getAddress()); await escrow.waitForDeployment();
+    for (const value of [0n, 99n, 101n]) await assert.rejects(escrow.fund.staticCall(terms, accounts, [6000,4000], { value }), /InexactNativePayment/);
+    await (await escrow.fund(terms, accounts, [6000,4000], { value: 100n })).wait();
+    const id = await escrow.orderId(await owner.getAddress(), terms.jobHash); await activate(id); await deliver(id); await (await escrow.approve(id)).wait();
+    assert.equal(await escrow.credits(await founder.getAddress()), 1n);
+    assert.equal(await escrow.workerDue(id, accounts[0]) + await escrow.workerDue(id, accounts[1]), 99n);
+    const reject = await new ContractFactory(artifacts.RejectETH.abi, artifacts.RejectETH.bytecode, owner).deploy(); await reject.waitForDeployment();
+    await assert.rejects(async () => { await (await escrow.connect(founder).withdrawCredit(await reject.getAddress(), { gasLimit: 200000 })).wait(); });
+    assert.equal(await escrow.credits(await founder.getAddress()), 1n); assert.equal(await escrow.totalLiability(), 100n);
+    const reenter = await new ContractFactory(artifacts.ReenterETH.abi, artifacts.ReenterETH.bytecode, owner).deploy(await escrow.getAddress()); await reenter.waitForDeployment();
+    await (await escrow.connect(founder).withdrawCredit(await reenter.getAddress())).wait(); assert.equal(await reenter.blocked(), true);
+    for (const signer of [first, second]) await (await escrow.connect(signer).withdrawWorker(id, await signer.getAddress())).wait();
+    assert.equal(await escrow.totalLiability(), 0n); assert.equal(await provider.getBalance(await escrow.getAddress()), 0n);
+    const refundTerms = { ...terms, jobHash: hash('native-refund') };
+    await (await escrow.fund(refundTerms, accounts, [6000,4000], { value: 100n })).wait();
+    const refundId = await escrow.orderId(await owner.getAddress(), refundTerms.jobHash); await (await escrow.cancel(refundId)).wait();
+    assert.equal(await escrow.credits(await owner.getAddress()), 100n); assert.equal(await escrow.credits(await founder.getAddress()), 0n);
+    await (await escrow.withdrawCredit(await owner.getAddress())).wait(); assert.equal(await escrow.totalLiability(), 0n);
+  } finally { escrow = tokenEscrow; }
+});
+test('native funding review produces one exact-value unsigned transaction without token allowance', async () => {
+  await reset();
+  const target = await new ContractFactory(artifacts.ComputeEscrow.abi, artifacts.ComputeEscrow.bytecode, owner).deploy(ZeroAddress, policy.founderRecipient); await target.waitForDeployment();
+  const now = (await provider.getBlock('latest')).timestamp, utc = n => new Date(n * 1000).toISOString().replace('.000Z', 'Z');
+  const config = { rpc: node.rpc, chainId: 31337, escrow: await target.getAddress(), token: ZeroAddress, tokenCodeHash: null, escrowCodeHash: keccak256(await provider.getCode(await target.getAddress())),
+    job: { schema: 'cannabis.compute.order.v2', id: 'native-unsigned', requester: await owner.getAddress(), packageSHA256: 'a'.repeat(64), policySHA256: 'b'.repeat(64), acceptanceSHA256: 'c'.repeat(64), payment: { totalBudget: '0.0000000000000001', feeBasisPoints: 100, founderRecipient: policy.founderRecipient } },
+    settlement: { workers: [{ account: await first.getAddress(), shareBps: 10000 }], deliveryManager: await first.getAddress(), adjudicator: await adjudicator.getAddress(), acceptBy: utc(now + 300), deliverBy: utc(now + 900), reviewSeconds: 86400, disputeSeconds: 86400 } };
+  const reviewed = await prepareFunding(config);
+  assert.equal(reviewed.assetSymbol, 'ETH'); assert.equal(reviewed.transactions.length, 1); assert.equal(BigInt(reviewed.transactions[0].transaction.value), 100n);
+  assert.equal(reviewed.payment.founderFeeAtomic, '1'); assert.equal(reviewed.payment.totalCannabis, undefined); assert.equal(reviewed.fundingSimulated, true);
+  assert.equal(await target.totalLiability(), 0n);
+  await assert.rejects(prepareFunding({ ...config, tokenCodeHash: ZeroHash }), /null token/);
+  await (await owner.sendTransaction(reviewed.transactions[0].transaction)).wait();
+  assert.equal((await inspectOrder({ ...config, orderId: reviewed.orderId })).termsDigest, reviewed.termsDigest);
+});
 async function reset(){ await provider.send('evm_revert',[initial]);initial=await provider.send('evm_snapshot',[]);}
 async function create({budget=amount, shares=[6000,4000], name='job', extra={}}={}) {
   const now=(await provider.getBlock('latest')).timestamp;

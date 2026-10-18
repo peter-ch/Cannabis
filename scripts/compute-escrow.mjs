@@ -52,21 +52,23 @@ async function connect(options) {
   const url=new URL(options.rpc);
   if(url.username||url.password || url.protocol!=='https:' && !(url.protocol==='http:'&&url.hostname==='127.0.0.1'))throw Error('Use HTTPS RPC or loopback verification RPC');
   const chainId=BigInt(options.chainId),escrow=getAddress(options.escrow),token=getAddress(options.token);
-  if(chainId<=0n || [options.escrowCodeHash,options.tokenCodeHash].some(v=>typeof v!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(v)))throw Error('Pin chain and both runtime hashes');
+  const native = token === zero;
+  if(native && options.tokenCodeHash !== null)throw Error('Native ETH uses a null token runtime hash');
+  if(chainId<=0n || [options.escrowCodeHash,...(native?[]:[options.tokenCodeHash])].some(v=>typeof v!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(v)))throw Error('Pin chain and both runtime hashes');
   const request=new FetchRequest(options.rpc);request.timeout=15000;
   const provider=new JsonRpcProvider(request,undefined,{cacheTimeout:-1});
   try{
     if((await provider.getNetwork()).chainId!==chainId)throw Error('RPC chain does not match');
-    const codes=await Promise.all([provider.getCode(escrow),provider.getCode(token)]);
+    const codes=await Promise.all([provider.getCode(escrow),...(native?[]:[provider.getCode(token)])]);
     if(codes.some(c=>c==='0x') || keccak256(codes[0]).toLowerCase()!==options.escrowCodeHash.toLowerCase() ||
-       keccak256(codes[1]).toLowerCase()!==options.tokenCodeHash.toLowerCase())throw Error('Runtime code does not match the reviewed release');
-    const contract=new Contract(escrow,escrowABI,provider),asset=new Contract(token,erc20,provider);
+       !native && keccak256(codes[1]).toLowerCase()!==options.tokenCodeHash.toLowerCase())throw Error('Runtime code does not match the reviewed release');
+    const contract=new Contract(escrow,escrowABI,provider),asset=native?null:new Contract(token,erc20,provider);
     const [boundToken,fee,recipient,quantum]=await Promise.all([contract.token(),contract.FEE_BPS(),contract.founderRecipient(),contract.PAYMENT_QUANTUM()]);
     if(boundToken!==token || fee!==100n || quantum!==100n || recipient!==getAddress(policy.founderRecipient))throw Error('Escrow token or fee policy does not match');
-    return {provider,contract,asset,chainId,escrow,token,founderRecipient:recipient};
+    return {provider,contract,asset,chainId,escrow,token,native,founderRecipient:recipient};
   }catch(error){provider.destroy();throw error;}
 }
-function transaction(connection,from,to,data){return {chainId:toBeHex(connection.chainId),from,to,data,value:'0x0'};}
+function transaction(connection,from,to,data,value=0n){return {chainId:toBeHex(connection.chainId),from,to,data,value:toBeHex(value)};}
 function serialize(value){return JSON.parse(JSON.stringify(value,(_,v)=>typeof v==='bigint'?v.toString():v));}
 const review=[
   'Only accept a reviewed escrow deployment and a funded, attested confidential job',
@@ -84,16 +86,21 @@ export async function prepareFunding(options){
     if([...terms.accounts,terms.terms.adjudicator].includes(c.escrow))throw Error('Escrow cannot be a participant');
     const id=await c.contract.orderId(terms.requester,terms.terms.jobHash);
     if((await c.contract.orders(id)).state!==0n)throw Error('An order already exists for this job');
-    const budget=BigInt(terms.terms.budget),allowance=await c.asset.allowance(terms.requester,c.escrow);
-    if(await c.asset.balanceOf(terms.requester)<budget)throw Error('Requester balance is below the agreed budget');
+    const budget=BigInt(terms.terms.budget),allowance=c.native?budget:await c.asset.allowance(terms.requester,c.escrow);
+    if((c.native?await c.provider.getBalance(terms.requester):await c.asset.balanceOf(terms.requester))<budget)throw Error('Requester balance is below the agreed budget');
     const transactions=[];
     // Exact approval; never propose an unlimited allowance.
-    if(allowance!==budget)transactions.push({purpose:'Set exact job-budget allowance',transaction:transaction(c,terms.requester,c.token,c.asset.interface.encodeFunctionData('approve',[c.escrow,budget]))});
+    if(!c.native && allowance!==budget)transactions.push({purpose:'Set exact job-budget allowance',transaction:transaction(c,terms.requester,c.token,c.asset.interface.encodeFunctionData('approve',[c.escrow,budget]))});
     const data=c.contract.interface.encodeFunctionData('fund',[terms.terms,terms.accounts,terms.shares]);
-    if(allowance>=budget)await c.contract.fund.staticCall(terms.terms,terms.accounts,terms.shares,{from:terms.requester});
-    transactions.push({purpose:'Fund the accepted job terms',transaction:transaction(c,terms.requester,c.escrow,data)});
+    const value=c.native?budget:0n;
+    if(allowance>=budget)await c.contract.fund.staticCall(terms.terms,terms.accounts,terms.shares,{from:terms.requester,value});
+    transactions.push({purpose:'Fund the accepted job terms',transaction:transaction(c,terms.requester,c.escrow,data,value)});
+    // The legacy planner labels amounts Cannabis. Native packages must never do so.
+    if(c.native)for(const key of ['total','founderFee','workerPool']){
+      terms.payment[key+'ETH']=terms.payment[key+'Cannabis'];delete terms.payment[key+'Cannabis'];
+    }
     return serialize({name:'Cannabis',status:'UNSIGNED_COMPUTE_FUNDING',orderId:id,termsDigest:termsDigest({...c,...terms}),
-      chainId:c.chainId,escrow:c.escrow,token:c.token,...terms,transactions,
+      chainId:c.chainId,escrow:c.escrow,token:c.token,assetSymbol:c.native?'ETH':'Cannabis',...terms,transactions,
       fundingSimulated:allowance>=budget,sent:false,executionAuthorized:false,keyReleaseAuthorized:false,review});
   }finally{c.provider.destroy();}
 }

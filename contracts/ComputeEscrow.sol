@@ -69,6 +69,8 @@ contract ComputeEscrow is ReentrancyGuard {
     error NothingToWithdraw();
     error InexactTokenTransfer();
     error InexactFeeAmount();
+    error InexactNativePayment();
+    error NativeTransferFailed();
 
     event Funded(bytes32 indexed orderId, address indexed requester, bytes32 indexed jobHash, uint256 budget);
     event WorkerAccepted(bytes32 indexed orderId, address indexed worker);
@@ -79,7 +81,8 @@ contract ComputeEscrow is ReentrancyGuard {
     event Withdrawn(address indexed account, address indexed recipient, uint256 amount);
 
     constructor(address tokenAddress, address feeRecipient) {
-        if (tokenAddress.code.length == 0 || feeRecipient == address(0) || feeRecipient == address(this)) revert InvalidTerms();
+        // A zero token address selects native ETH for this immutable escrow.
+        if (tokenAddress != address(0) && tokenAddress.code.length == 0 || feeRecipient == address(0) || feeRecipient == address(this)) revert InvalidTerms();
         token = IERC20(tokenAddress);
         founderRecipient = feeRecipient;
     }
@@ -90,8 +93,9 @@ contract ComputeEscrow is ReentrancyGuard {
 
     /// @notice All workers must accept these immutable terms before any work starts.
     function fund(Terms calldata terms, address[] calldata accounts, uint16[] calldata sharesBps)
-        external nonReentrant returns (bytes32 id)
+        external payable nonReentrant returns (bytes32 id)
     {
+        if (address(token) == address(0) ? msg.value != terms.budget : msg.value != 0) revert InexactNativePayment();
         if (terms.budget % PAYMENT_QUANTUM != 0) revert InexactFeeAmount();
         if (terms.jobHash == bytes32(0) || terms.budget == 0 ||
             terms.adjudicator == address(0) || terms.adjudicator == address(this) ||
@@ -123,9 +127,11 @@ contract ComputeEscrow is ReentrancyGuard {
         order.state = State.Funded;
         order.workerCount = uint16(accounts.length);
         totalLiability += terms.budget;
-        uint256 previousBalance = token.balanceOf(address(this));
-        token.safeTransferFrom(msg.sender, address(this), terms.budget);
-        if (token.balanceOf(address(this)) - previousBalance != terms.budget) revert InexactTokenTransfer();
+        if (address(token) != address(0)) {
+            uint256 previousBalance = token.balanceOf(address(this));
+            token.safeTransferFrom(msg.sender, address(this), terms.budget);
+            if (token.balanceOf(address(this)) - previousBalance != terms.budget) revert InexactTokenTransfer();
+        }
         emit Funded(id, msg.sender, terms.jobHash, terms.budget);
     }
 
@@ -275,7 +281,10 @@ contract ComputeEscrow is ReentrancyGuard {
     function _withdraw(address recipient, uint256 amount) private {
         if (recipient == address(0) || recipient == address(this)) revert InvalidTerms();
         totalLiability -= amount;
-        token.safeTransfer(recipient, amount);
+        if (address(token) == address(0)) {
+            (bool success,) = payable(recipient).call{value: amount}("");
+            if (!success) revert NativeTransferFailed();
+        } else token.safeTransfer(recipient, amount);
         emit Withdrawn(msg.sender, recipient, amount);
     }
 }

@@ -18,6 +18,7 @@
     "compute:plan": "node scripts/compute-plan.mjs",
     "compute:escrow": "node scripts/compute-escrow.mjs",
     "build:site": "node scripts/build-site.mjs",
+    "build:work-service": "node scripts/build-work-service.mjs",
     "prepare:launch": "node scripts/prepare-launch.mjs",
     "quote:launch": "node scripts/quote-launch.mjs",
     "participant": "node scripts/participant.mjs",
@@ -38,12 +39,14 @@
     "@semaphore-protocol/group": "4.14.5",
     "@semaphore-protocol/identity": "4.14.5",
     "@semaphore-protocol/proof": "4.14.5",
+    "age-encryption": "0.3.1",
     "ethers": "6.17.0",
     "hardhat": "3.20.0",
     "jose": "6.2.12",
     "solc": "0.8.37"
   },
   "devDependencies": {
+    "esbuild": "0.28.2",
     "markdown-it": "15.0.3"
   }
 }

@@ -32,6 +32,11 @@
   },
   {
     "inputs": [],
+    "name": "InexactNativePayment",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "InexactTokenTransfer",
     "type": "error"
   },
@@ -43,6 +48,11 @@
   {
     "inputs": [],
     "name": "InvalidTerms",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NativeTransferFailed",
     "type": "error"
   },
   {
@@ -558,7 +568,7 @@
         "type": "bytes32"
       }
     ],
-    "stateMutability": "nonpayable",
+    "stateMutability": "payable",
     "type": "function"
   },
   {
