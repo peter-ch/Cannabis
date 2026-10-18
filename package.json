@@ -18,7 +18,8 @@
     "compute:plan": "node scripts/compute-plan.mjs",
     "compute:escrow": "node scripts/compute-escrow.mjs",
     "build:site": "node scripts/build-site.mjs",
-    "prepare:launch": "node scripts/prepare-launch.mjs"
+    "prepare:launch": "node scripts/prepare-launch.mjs",
+    "check:dependencies": "node scripts/check-dependencies.mjs"
   },
   "license": "MIT",
   "overrides": {

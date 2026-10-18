@@ -6,6 +6,8 @@ import { createHash } from 'node:crypto';
 import { ContractFactory, getAddress, keccak256 } from 'ethers';
 import { compile, root } from './compile.mjs';
 import { end24Months } from './lib.mjs';
+import { readBounded } from '../claims/identity.mjs';
+import { validateDependencies, verifyLaunchDependencies } from '../launch/dependencies.mjs';
 
 export const networks = {
   base: { chainId: 8453, name: 'Base', currency: 'ETH', explorer: 'https://basescan.org', rpc: 'https://mainnet.base.org' },
@@ -28,6 +30,10 @@ export function validateLaunch({ founder, launch, network = 'base', semaphore, r
 }
 export async function prepare(options) {
   const config = validateLaunch(options);
+  const dependencies = validateDependencies(options.dependencyConfig?.dependencies);
+  if (dependencies.chainId !== String(config.network.chainId) || dependencies.semaphore.address !== config.semaphoreAddress || dependencies.semaphore.codeHash !== config.semaphoreCodeHash.toLowerCase())
+    throw Error('Dependency pins do not match the launch network and Semaphore parameters');
+  const dependencyObservation = await verifyLaunchDependencies(options.dependencyConfig);
   const artifact = compile().Cannabis;
   const args = [config.beneficiary, config.start, config.end, config.semaphoreAddress, config.registrarAddress];
   const transaction = await new ContractFactory(artifact.abi, artifact.bytecode).getDeployTransaction(...args);
@@ -39,6 +45,7 @@ export async function prepare(options) {
     maxSupply: '420000000', founderAllocation: '4200000', communityAllocation: '415800000', claimAmount: '420', maxClaimants: 990000,
     issuance: 'One claim per enrolled identity, Semaphore zero-knowledge membership, no proof-of-work',
     minimumAnonymitySet: 128, semaphore: config.semaphoreAddress, semaphoreCodeHash: config.semaphoreCodeHash, registrar: config.registrarAddress,
+    dependencyObservation,
     compiler: artifact.compiler, sourceSHA256: createHash('sha256').update(source).digest('hex'),
     creationBytecodeKeccak256: keccak256(artifact.bytecode), deploymentDataKeccak256: keccak256(transaction.data),
     constructorArguments: args, transaction: { chainId: `0x${config.network.chainId.toString(16)}`, from: config.beneficiary, data: transaction.data, value: '0x0' },
@@ -58,6 +65,7 @@ export async function prepare(options) {
   return { manifestPath, founder: config.beneficiary, network: config.network.name, status: manifest.status, sent: false };
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
   const argv = process.argv.slice(2), options = {};
   for (let i = 0; i < argv.length; i += 2) {
     if (!argv[i].startsWith('--') || !argv[i + 1]) throw Error('Arguments must be --name value pairs');
@@ -65,5 +73,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   }
   if (!options.out) throw Error('Set --out to a private review directory');
   if (options['semaphore-code-hash']) options.semaphoreCodeHash = options['semaphore-code-hash'];
+  if (!options['dependency-config']) throw Error('Set --dependency-config to reviewed source-derived pins and a trusted RPC');
+  options.dependencyConfig = JSON.parse(readBounded(path.resolve(options['dependency-config']), 16384).toString('utf8'));
   console.log(JSON.stringify(await prepare(options), null, 2));
+  } catch {
+    console.error('Launch preparation failed. Check the documented parameters, private dependency configuration, current canonical chain state and unused output directory. No transaction was sent.');
+    process.exitCode = 1;
+  }
 }
