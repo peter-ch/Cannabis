@@ -1,0 +1,50 @@
+{
+  "schema": "cannabis.guest-firmware-build.v1",
+  "source": {
+    "repository": "https://github.com/tianocore/edk2.git",
+    "revision": "2970e5699ba6267f3384ffab20f96647578aebc8",
+    "tag": "edk2-stable202608",
+    "sourceDateEpoch": 1786522436
+  },
+  "submodules": {
+    "BaseTools/Source/C/BrotliCompress/brotli": "e230f474b87134e8c6c85b630084c612057f253e",
+    "CryptoPkg/Library/MbedTlsLib/mbedtls": "0bebf8b8c7f07abe3571ded48a11aa907a1ffb20",
+    "CryptoPkg/Library/OpensslLib/openssl": "8cf17aaeb4599f8af87fefd810b5b5fee90fe69e",
+    "MdeModulePkg/Library/BrotliCustomDecompressLib/brotli": "e230f474b87134e8c6c85b630084c612057f253e",
+    "MdeModulePkg/Universal/RegularExpressionDxe/oniguruma": "4ef89209a239c1aea328cf13c05a2807e5c146d1",
+    "MdePkg/Library/BaseFdtLib/libfdt": "cfff805481bdea27f900c32698171286542b8d3c",
+    "MdePkg/Library/MipiSysTLib/mipisyst": "370b5944c046bab043dd8b133727b2135af7747a",
+    "RedfishPkg/Library/JsonLib/jansson": "e9ebfa7e77a6bee77df44e096b100e7131044059",
+    "SecurityPkg/DeviceSecurity/SpdmLib/libspdm": "f55cf6d48ec69b4ac60a63903e9c6a2cb0fd155d",
+    "TcgTpmPkg/Library/TpmLib/TPM": "bc29a21d44b01396223c152a4834e52318591770",
+    "UnitTestFrameworkPkg/Library/CmockaLib/cmocka": "1cc9cde3448cdd2e000886a26acf1caac2db7cf1",
+    "UnitTestFrameworkPkg/Library/GoogleTestLib/googletest": "86add13493e5c881d7e4ba77fb91c1f57752b3a4",
+    "UnitTestFrameworkPkg/Library/SubhookLib/subhook": "83d4e1ebef3588fae48b69a7352cc21801cb70bc",
+    "CryptoPkg/Library/MbedTlsLib/mbedtls/framework": "dff9da04438d712f7647fd995bc90fadd0c0e2ce"
+  },
+  "platform": "OvmfPkg/AmdSev/AmdSevX64.dsc",
+  "architecture": "X64",
+  "target": "RELEASE",
+  "toolchain": "GCC",
+  "defines": [
+    "FD_SIZE_4MB",
+    "BUILD_SHELL=FALSE",
+    "SOURCE_DEBUG_ENABLE=FALSE"
+  ],
+  "removeLines": {
+    "OvmfPkg/AmdSev/AmdSevX64.dsc": [
+      "  PREBUILD                       = sh OvmfPkg/AmdSev/Grub/grub.sh",
+      "  OvmfPkg/AmdSev/Grub/Grub.inf"
+    ],
+    "OvmfPkg/AmdSev/AmdSevX64.fdf": [
+      "INF  OvmfPkg/AmdSev/Grub/Grub.inf"
+    ]
+  },
+  "measurementTool": {
+    "repository": "https://github.com/virtee/sev-snp-measure.git",
+    "revision": "8f2b337e38bc83f87cd30f3253cdfe8e3e12cc3a"
+  },
+  "sourceExcludes": [
+    "EmulatorPkg"
+  ]
+}
