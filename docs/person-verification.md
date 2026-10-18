@@ -4,7 +4,7 @@ Cannabis community enrollment is being built around non-biometric verification a
 
 ## What the checker verifies
 
-`claims/brightid.mjs` follows BrightID Node 6.18.0 at [the pinned source revision](https://github.com/BrightID/BrightID-Node/tree/c699663519334b7a5149a4e4e8f5622984a23691). It requires a separately trusted Ed25519/NaCl public key, exact app identifier and verification expression, and a reviewed deployment binding. A key returned alongside a credential cannot establish trust in itself.
+`claims/brightid.mjs` follows the signed-record interfaces in BrightID Node [6.17.2](https://github.com/BrightID/BrightID-Node/tree/c8fa7006d30d39e926fc6e96bb08819de76906ba) and [6.18.0](https://github.com/BrightID/BrightID-Node/tree/c699663519334b7a5149a4e4e8f5622984a23691). The response-signing and encoding paths were compared at these exact source revisions. Each deployment policy pins one version; a node changing to another supported version still fails the check. This is source compatibility review, not independent security review or proof of the deployed node's code. The checker requires a separately trusted Ed25519/NaCl public key, exact app identifier and verification expression, and a reviewed deployment binding. A key returned alongside a credential cannot establish trust in itself.
 
 The application user ID is SHA-256 of the following ASCII strings separated by a single NUL byte, without a final separator:
 
@@ -29,7 +29,7 @@ Prepare a protected local configuration containing `policy`, `commitment` and an
 | --- | --- |
 | `schema` | `cannabis.brightid-policy.v1` |
 | `nodeUrl` | Trusted HTTPS base ending in `/brightid/v6/` |
-| `nodeVersion` | `6.18.0` |
+| `nodeVersion` | Exactly `6.17.2` or `6.18.0`, matching the reviewed provider deployment |
 | `app` | Independently registered and reviewed app ID |
 | `verification` | One exact reviewed verification expression |
 | `publicKey` | Independently authenticated 32-byte Ed25519 key in canonical padded Base64 |

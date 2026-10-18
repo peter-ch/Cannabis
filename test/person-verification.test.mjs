@@ -81,13 +81,24 @@ test('signature, trusted key, hash, timestamp and exact response fields are all 
 
 test('policy rejects delimiter ambiguity, unreviewed versions and insecure endpoint/configuration forms', () => {
   for (const replacement of [
-    { app: 'bad,app' }, { verification: '\u00e9' }, { nodeVersion: '6.17.2' }, { maxAgeSeconds: 301 }, { clockSkewSeconds: 31 },
+    { app: 'bad,app' }, { verification: '\u00e9' }, { nodeVersion: '6.17.1' }, { maxAgeSeconds: 301 }, { clockSkewSeconds: 31 },
     { chainId: '08453' }, { enrollment: '0x0000000000000000000000000000000000000000' }, { publicKey: publicKey.slice(0, -1) },
     { nodeUrl: 'http://provider.example/brightid/v6/' }, { nodeUrl: 'http://localhost/brightid/v6/' },
     { nodeUrl: 'https://user:password@provider.example/brightid/v6/' }, { nodeUrl: 'https://provider.example/brightid/v6/?token=secret' }
   ]) assert.throws(() => normalizeBrightIDPolicy({ ...base, ...replacement }));
   for (const member of ['0', '001', '-1', '21888242871839275222246405745257275088548364400416034343698204186575808495617']) assert.throws(() => brightIDApplicationUserId(base, member));
   assert.deepEqual(normalizeBrightIDPolicy(Object.fromEntries(Object.entries(base).reverse())), normalizeBrightIDPolicy(base));
+});
+
+test('source-compared provider versions require explicit policy selection', async () => {
+  const p = { ...base, nodeVersion: '6.17.2' };
+  const checked = verifyBrightIDRecord(credential(p), p, commitment);
+  assert.equal(checked.eligibilitySignatureVerified, true);
+  assert.notEqual(checked.policySHA256, verifyBrightIDRecord(credential(base), base, commitment).policySHA256);
+  assert.throws(() => normalizeBrightIDPolicy({ ...base, nodeVersion: '6.19.0' }));
+  const f = await providerFixture(); f.policy.nodeVersion = '6.17.2';
+  try { assert.equal((await checkBrightIDProvider({ policy: f.policy, commitment })).result.eligibilitySignatureVerified, true); }
+  finally { await f.close(); }
 });
 
 test('provider adapter checks live app/node configuration twice and only requests the bound signed record', async () => {

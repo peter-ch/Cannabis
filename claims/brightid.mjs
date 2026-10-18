@@ -4,8 +4,10 @@ import { createHash, createPublicKey, verify } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { getAddress } from 'ethers';
 
-export const BRIGHTID_SOURCE_REVISION = 'c699663519334b7a5149a4e4e8f5622984a23691';
-export const BRIGHTID_NODE_VERSION = '6.18.0';
+export const BRIGHTID_SOURCE_REVISIONS = Object.freeze({
+  '6.17.2': 'c8fa7006d30d39e926fc6e96bb08819de76906ba',
+  '6.18.0': 'c699663519334b7a5149a4e4e8f5622984a23691'
+});
 const FIELD = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 const seconds = () => Math.floor(Date.now() / 1000);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
@@ -37,7 +39,7 @@ export function normalizeBrightIDPolicy(input) {
   exact(input, ['schema', 'nodeUrl', 'nodeVersion', 'app', 'verification', 'publicKey', 'chainId', 'enrollment', 'maxAgeSeconds', 'clockSkewSeconds']);
   if (input.schema !== 'cannabis.brightid-policy.v1') throw Error('Unknown verification policy');
   endpoint(input.nodeUrl);
-  if (input.nodeVersion !== BRIGHTID_NODE_VERSION) throw Error('Require the source-reviewed node version');
+  if (typeof input.nodeVersion !== 'string' || !Object.hasOwn(BRIGHTID_SOURCE_REVISIONS, input.nodeVersion)) throw Error('Require a source-reviewed node version');
   if (typeof input.app !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(input.app)) throw Error('Invalid application identifier');
   if (typeof input.verification !== 'string' || !/^[\x20-\x7e]{1,2048}$/.test(input.verification) || input.verification.trim() !== input.verification) throw Error('Invalid verification expression');
   base64(input.publicKey, 32); decimal(input.chainId, 1n << 256n);
