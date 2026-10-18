@@ -7,7 +7,7 @@ export function bundleNotices(metafile, root, output) {
   for (const input of Object.keys(metafile.inputs)) {
     if (!input.replaceAll('\\', '/').includes('node_modules/')) continue;
     let directory = path.dirname(path.resolve(root, input));
-    while (!fs.existsSync(path.join(directory, 'package.json'))) {
+    while (!fs.existsSync(path.join(directory, 'package.json')) || !JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8')).name) {
       const parent = path.dirname(directory); if (parent === directory) throw Error('Missing dependency metadata'); directory = parent;
     }
     if (packages.has(directory)) continue;
