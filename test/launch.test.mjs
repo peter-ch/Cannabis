@@ -20,18 +20,19 @@ test('mainnet launch validates a concrete beneficiary, network, schedule and emi
 test('launch preparation rejects unsafe or ambiguous parameters', () => {
   for (const changes of [{ founder: '0x0000000000000000000000000000000000000000' },
     { founder: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' }, { launch: '2026-10-19T12:00:00Z' },
-    { launch: '2026-11-31T12:00:00Z' }, { launch: '2026-11-01' }, { network: 'unknown' },
+    { launch: '2026-11-31T12:00:00Z' }, { launch: '2026-11-01' }, { network: 'unknown' }, { network: 'toString' }, { network: '__proto__' },
     { semaphore: '0x0000000000000000000000000000000000000000' }, { registrar: undefined }, { semaphoreCodeHash: '0x00' }]) assert.throws(() => validateLaunch({ ...valid, ...changes }, now));
 });
 
-test('exported source independently reproduces the unsigned deployment data', async () => {
+for (const network of ['base', 'ethereum']) test(`exported source independently reproduces unsigned ${network} deployment data`, async () => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'cannabis-release-'));
-  const fixture = await dependencyRPC();
+  const fixture = await dependencyRPC(undefined, network === 'ethereum' ? '1' : '8453');
   try {
     const launch = new Date(Date.now() + 14 * 86400000).toISOString().replace(/\.\d{3}Z$/, 'Z');
-    await prepare({ ...valid, launch, out, semaphoreCodeHash: fixture.config.dependencies.semaphore.codeHash, dependencyConfig: fixture.config });
+    await prepare({ ...valid, network, launch, out, semaphoreCodeHash: fixture.config.dependencies.semaphore.codeHash, dependencyConfig: fixture.config });
     const manifest = JSON.parse(fs.readFileSync(path.join(out, 'launch-manifest.json'), 'utf8'));
     assert.equal(manifest.maxSupply, '420000000');
+    assert.equal(manifest.chain.chainId, network === 'ethereum' ? 1 : 8453);
     assert.equal(manifest.founderAllocation, '4200000');
     assert.equal(manifest.communityAllocation, '415800000');
     assert.equal(manifest.claimAmount, '420');

@@ -45,6 +45,7 @@ The suite checks real zero-knowledge proofs, replay and recipient-substitution a
 - [Encrypted participant identity and offline proofs](docs/claim-identity.md)
 - [Complete membership download and chain-state checks](docs/membership-snapshot.md)
 - [Mainnet release preparation](docs/mainnet-release.md)
+- [Deployment fee estimates and budget scope](docs/deployment-fees.md)
 - [Launch acceptance criteria](docs/launch-plan.md)
 - [Participation risks](docs/risks.md)
 - [Launch review](docs/launch-review.md)

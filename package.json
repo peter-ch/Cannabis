@@ -19,6 +19,7 @@
     "compute:escrow": "node scripts/compute-escrow.mjs",
     "build:site": "node scripts/build-site.mjs",
     "prepare:launch": "node scripts/prepare-launch.mjs",
+    "quote:launch": "node scripts/quote-launch.mjs",
     "check:dependencies": "node scripts/check-dependencies.mjs"
   },
   "license": "MIT",

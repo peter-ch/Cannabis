@@ -1,0 +1,27 @@
+{
+  "rpc": "https://ethereum-rpc.publicnode.com",
+  "dependencies": {
+    "schema": "cannabis.semaphore-dependencies.v1",
+    "chainId": "1",
+    "semaphore": {
+      "address": "0xC10E5102A2Cc077BE3B9740Fc0Ad7e27Ff8E0245",
+      "codeHash": "0xefbf0ebf4fb130806af0a0c7240b7bf8b662ac80ede9097d8521f35983edef05"
+    },
+    "verifier": {
+      "address": "0x4DeC9E3784EcC1eE002001BfE91deEf4A48931f8",
+      "codeHash": "0x1d30c66fda7af4aa3d04b0fe3541f169ffd8a899ff31b2031bbc1b0c3c92df53"
+    },
+    "poseidon": {
+      "address": "0xB43122Ecb241DD50062641f089876679fd06599a",
+      "codeHash": "0xfff87913ad49839abe56d0436580f772fdaf63de25ddfa71bd72990cb68b372a"
+    },
+    "poseidonLinkOffsets": [
+      4509,
+      5248,
+      5730,
+      5896,
+      6198,
+      6364
+    ]
+  }
+}

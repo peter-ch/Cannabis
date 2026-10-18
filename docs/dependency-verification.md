@@ -34,6 +34,12 @@ At finalized block 52,767,345 (`0xd3e1faaeb48ad253729c861cec2a73d9785bc80bb17d5d
 
 The Arbitrum endpoint inspected did not provide the required finalized historical state. No successful finalized-state comparison is claimed for it.
 
+## Ethereum source and proof observations
+
+Ethereum's published deployments were also checked on 2026-10-18. At finalized block 26,219,501 (`0x8d8f8ba4978dcbf087a3d85d7a4065e05996ca3e8af1161d7fd34005d60a38fc`), their complete runtime hashes matched the observed Base deployments. Comparing them directly with the recompiled sources gave the same correspondence described above: matching executable Semaphore code and all six library links, complete verifier runtime, and complete Poseidon runtime after its standard self-address substitution.
+
+At that Ethereum anchor, the deployed verifier accepted valid synthetic proofs for depths 7 and 20 and rejected individual root, nullifier, message and scope mutations, giving ten read-only checks. These checks do not enroll people or constitute a Cannabis claim. `config/ethereum-dependencies.json` pins the complete observed Ethereum runtimes; fresh finalized and current-state checks remain mandatory during release preparation.
+
 ## Scope
 
 These checks establish correspondence with caller-reviewed pins within the selected RPC operator's chain view. They do not implement independent consensus or state-proof verification. Source correspondence is not an independent security audit. Human verification, registrar control, wallet recovery, operating requirements, funding, confidential workers and public claim readiness remain separate launch requirements. No Cannabis mainnet deployment is announced by this report.

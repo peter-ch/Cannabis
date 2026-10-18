@@ -10,11 +10,12 @@ import { readBounded } from '../claims/identity.mjs';
 import { validateDependencies, verifyLaunchDependencies } from '../launch/dependencies.mjs';
 
 export const networks = {
+  ethereum: { chainId: 1, name: 'Ethereum', currency: 'ETH', explorer: 'https://etherscan.io', rpc: 'https://ethereum-rpc.publicnode.com' },
   base: { chainId: 8453, name: 'Base', currency: 'ETH', explorer: 'https://basescan.org', rpc: 'https://mainnet.base.org' },
   arbitrum: { chainId: 42161, name: 'Arbitrum One', currency: 'ETH', explorer: 'https://arbiscan.io', rpc: 'https://arb1.arbitrum.io/rpc' }
 };
 export function validateLaunch({ founder, launch, network = 'base', semaphore, registrar, semaphoreCodeHash }, now = Date.now()) {
-  if (!networks[network]) throw Error('Choose base or arbitrum');
+  if (!Object.hasOwn(networks, network)) throw Error('Choose ethereum, base or arbitrum');
   const beneficiary = getAddress(founder);
   if (beneficiary === '0x0000000000000000000000000000000000000000' ||
       ['0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266', '0x70997970c51812dc3a010c7d01b50e0d17dc79c8'].includes(beneficiary.toLowerCase()))
