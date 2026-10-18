@@ -81,6 +81,8 @@ def main():
                     assert page.locator('img').evaluate('(img) => img.complete && img.naturalWidth > 0')
                     target = OUT / f'{name}-{format_name}.png'
                     page.screenshot(path=str(target), animations='disabled')
+                    if format_name == 'square':
+                        page.screenshot(path=str(OUT / f'{name}-preview.jpg'), type='jpeg', quality=85, animations='disabled')
                     page.close()
                     records.append({'file': target.relative_to(ROOT).as_posix(), 'width': width, 'height': height,
                                     'sha256': hashlib.sha256(target.read_bytes()).hexdigest()})
