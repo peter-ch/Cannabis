@@ -19,7 +19,7 @@ const assignments = {
   'microjobs':'tidal-garden', 'capacity-commitments':'network-constellation', 'claim-identity':'privacy-sanctuary',
   'person-verification':'community-garden', 'membership-snapshot':'forest-lattice', 'confidential-compute':'privacy-sanctuary',
   'job-key-custody':'moonlit-geode', 'trustee-attestation':'moonlit-geode', 'key-delivery':'forest-lattice',
-  'worker-deployment':'compute-engine', 'guest-attestation':'crystal-purity', 'guest-initialization':'creation-atelier',
+  'worker-deployment':'compute-engine', 'worker-console':'compute-engine', 'guest-attestation':'crystal-purity', 'guest-initialization':'creation-atelier',
   'guest-workload':'network-constellation', 'guest-service-build':'compute-engine', 'guest-image-build':'crystal-facets',
   'guest-firmware':'crystal-monolith', 'tokenomics':'payment-current', 'mainnet-release':'launch-horizon',
   'dependency-verification':'forest-lattice', 'deployment-fees':'payment-current', 'launch-plan':'alpine-light',

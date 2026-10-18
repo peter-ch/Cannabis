@@ -27,6 +27,10 @@ npm run dev
 
 Open http://127.0.0.1:4200. This serves the public Cannabis website.
 
+## Open the worker console
+
+The [worker console](docs/worker-console.md) shows actual local machine activity and admission requirements. Open `Start-Cannabis-Worker.cmd` on Windows, or run `npm run worker:console` and visit `http://127.0.0.1:4201/`. This release does not accept paid jobs or mine tokens.
+
 ## Verify the contracts
 
 ~~~sh
@@ -63,4 +67,4 @@ The suite checks real zero-knowledge proofs, replay and recipient-substitution a
 - [Guest-held channels and hardware-evidence integration](docs/guest-attestation.md)
 - [Guest workload decoding and assignment verification](docs/guest-workload.md)
 
-The person-verification provider, final network, independent review and deployment are release dependencies. Canonical addresses and the opening time will be published with the verified release. Cannabis is an independent project, unaffiliated with other cannabis-themed currencies.
+Ethereum mainnet is the selected preparation target. The person-verification provider, registrar, independent review and verified deployment remain release dependencies. Canonical addresses and the opening time will be published with the verified release. Cannabis is an independent project, unaffiliated with other cannabis-themed currencies.

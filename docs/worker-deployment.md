@@ -1,5 +1,7 @@
 # Deploying a confidential worker
 
+Use the [local worker console](worker-console.md) to inspect this computer and its admission requirements. Its running GUI provides observations; paid execution remains unavailable until the deployment below has been validated.
+
 Cannabis workers must prove which protected environment will receive a job's keys. Selecting a VM advertised as confidential is the beginning of provider integration. Admission also requires a measured boot chain, the approved runtime, protected storage and the exact initialization policy expected by the requester.
 
 The current client integrates Trustee CPU appraisals for SNP and TDX. No provider deployment has yet completed the protected execution and settlement acceptance checks. CUDA, ROCm and other accelerators remain part of the network's scope; each device and interconnect path requires its own evidence.

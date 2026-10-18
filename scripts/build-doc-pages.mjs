@@ -37,6 +37,7 @@ export const guideGroups = [
     ['trustee-attestation', 'Attestation before access', 'Check signed evidence before authorizing a protected worker.'],
     ['key-delivery', 'Encrypted key delivery', 'Bind each key envelope to the approved job and guest channel.'],
     ['worker-deployment', 'Worker deployment', 'The acceptance requirements for a confidential worker.'],
+    ['worker-console', 'Your worker console', 'Observe local hardware and understand admission before paid execution.'],
     ['guest-attestation', 'Guest evidence', 'Connect guest-held channels with hardware evidence.'],
     ['guest-initialization', 'Bind the guest assignment', 'Check the approved job before opening its evidence channel.'],
     ['guest-workload', 'The approved workload', 'Move from an attested session to the protected workload.'],
