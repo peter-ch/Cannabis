@@ -2,7 +2,7 @@
 
 Prepare your Cannabis identity in a guided Windows terminal. You do not need to edit JSON or supply a wallet seed. Your identity stays on your PC, with a password-encrypted portable backup that you control.
 
-Community enrollment is preparing to open. This guide prepares custody and a private commitment request; it does not enroll you, issue a balance or send transactions. Use the same identity when the reviewed verification service opens. Dummy identities cannot qualify for community claims.
+Community enrollment is preparing to open. This guide prepares custody and a private commitment request; it does not enroll you, issue a balance or send transactions. Use the same identity when the reviewed Cannabis ceremony opens. Dummy identities cannot qualify for community claims.
 
 ## Open the guide
 
@@ -25,7 +25,7 @@ The local identity is stored in `%LOCALAPPDATA%\CannabisParticipant\identity\par
 
 The portable `.age` backup contains both the encrypted identity and its owner key, encrypted together using age's native passphrase format. Recovering it validates the commitment and rewraps the same owner key for the current Windows account. Existing different identities are not overwritten. Successful recovery is recorded locally; it does not certify personhood or authorize enrollment.
 
-The enrollment request includes the commitment and preparation status. It contains no identity secret, owner key, receiving wallet, name, email or social graph. Keep it private until the official provider flow requests it. Do not post it alongside a receiving wallet. A provider must still verify one distinct person and bind the eventual enrollment to the canonical deployment.
+The enrollment request includes the commitment and preparation status. It contains no identity secret, owner key, receiving wallet, name, email or social graph. Keep it private until the official Cannabis ceremony intake requests it. Do not post it alongside a receiving wallet. Independent ceremony witnesses must still verify continuous attendance and bind enrollment to the canonical deployment. Recovery restores this same identity; no replacement allocation is issued.
 
 No secret is intentionally written to plaintext files, command-line arguments, environment variables or logs. Secret bytes pass through local process pipes and remain temporarily in memory. The runtime cannot guarantee erasure of every string, operating-system copy, swap page or crash dump. Use a trusted Windows account and device. These implementation checks do not replace independent custody review.
 

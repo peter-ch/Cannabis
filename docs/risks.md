@@ -1,12 +1,12 @@
 # Participation and operational risks
 
-Cannabis is preparing mainnet launch. The release must identify the canonical chain, contracts, founder beneficiary, enrollment provider, claim opening and verification policy.
+Cannabis is preparing mainnet launch. The release must identify the canonical chain, contracts, founder beneficiary, ceremony witness policy, claim opening and verification policy.
 
 Markets, liquidity, exchange acceptance and community adoption are uncertain. Prices can fall substantially. Founder vesting constrains release timing but does not eliminate the founder's economic conflict or off-chain arrangements.
 
-Person verification depends on a reviewed registrar. Fake enrollment, censorship, identity resets, provider compromise or exclusion from verification can undermine access and fairness. A threshold of 128 commitments is not proof that 128 independent people are present. The supply supports up to 990,000 claimants.
+Person verification depends on honest independent ceremony witnesses and continuous in-person attendance. A colluding quorum, compromised witness keys, substitution or exclusion can undermine access and fairness. Recurring rounds allow later newcomers, but durable cross-round human verification remains unfinished: a new tag and new secret can hide a returning person from cryptographic checks. Each venue submits one final roster per round. Missing a round permits consideration in a later round; losing every identity backup can permanently prevent claiming. A threshold of 128 commitments is not proof that 128 independent people are present. The supply supports up to 990,000 claimants.
 
-Zero-knowledge membership conceals the enrolled identity used by the proof. Wallet addresses, balances, claim nullifiers, transfers and transaction metadata remain public. Timing, RPC logs, enrollment-provider records, reused wallets, malware and small effective anonymity sets can undermine privacy.
+Zero-knowledge membership conceals the enrolled identity used by the proof. Wallet addresses, balances, claim nullifiers, transfers and transaction metadata remain public. Timing, RPC logs, ceremony records and venue batches, reused wallets, malware and small effective anonymity sets can undermine privacy.
 
 Proof generation and verification require useful computation; ordinary transactions incur network fees. Enrollment updates can require proof regeneration. A failed transaction can still consume gas. The project does not claim zero electricity, carbon neutrality or a measured per-transaction environmental footprint.
 

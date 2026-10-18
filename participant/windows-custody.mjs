@@ -152,7 +152,7 @@ export async function prepareEnrollmentRequest({ directory, age, ageKeygen, outp
   const recovery = JSON.parse(readBounded(path.join(directory, 'recovery-check.json'), 8192).toString('utf8'));
   if (recovery.portableRecoveryVerified !== true || recovery.commitment !== value.commitment || recovery.vaultSHA256 !== value.vaultSHA256) throw Error('Verify the portable backup before preparing enrollment');
   const result = { schema: 'cannabis.participant-enrollment-request.v1', commitment: value.commitment,
-    status: 'AWAITING_REVIEWED_PROVIDER', enrolled: false,
+    status: 'AWAITING_CANNABIS_CEREMONY', enrolled: false,
     instructions: 'Share this commitment only through the official reviewed person-verification flow when it opens. This file is not proof of personhood, an enrollment receipt or a token balance. Do not publish it alongside a receiving wallet.' };
   fs.writeFileSync(output, JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   return result;

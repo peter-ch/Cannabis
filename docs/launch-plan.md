@@ -2,7 +2,7 @@
 
 1. Finalize network, immutable token parameters, verified Semaphore deployment and registrar configuration. Publish a reproducible unsigned deployment package and its hashes.
 2. Complete independent security and privacy review, including enrollment abuse, identity recovery, metadata correlation, dependency/artifact integrity, relaying, root updates and effective anonymity.
-3. Select and integrate a person-verification provider. Document country access, cost, privacy policy, one-person enrollment, appeals and recovery. Cannabis must not collect identity documents. Review the registrar's operational controls.
+3. Complete and independently review Cannabis-run synchronized in-person enrollment. Publish recurring-round rules, venue and registry-reviewer policies, schedule, costs, accessibility, privacy, roster appeals and same-secret recovery. Validate durable person continuity across rounds and venues, including attempts to obtain both a new tag and a new identity. Demonstrate continuous-presence checks and witness independence; no identity documents, biometrics or external identity-provider registration are required.
 4. Exercise the complete claim flow with independent participants and a verified group of at least 128 distinct people. Publish results and resolve material findings. Internal security fixtures do not establish real-person enrollment.
 5. Resolve applicable issuance, promotion and privacy requirements; prepare required disclosures and environmental reporting.
 6. Verify the owner's portable wallet recovery. Review actual network fees and specifically authorize funded costs. The owner reviews and signs production transactions.

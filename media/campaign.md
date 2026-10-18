@@ -34,7 +34,7 @@ Cannabis brings a little green energy to open-source crypto. Big character, visi
 
 Community participation uses verified-person claims with a common public opening. Read the [allocation, vesting and service terms](https://cannabis-coin.online/terms.html) before participating.
 
-Semaphore zero-knowledge membership proofs protect which enrolled identity made a claim. Wallet transactions remain public. A reviewed enrollment provider must enforce distinct-person eligibility; Cannabis will not collect identity documents.
+Semaphore zero-knowledge membership proofs protect which enrolled identity made a claim. Wallet transactions remain public. Cannabis-run synchronized ceremonies and independent witnesses must establish distinct-person eligibility; no external identity provider, identity documents or biometric scans are required.
 
 The computing economy is central: requesters buy useful services, providers earn for accepted work, and published capacity commitments define what can be redeemed. The general workload format supports extensible adapters for scripts, VM checkpoints, distributed training and other software. Target hardware spans NVIDIA/CUDA, AMD/ROCm, CPU and other accelerators, each requiring a validated confidential path. Work transfers existing Cannabis and preserves the supply cap.
 

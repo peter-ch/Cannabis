@@ -73,7 +73,7 @@ contract FounderVesting {
     }
 }
 
-/// @notice Fixed-cap, anonymous membership claims. A disclosed enrollment provider verifies unique people.
+/// @notice Fixed-cap, anonymous membership claims. The reviewed Cannabis ceremony verifies distinct people.
 /// @dev No proof-of-work. Underlying network provides consensus. Independent review remains required.
 contract Cannabis is ERC20 {
     uint256 public constant CAP = 420_000_000 ether;

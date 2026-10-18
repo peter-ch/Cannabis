@@ -1,59 +1,81 @@
-# Person-verification integration
+# Cannabis person verification
 
-Cannabis community enrollment is being built around non-biometric verification and client-held Semaphore identities. The BrightID integration checks signed eligibility records and records each bound application request once in an operator-private intake database. It is a provider integration component; Cannabis has not selected or opened a production enrollment service.
+Cannabis is building its own non-biometric enrollment system using recurring synchronized in-person ceremonies and a permanent enrollment registry. Future newcomers can attend later rounds. No BrightID account, sponsorship or external person-verification service is required. Enrollment is not open yet; real operations, cross-round human uniqueness, independent review and mainnet deployment remain to be completed.
 
-## What the checker verifies
+## One person, one place, one commitment
 
-`claims/brightid.mjs` follows the signed-record interfaces in BrightID Node [6.17.2](https://github.com/BrightID/BrightID-Node/tree/c8fa7006d30d39e926fc6e96bb08819de76906ba) and [6.18.0](https://github.com/BrightID/BrightID-Node/tree/c699663519334b7a5149a4e4e8f5622984a23691). The response-signing and encoding paths were compared at these exact source revisions. Each deployment policy pins one version; a node changing to another supported version still fails the check. This is source compatibility review, not independent security review or proof of the deployed node's code. The checker requires a separately trusted Ed25519/NaCl public key, exact app identifier and verification expression, and a reviewed deployment binding. A key returned alongside a credential cannot establish trust in itself.
+All venues in a round share the same continuous-presence interval. Participants arrive before it starts, remain at one venue throughout it, and register one client-held Semaphore identity commitment. At least three independently controlled witness keys are assigned to each venue, with at least two thirds required to approve its complete roster. Witnesses must actually attend their assigned venue. Different keys alone do not prove independent people.
 
-The application user ID is SHA-256 of the following ASCII strings separated by a single NUL byte, without a final separator:
+Witnesses maintain an observable room boundary, prevent re-entry or substitution, and independently reconcile the physical headcount with one commitment per person. Remote attendance, recordings and a brief check-in are insufficient. Each round lasts one to four hours, with the same UTC start and end everywhere. Uncertain presence means no approval. Accessibility, admission and dispute arrangements must preserve the rule and be published before registration.
 
-~~~text
-Cannabis BrightID enrollment v1
-canonical decimal chain ID
-lowercase enrollment-controller address
-canonical decimal Semaphore commitment
-~~~
+Cannabis does not collect identity documents, iris or face scans, photographs, legal names or birth dates. Witnesses see the people who attend. Attendance handling must minimize records and protect links between a person and commitment. Do not collect a receiving wallet during enrollment.
 
-This binding prevents a copied signed record from being reassigned to another commitment, chain or enrollment controller. The identity secret and future receiving wallet are not sent to the provider. The application user ID is derivable from the public commitment and deployment; it is not an additional secret or an anonymity guarantee.
+## Future newcomers and the permanent registry
 
-Before and after fetching a credential, the adapter reads the configured node's state and app settings. It requires the exact supported version and pinned key, development/testing disabled, blind credentials enabled, ordinary string IDs, one verification expression and no verification expiration period. It requests `signed=nacl`, `includeHash=true`, and `timestamp=seconds`. It checks the signature over the exact upstream comma-separated app, application user ID, verification-expression hash and timestamp. Record age is bounded to at most 300 seconds, with at most 30 seconds of configured future clock skew.
+The same registrar accepts later rounds without replacing its membership history. Each round needs approval from a separately controlled Cannabis registry-review quorum, at least seven days of on-chain notice, and a presence interval after the preceding round's submission deadline. The first round's published capacity must accommodate at least 128 people. Later rounds may be smaller. The enrollment controller keeps the global 990,000-person ceiling; a new round does not create additional supply or reset claims.
 
-Requests use HTTPS, with literal loopback HTTP available for local integration checks. Redirects, URL credentials, extra query parameters, oversized responses and unsupported record fields are rejected. No user-profile, social graph, photo, identity-document or biometric endpoint is requested. The selected provider still sees the request identifier and network metadata.
+Each admitted person has one opaque permanent registry tag paired with one Semaphore commitment. Tags must be assigned through the reviewed registry process, not accepted as a participant's assertion that they are new. Do not derive them by hashing names, email addresses, documents or other guessable personal data. A venue roster needs both its witness quorum and the independent registry quorum's approval of these exact bindings.
 
-## Run an intake check
+On-chain history permanently consumes both the person tag and commitment. Neither another venue, another round, a new commitment for an existing tag, nor a new tag for an existing commitment permits enrollment again. No founder, reviewer or witness can reset these records or replace an enrolled identity through the contract. Newcomers use the existing registry; they do not require a new currency or group.
 
-Prepare a protected local configuration containing `policy`, `commitment` and an absolute `ledger` file path. Policy fields are:
+**A new tag together with a new identity is not automatically detectable as the same human.** Registry reviewers must establish durable person continuity across venues and rounds through a reviewed human-verification process, check previous records, and refuse reissuance. That operating method and its adversarial validation are still unfinished. The software must not be described as having solved lifetime human uniqueness merely because it checks tags, keys or signatures. This remains a release requirement within Cannabis, not a dependency on an external provider.
 
-| Field | Required value |
+## Recovery and missed rounds
+
+Recovery restores the **same identity secret and commitment** from the participant's encrypted backup. Witnesses and registry reviewers do not receive the secret, issue replacement identities or authorize a second allocation. Losing every recoverable copy can permanently prevent claiming. The [Windows guide](windows-setup.md) requires an actual portable-backup recovery check before preparing an enrollment request.
+
+Each venue submits one complete roster per round. Participants inspect their entry before witnesses sign, with disputes resolved before submission. A missed round or omitted entry can be considered in a later round under the permanent registry checks; it does not receive an automatic extra identity or entitlement. Unallocated community supply is not reassigned to the founder. Reviewer keys are fixed in the current contract, so independent custody, recovery and sufficient surviving quorum are operational requirements.
+
+## Participant procedure
+
+1. Create your private identity and verify its portable backup on your own device. Keep the secret and password private.
+2. Check the canonical release, authorized round, UTC interval, venue and witness policy. Attend one approved venue for the full interval.
+3. Provide your commitment through reviewed local intake. Cannabis registry reviewers check the permanent person binding; venue witnesses check attendance. Supply no receiving wallet, document or biometric record.
+4. Confirm the exact commitment and permanent record in the final roster, keep your private receipt, and verify inclusion in the complete finalized membership snapshot after enrollment.
+5. From the common public claim opening, generate the [Semaphore claim proof](community-claims.md) locally. Claims require at least 128 genuinely verified members and preserve the 420-per-person allocation. Later newcomers can claim after their enrollment is finalized.
+
+## What the software enforces
+
+`contracts/CommunityRegistrar.sol` fixes the enrollment controller and three to nine registry-reviewer addresses with a quorum of at least two thirds. It has no owner, privileged enrollment call, history reset or identity replacement. Quorum-signed round definitions are sequential, cannot overlap submission windows, and cannot be overwritten or rescheduled. Each fixes a venue-policy Merkle root, shared presence interval and a submission deadline one to thirty days afterward.
+
+Venues have opaque identifiers, capacity up to 256, three to nine witness addresses and a quorum of at least two thirds. The contract rejects registry-reviewer keys acting as venue witnesses. The complete-policy checker also rejects witness-key reuse across simultaneous venues. Reviewers must inspect that full policy before signing its root; a contract sees only the venue proof supplied with each roster.
+
+Venue approvals use [EIP-712](https://eips.ethereum.org/EIPS/eip-712) typed messages binding chain, registrar, enrollment controller, round, exact schedule, venue policy, venue, sorted commitment list and matching permanent tags. Registry approvals use a separate typed message over that roster digest, so the two roles cannot reuse one signature. The contract uses pinned [OpenZeppelin ECDSA, EIP-712 and Merkle-proof implementations](https://docs.openzeppelin.com/contracts/5.x/api/utils/cryptography). It checks distinct approved signers, canonical commitments, permanent registry duplication, venue capacity and the submission window.
+
+Any relay can submit a fully approved roster without changing its contents. All state updates revert if either approval or enrollment fails. A venue submits once per round, while permanent records persist through every round. EIP-712 alone does not prevent replay; the sequence, used-venue and permanent-consumption registries enforce it here. The token's nullifier and wallet rules separately prevent claiming twice from an enrolled identity.
+
+## Prepare approvals locally
+
+`claims/community-enrollment.mjs` exports policy normalization, constructor configuration, `prepareRoundPolicy`, `verifyRoundApprovals`, `prepareVenueRoster` and `verifyVenueApprovals`. These build typed review messages and unsigned calls without network access, provider accounts or private signing keys.
+
+The private policy uses these exact fields:
+
+| Field | Meaning |
 | --- | --- |
-| `schema` | `cannabis.brightid-policy.v1` |
-| `nodeUrl` | Trusted HTTPS base ending in `/brightid/v6/` |
-| `nodeVersion` | Exactly `6.17.2` or `6.18.0`, matching the reviewed provider deployment |
-| `app` | Independently registered and reviewed app ID |
-| `verification` | One exact reviewed verification expression |
-| `publicKey` | Independently authenticated 32-byte Ed25519 key in canonical padded Base64 |
-| `chainId` | Canonical positive decimal string |
-| `enrollment` | Verified Cannabis enrollment-controller address |
-| `maxAgeSeconds` | Integer from 1 to 300 |
-| `clockSkewSeconds` | Integer from 0 to 30 |
+| `schema` | `cannabis.ceremony-policy.v2` |
+| `chainId` | Canonical decimal chain ID |
+| `registrar`, `enrollment` | Verified or deterministically predicted contract addresses |
+| `registryReviewers`, `registryQuorum` | The fixed registry reviewers and required threshold |
+| `round` | Positive sequential round number |
+| `startsAt`, `endsAt`, `submissionsCloseAt` | UTC Unix seconds for that round |
+| `venues` | Objects with `id`, `capacity`, `quorum`, and `witnesses` |
 
-`commitment` is the participant's canonical decimal Semaphore commitment. `brightIDApplicationUserId(policy, commitment)` produces the application ID to register through the provider's reviewed blind-credential client. This tool does not create that registration or obtain blind credentials on the participant's behalf. No production keys or provider settings are supplied by default.
+A round-request configuration contains `kind: "round"` and `policy`. For a roster request, use `kind: "roster"`, `policy`, `venueId`, and `members`, an array of objects containing `personTag` and `commitment`. Tags and venue IDs are nonzero lowercase bytes32 values; commitments are canonical decimal strings.
 
 ~~~sh
-node scripts/check-person-verification.mjs --config /protected/intake-config.json --out /protected/intake-result.json
+node scripts/check-person-verification.mjs --config /protected/ceremony.json --out /protected/approval-request.json
 ~~~
 
-Keep the configuration, output, SQLite database, its WAL/journal and backups off public hosting. Use protected operator storage and access controls; SQLite does not encrypt these files. Logs omit request IDs, commitments and provider response bodies. Only hashes and commitments needed for the intake record are retained; raw signatures and profile data are not stored by the ledger.
+Witnesses and registry reviewers independently inspect their evidence and sign their own typed messages with their own wallets. The script signs for nobody. Add `registrySignatures` to a round configuration, or both `witnessSignatures` and `registrySignatures` to a roster configuration, then rerun with a new output path. It checks signatures and timing and prepares a zero-value unsigned transaction.
 
-Transactions and uniqueness constraints make repeated submissions idempotent, including simultaneous processes. Reopening the database with changed trust, app, network or verification settings fails. A policy change needs a reviewed migration preserving the duplicate registry. Do not create a fresh empty ledger to bypass that requirement. If an output write fails after intake commits, retry with a fresh output filename: the existing request remains recorded once.
+Before submitting, independently verify deployed code, constructor values, round policy, current registry state, decoded call and gas. This offline checker does not query chain state, confirm human observations or replace release review. Registrar/token deployment preparation must bind the exact predicted enrollment address; verify it after deployment before authorizing rounds. Publish the initial common claim opening with at least seven days' notice, after the initial round's submission deadline.
 
-## What remains before enrollment
+Keep intake and receipt files on protected operator storage under an explicit retention policy. Output creation refuses an existing filename, and console messages omit member records and signatures. Permanent tags, commitments, opaque venue grouping, approvals and transaction timing become public on submission. Semaphore conceals which enrolled identity later claims; it does not erase enrollment metadata or public wallet activity.
 
-The signed record proves that the pinned node signed the exact statement. It does **not** cryptographically prove one distinct person for a lifetime. In particular, the v6 signed response does not contain the underlying blind-credential UID or a permanent cross-alias human nullifier. Local application-ID deduplication cannot resolve duplicate identities or aliases issued by the provider.
+## Trust and release requirements
 
-Nonexpiring settings alone do not settle recovery, credential reissuance, registration races, node migration or changes to the meaning of a named verification expression. The signed hash covers the expression text; it does not attest the running node's code, underlying verification rules or database behavior. Node/app configuration is observed over the configured connection, not independently attested by the credential signature.
+Witness signatures cannot prove honest physical observation, and registry signatures cannot prove lifetime human uniqueness. Collusion, substitution, compromised keys or a returning person issued a new tag and secret can defeat the human policy. Independence, durable continuity checks, privacy-preserving evidence handling and adversarial tests require review before any production authorization.
 
-Production selection therefore still requires an independently reviewed lifetime-uniqueness and recovery policy, authenticated node keys, durable provider registration behavior, app registration and sponsorship/access terms, participant consent and custody flows, protected operations and an actual end-to-end enrollment. Multiple provider policies or nodes must not create additional allocations for the same person. The registrar must enforce that reviewed identity rule before calling `addVerifiedMembers`.
+The tooling reports cryptographic quorum checks separately from `humanUniquenessEstablished: false`, `enrolled: false` and `sent: false`. Synthetic local participants exercise recurring admission, permanent duplicate refusal and actual Semaphore proofs only. They do not count toward 128 real people. Venue organization, real witness/reviewer custody, cross-round human checks, participant consent, accessibility, complaints, independent review and deployment remain unfinished. See [launch acceptance](launch-plan.md).
 
-Successful checks explicitly return `eligibilitySignatureVerified: true`, `lifetimeUniquenessEstablished: false`, `enrollmentAuthorized: false` and `enrolled: false`. The tool does not sign transactions, add members, mint tokens or expose a public enrollment endpoint. The existing [community claim flow](community-claims.md) and [launch acceptance criteria](launch-plan.md) remain controlling.
+The earlier BrightID adapter is retired from the release path. Historical source and regression checks do not make it a dependency. The current person-verification command performs only the offline Cannabis flow above.

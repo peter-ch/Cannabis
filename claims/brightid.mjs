@@ -1,3 +1,4 @@
+// Retired from the Cannabis release path; historical regression coverage only.
 // BrightID v6 signed-record intake. This does not establish lifetime human uniqueness
 // or authorize on-chain enrollment. See docs/person-verification.md.
 import { createHash, createPublicKey, verify } from 'node:crypto';

@@ -2,7 +2,7 @@
 
 The membership downloader reconstructs the full Cannabis enrollment group from public Semaphore events. It checks the result against a finalized block and confirms that newer enrollment has not changed the root. Participants can then generate their claim proof locally without telling a snapshot server which enrolled member they are.
 
-This component reads the chain. It receives no identity secret, participant commitment or receiving-wallet address, and never enrolls, signs or broadcasts. A reviewed non-biometric person-verification provider and deployed contracts remain launch requirements.
+This component reads the chain. It receives no identity secret, participant commitment or receiving-wallet address, and never enrolls, signs or broadcasts. The reviewed Cannabis ceremony and deployed contracts remain launch requirements.
 
 ## Deployment configuration
 

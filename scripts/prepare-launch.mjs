@@ -51,7 +51,7 @@ export async function prepare(options) {
     creationBytecodeKeccak256: keccak256(artifact.bytecode), deploymentDataKeccak256: keccak256(transaction.data),
     constructorArguments: args, transaction: { chainId: `0x${config.network.chainId.toString(16)}`, from: config.beneficiary, data: transaction.data, value: '0x0' },
     releaseRequirements: ['Portable wallet backup confirmed by owner', 'Exact opening time and parameters accepted',
-      'Independent security and privacy review completed', 'Reviewed human-verification provider and one-identity enrollment/recovery policy',
+      'Independent security and privacy review completed', 'Reviewed recurring Cannabis ceremonies, independent venue/registry quorums, durable cross-round human uniqueness and same-identity recovery',
       'At least 128 independently verified members; admission batching policy published', 'Semaphore deployment, verifier version and code hash verified on selected chain',
       'Applicable launch requirements addressed',
       'Current fees reviewed and funded by owner', 'Owner reviews and signs using their wallet']

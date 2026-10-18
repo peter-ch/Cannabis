@@ -159,18 +159,16 @@ test('intake persists idempotent records across connections and refuses policy r
   } finally { a?.close(); b?.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('CLI rechecks provider and records one intake across concurrent attempts without exposing private fields', async () => {
+test('current ceremony CLI refuses retired provider configurations without contacting a provider', async () => {
   const f = await providerFixture(), dir = mkdtempSync(path.join(os.tmpdir(), 'cannabis-intake-cli-'));
   const cli = fileURLToPath(new URL('../scripts/check-person-verification.mjs', import.meta.url));
   try {
     const config = path.join(dir, 'config.json'), dbFile = path.join(dir, 'intake.sqlite');
     writeFileSync(config, JSON.stringify({ policy: f.policy, commitment, ledger: dbFile }));
-    // Initialize schema once, then check real cross-process transaction serialization.
-    const ledger = new BrightIDIntakeLedger(dbFile, f.policy); ledger.close();
     const outputs = [path.join(dir, 'one.json'), path.join(dir, 'two.json')];
     const runs = await Promise.all(outputs.map(out => run([cli, '--config', config, '--out', out])));
-    assert.deepEqual(runs.map(r => r.code), [0, 0]);
-    assert.deepEqual(outputs.map(out => JSON.parse(readFileSync(out)).alreadyRecorded).sort(), [false, true]);
+    assert.deepEqual(runs.map(r => r.code), [1, 1]);
+    assert.equal(f.requests.length, 0);
     for (const r of runs) { assert.equal(r.stdout.includes(commitment), false); assert.equal(r.stdout.includes(f.policy.publicKey), false); }
     writeFileSync(config, '{"private":"do-not-print-this"');
     const bad = await run([cli, '--config', config, '--out', path.join(dir, 'bad.json')]);

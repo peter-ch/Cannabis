@@ -1,6 +1,6 @@
 # Cannabis allocation and service terms
 
-These are the published parameters of the current contract implementation. Mainnet launch is being prepared; a verified release, enrollment provider and opening time have not yet been announced. Read these terms before participating, alongside the [release requirements](mainnet-release.md), [privacy design](privacy-security.md) and [risks](risks.md).
+These are the published parameters of the current contract implementation. Mainnet launch is being prepared; a verified release, Cannabis ceremony and opening time have not yet been announced. Read these terms before participating, alongside the [release requirements](mainnet-release.md), [privacy design](privacy-security.md) and [risks](risks.md).
 
 ## Supply and allocation
 

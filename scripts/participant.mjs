@@ -26,7 +26,7 @@ function filePath(answer) {
 }
 console.log('\nCANNABIS\nYour identity. Your recovery. Your participation.\n');
 console.log('This guide prepares your own encrypted participant identity on this PC.');
-console.log('Community enrollment opens after the reviewed provider and mainnet release are ready.');
+console.log('Community enrollment opens after the Cannabis ceremony and mainnet release are ready.');
 console.log('It does not ask for a wallet seed, move money or register you automatically.');
 console.log('If you already have a Cannabis participant backup, choose Restore. Keep the same identity.\n');
 for (;;) {

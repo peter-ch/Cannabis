@@ -28,7 +28,7 @@ export const guideGroups = [
   ]],
   ['identity', 'Identity and eligibility', 'Participation with secrets held on your own device.', [
     ['claim-identity', 'Your claim identity', 'Create, recover and use a private eligibility identity.'],
-    ['person-verification', 'Person verification', 'Distinct-person enrollment and non-biometric provider integration.'],
+    ['person-verification', 'Person verification', 'Cannabis-run ceremonies, witness approval and private identities.'],
     ['membership-snapshot', 'Membership snapshots', 'Download and check the complete enrollment group before proving.']
   ]],
   ['protected', 'Protected execution', 'The details behind confidential computing.', [

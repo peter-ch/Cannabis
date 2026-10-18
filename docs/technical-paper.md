@@ -12,7 +12,7 @@ No token-level proof-of-work, hash search, staking yield, tax, blacklist, emerge
 
 ## Private eligibility
 
-A reviewed provider verifies distinct people and admits one user-generated Semaphore identity commitment per person. CannabisEnrollment controls the Semaphore group and permits only append operations by its immutable registrar. It cannot remove or replace members, transfer group administration, or admit more than 990,000 commitments. Enrollment must not contain raw identity data.
+Cannabis uses a reviewed synchronized in-person ceremony to admit one user-generated Semaphore identity commitment per person. Venue witness quorums attest continuous presence; no external person-verification provider is required. The [permanent registrar](person-verification.md) supports recurring rounds and future newcomers while retaining consumed person tags and commitments. Separate venue and registry quorums approve enrollment. Recovery restores the same identity; durable human continuity across rounds still requires independent validation. CannabisEnrollment controls the Semaphore group and permits only append operations by its immutable registrar. It cannot remove or replace members, transfer group administration, or admit more than 990,000 commitments. Enrollment must not contain raw identity data.
 
 The user generates a Semaphore proof locally. Its message is the receiving wallet address; its scope is a hash of the Cannabis claim domain, chain ID and token address. The proof establishes membership without exposing which commitment belongs to the claimant.
 

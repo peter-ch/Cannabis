@@ -1,13 +1,13 @@
 # Community claims
 
-The proposed production rules reserve 99% of Cannabis for up to 990,000 eligible people: one claim of 420 Cannabis per verified person, starting at the common public opening. Production enrollment awaits a reviewed provider and verified deployment.
+The proposed production rules reserve 99% of Cannabis for up to 990,000 eligible people: one claim of 420 Cannabis per verified person, starting at the common public opening. Production enrollment awaits the reviewed Cannabis ceremony and verified deployment.
 
-The selected enrollment direction is non-biometric person verification. We are evaluating social/personhood verification without iris or face scans, with one-person allocation and recovery protections. A provider has not yet been selected; the website does not collect identity documents or biometric information.
+The selected verification method is Cannabis-run synchronized in-person attendance, with independent venue witnesses and participant-held identities. No BrightID account, external identity provider, identity documents or biometric scans are required.
 
-The [provider integration checker](person-verification.md) validates BrightID signed eligibility records, binds them to the intended deployment and identity commitment, and maintains an idempotent private intake registry. Provider lifetime uniqueness, recovery and production enrollment still require review; signature verification alone does not authorize membership.
+The [permanent registrar and local approval tooling](person-verification.md) support recurring rounds for future newcomers. Separate venue and registry quorums approve each roster; permanent person tags and commitments cannot be reused across rounds. Recovery restores the same secret. Durable cross-round human verification remains essential: a returning person using both a new tag and a new identity is not detected by cryptography alone.
 
 1. Generate and securely back up a private Semaphore identity on your device. The [local identity and proof CLI](claim-identity.md) provides encrypted custody and a recovery check. The identity secret must never be sent to the enrollment service, Cannabis, a chat or a public repository.
-2. Complete the approved provider's person-verification process. Submit only the identity commitment for group enrollment. The provider must enforce one identity per person and a recovery policy that prevents repeat claims.
+2. Attend one approved Cannabis venue for the complete synchronized interval. Submit only the identity commitment and check the final roster before witnesses sign. Restore the same identity for recovery; do not create a replacement allocation.
 3. Retrieve the complete public membership snapshot using the [checked whole-group downloader](membership-snapshot.md). Generate a Semaphore proof locally with the receiving wallet address as its message and the deployed token's claimScope as its scope. Use the matching pinned Semaphore libraries and reviewed proving artifacts. Do not include the identity commitment or secret in the public claim file.
 4. Validate the proof against the canonical deployment and prepare an unsigned transaction:
 

@@ -1,8 +1,8 @@
 # Keep your claim identity on your device
 
-The participant CLI creates an encrypted Semaphore identity, checks recovery, and generates a claim proof locally. It uses the pinned Semaphore 4.14.5 libraries and native age X25519 encryption. Only the commitment goes to the approved enrollment provider. The public claim proof contains neither that commitment nor the secret. Semaphore's [identity guide](https://docs.semaphore.pse.dev/guides/identities) describes the underlying key and commitment format.
+The participant CLI creates an encrypted Semaphore identity, checks recovery, and generates a claim proof locally. It uses the pinned Semaphore 4.14.5 libraries and native age X25519 encryption. Only the commitment goes to the reviewed Cannabis ceremony intake. The public claim proof contains neither that commitment nor the secret. Semaphore's [identity guide](https://docs.semaphore.pse.dev/guides/identities) describes the underlying key and commitment format.
 
-This is a local command-line component of the production claim flow. It does not enroll a person, establish a canonical deployment, sign a transaction or submit a claim. The enrollment provider, reviewed release and participant interface remain launch dependencies. No operational participant identities are included in this repository.
+This is a local command-line component of the production claim flow. It does not enroll a person, establish a canonical deployment, sign a transaction or submit a claim. The Cannabis ceremony, reviewed release and participant interface remain launch work. No operational participant identities are included in this repository.
 
 ## Prepare custody
 
