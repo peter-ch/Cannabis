@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AbiCoder, Contract, FetchRequest, JsonRpcProvider, getAddress, keccak256, toBeHex } from 'ethers';
-import { compile } from './compile.mjs';
+import escrowABI from '../compute/escrow-abi.json' with { type: 'json' };
 import { planJob, policy, quotePayment } from './compute-plan.mjs';
 const erc20 = ['function balanceOf(address) view returns(uint256)', 'function allowance(address,address) view returns(uint256)', 'function approve(address,uint256) returns(bool)'];
 const zero = '0x0000000000000000000000000000000000000000';
@@ -60,7 +60,7 @@ async function connect(options) {
     const codes=await Promise.all([provider.getCode(escrow),provider.getCode(token)]);
     if(codes.some(c=>c==='0x') || keccak256(codes[0]).toLowerCase()!==options.escrowCodeHash.toLowerCase() ||
        keccak256(codes[1]).toLowerCase()!==options.tokenCodeHash.toLowerCase())throw Error('Runtime code does not match the reviewed release');
-    const contract=new Contract(escrow,compile().ComputeEscrow.abi,provider),asset=new Contract(token,erc20,provider);
+    const contract=new Contract(escrow,escrowABI,provider),asset=new Contract(token,erc20,provider);
     const [boundToken,fee,recipient]=await Promise.all([contract.token(),contract.FEE_BPS(),contract.founderRecipient()]);
     if(boundToken!==token || fee!==100n || recipient!==getAddress(policy.founderRecipient))throw Error('Escrow token or fee policy does not match');
     return {provider,contract,asset,chainId,escrow,token,founderRecipient:recipient};

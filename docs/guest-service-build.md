@@ -2,7 +2,7 @@
 
 The guest image needs identifiable attestation binaries before its boot measurements can be approved. `scripts/build-guest-services.py` builds the two upstream components used by the Cannabis guest integration: the ttRPC attestation agent and its local REST bridge. The source revision, Cargo lock digest, compiler distribution and selected features are pinned in [guest-service-build.json](../compute/guest-service-build.json).
 
-This build produces image components. It does not construct a bootable guest, establish confidential hardware, authorize jobs or launch customer programs. The approved image must also include the kernel, runtime, protected storage, service isolation and enforced initialization policy described in [worker deployment](worker-deployment.md).
+This build produces image components. The separate [boot-image builder](guest-image-build.md) assembles and checks them with a kernel and userspace. Neither operation establishes confidential hardware, authorizes jobs or launches customer programs. The approved image must also enforce protected storage, service isolation and initialization policy as described in [worker deployment](worker-deployment.md).
 
 ## Prepare the build host
 

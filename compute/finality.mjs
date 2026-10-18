@@ -1,6 +1,6 @@
 // Read-only, hash-pinned finalized escrow inspection. No signing or transaction submission.
 import { FetchRequest, Interface, JsonRpcProvider, getAddress, keccak256 } from 'ethers';
-import { compile } from '../scripts/compile.mjs';
+import escrowABI from './escrow-abi.json' with { type: 'json' };
 import { termsDigest } from '../scripts/compute-escrow.mjs';
 import { policy } from '../scripts/compute-plan.mjs';
 
@@ -51,7 +51,7 @@ async function readEscrowSnapshot(options,clock,blockSelector) {
     const tag={blockHash:block.hash,requireCanonical:true};
     const codes=await Promise.all([send('eth_getCode',[escrow,tag]),send('eth_getCode',[token,tag])]);
     if(codes.some(c=>c==='0x') || keccak256(codes[0]).toLowerCase()!==options.escrowCodeHash.toLowerCase() || keccak256(codes[1]).toLowerCase()!==options.tokenCodeHash.toLowerCase())throw Error('Runtime code differs from the reviewed release');
-    escrowInterface??=new Interface(compile().ComputeEscrow.abi);
+    escrowInterface??=new Interface(escrowABI);
     const call=async(name,args=[])=>{
       const encoded=escrowInterface.encodeFunctionData(name,args);
       const data=await send('eth_call',[{to:escrow,data:encoded},tag]);

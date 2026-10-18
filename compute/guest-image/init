@@ -1,0 +1,35 @@
+#!/bin/busybox sh
+# No shell, host filesystem, network interface, workload or key intake at boot.
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/run
+export PYTHONDONTWRITEBYTECODE=1
+export CANNABIS_AGE=/usr/local/bin/age
+umask 077
+ulimit -c 0
+fail() {
+    echo 'CANNABIS_BOOT_CHECK infrastructure_failure'
+    /bin/busybox poweroff -f
+    while :; do /bin/busybox sleep 60; done
+}
+/bin/busybox mount -t devtmpfs -o nosuid devtmpfs /dev || fail
+/bin/busybox mount -t proc -o nosuid,nodev,noexec proc /proc || fail
+/bin/busybox mount -t sysfs -o nosuid,nodev,noexec sysfs /sys || fail
+/bin/busybox mount -t tmpfs -o nosuid,nodev,mode=0700,size=128m tmpfs /run || fail
+/bin/busybox mount -t tmpfs -o nosuid,nodev,noexec,mode=1777,size=64m tmpfs /tmp || fail
+/bin/busybox mkdir -p /dev/shm
+/bin/busybox mount -t tmpfs -o nosuid,nodev,noexec,mode=0700,size=64m tmpfs /dev/shm || fail
+echo 0 > /proc/sys/kernel/sysrq
+echo 2 > /proc/sys/kernel/kptr_restrict
+echo 1 > /proc/sys/kernel/dmesg_restrict
+echo 0 > /proc/sys/fs/suid_dumpable
+# Modules come only from the embedded pinned kernel package. Missing hardware
+# is expected during local boot verification; no module can create a TEE.
+/usr/sbin/modprobe sev-guest >/dev/null 2>&1 || :
+/usr/sbin/modprobe tdx-guest >/dev/null 2>&1 || :
+echo 1 > /proc/sys/kernel/modules_disabled
+/bin/busybox ip link set lo up || fail
+/usr/bin/python3 -I -B /opt/cannabis/boot-check.py
+code=$?
+if [ "$code" != 0 ]; then echo 'CANNABIS_BOOT_CHECK failed'; fi
+/bin/busybox poweroff -f
+while :; do /bin/busybox sleep 60; done

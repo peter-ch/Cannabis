@@ -1,0 +1,10 @@
+{
+  "name": "cannabis-guest-control-plane",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ethers": "6.17.0",
+    "jose": "6.2.12"
+  }
+}
