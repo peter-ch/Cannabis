@@ -1,12 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync } from 'node:crypto';
+import fs from 'node:fs';
 import { AttestationLedger, trusteeEvidenceRequest, trusteeRuntimeData } from '../compute/attestation.mjs';
-import { GuestEvidenceSession, probeGuestAgent } from '../compute/guest_session.mjs';
+import { GuestEvidenceSession, probeGuestAgent, GUEST_COMPONENTS_REVISION, GUEST_AGENT_VERSION } from '../compute/guest_session.mjs';
 import { guestAgentFixture } from './helpers/guest_agent_fixture.mjs';
 
 const signer = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
 const hex = n => n.toString(16).padStart(64, '0'), time = 1800000000;
+test('guest service build pins agree with the admitted CPU wire profile', () => {
+  const build = JSON.parse(fs.readFileSync(new URL('../compute/guest-service-build.json', import.meta.url), 'utf8'));
+  assert.equal(build.source.revision, GUEST_COMPONENTS_REVISION);
+  assert.equal('Guest Components Version: ' + build.source.tag, GUEST_AGENT_VERSION);
+  assert.equal(build.bridgeFeature, 'attestation');
+  assert.deepEqual(build.agentFeatures, ['bin', 'ttrpc', 'rust-crypto', 'snp-attester', 'tdx-attester']);
+  assert.deepEqual(build.binaries, ['ttrpc-aa', 'api-server-rest']);
+});
 function setup(tee = 'snp') {
   const policy = { schema: 'cannabis.attestation.trustee-policy.v1', issuer: 'Fixture AS', signingJwk: signer.publicKey.export({ format: 'jwk' }),
     verifierBuild: 'Protocol fixture', appraisalPolicyId: 'fixture-cpu', maxTokenAgeSeconds: 60, maxTokenLifetimeSeconds: 300, challengeTTLSeconds: 90, tee,
