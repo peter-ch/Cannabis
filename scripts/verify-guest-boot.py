@@ -56,6 +56,12 @@ def main():
     if code != 0 or len(lines) != 1 or 'CANNABIS_BOOT_CHECK' in text:
         raise ValueError('Guest boot check failed; inspect private serial log')
     result = json.loads(lines[0])
+    expected_initialization = {'schema':'cannabis.guest-initialization-check.v1',
+        'profiles':[{'profile':p, 'unsupportedHardwareRejected':True, 'servicesStopped':True} for p in ['snp','tdx']],
+        'cancellationRejected':True, 'changedBinaryRejected':True, 'occupiedPortRejected':True,
+        'requestedEvidence':False, 'acceptedJobKeys':False, 'hardwareValidated':False}
+    if result.get('initializationChecks') != expected_initialization:
+        raise ValueError('Initialization enforcement did not pass its negative checks')
     if result['schema'] != 'cannabis.guest-boot-check.v1' or result['kernel'] != report['kernelRelease'] or result['imageFilesVerified'] != report['embeddedFiles'] or result['tee'] != 'sample' or result['profileChecks'] != [{'profile':p, 'unsupportedHardwareRejected':True} for p in ['snp','tdx']] or any(result[k] is not False for k in ['requestedEvidence','acceptedJobKeys','launchedCustomerWork','hardwareValidated']):
         raise ValueError('Unexpected guest result')
     final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}

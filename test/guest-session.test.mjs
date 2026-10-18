@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { AttestationLedger, trusteeEvidenceRequest, trusteeRuntimeData } from '../compute/attestation.mjs';
 import { GuestEvidenceSession, probeGuestAgent, GUEST_COMPONENTS_REVISION, GUEST_AGENT_VERSION } from '../compute/guest_session.mjs';
 import { guestAgentFixture } from './helpers/guest_agent_fixture.mjs';
+import { guestInitialization } from '../compute/guest_initialization.mjs';
 
 const signer = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
 const hex = n => n.toString(16).padStart(64, '0'), time = 1800000000;
@@ -23,8 +24,10 @@ function setup(tee = 'snp') {
       : { launch: '11'.repeat(48), initData: '22'.repeat(48), rtmr0: '33'.repeat(48), rtmr1: '44'.repeat(48), rtmr2: '55'.repeat(48), rtmr3: '00'.repeat(48) } };
   const binding = { chainId: 31337, escrow: '0x' + '12'.repeat(20), orderId: '0x' + hex(1), leaseDigest: '0x' + hex(2), reservationId: '0x' + hex(3),
     packageSHA256: hex(4), policySHA256: hex(5), runtimeSHA256: hex(6), taskSHA256: hex(7), attempt: 1, rank: 0, worldSize: 1, acceleratorClass: 'cpu' };
+  const initialization = { schema: 'cannabis.guest-initialization.v1', tee, binding, requester: '0x' + '13'.repeat(20), jobId: 'opaque-job' };
+  policy.measurements.initData = guestInitialization(initialization).digest;
   const ledger = new AttestationLedger(':memory:', policy, () => time), challenge = ledger.challenge(binding); ledger.close();
-  return { policy, challenge, expectedBinding: binding, requester: '0x' + '13'.repeat(20), jobId: 'opaque-job' };
+  return { initialization, policy, challenge, expectedBinding: binding, requester: initialization.requester, jobId: initialization.jobId };
 }
 function sorted(value) {
   if (Array.isArray(value)) return value.map(sorted);

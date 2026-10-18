@@ -6,6 +6,7 @@ import { getAddress, ZeroAddress } from 'ethers';
 import { trusteeReportData } from './attestation.mjs';
 import { openJobKeyDelivery } from './key_delivery.mjs';
 import { prepareGuestWorkload } from './guest_workload.mjs';
+import { matchGuestInitialization } from './guest_initialization.mjs';
 
 export const GUEST_COMPONENTS_REVISION = 'eae0bf63a3a9db7721f86e0a2b0b9941a7fcba3a';
 export const GUEST_AGENT_VERSION = 'Guest Components Version: v0.22.0';
@@ -71,10 +72,11 @@ export class GuestEvidenceSession {
     this.#timer = setTimeout(() => this.close(), Math.max(1, options.challenge.expiresAt - this.#clock()) * 1000);
     this.#timer.unref();
   }
-  static async create({ policy, challenge, expectedBinding, requester, jobId, agentUrl = 'http://127.0.0.1:8006' }, { clock = nowSeconds } = {}) {
+  static async create({ initialization, policy, challenge, expectedBinding, requester, jobId, agentUrl = 'http://127.0.0.1:8006' }, { clock = nowSeconds } = {}) {
     policy = structuredClone(policy); challenge = structuredClone(challenge); expectedBinding = structuredClone(expectedBinding);
     endpoint(agentUrl);
     requester = getAddress(requester);
+    matchGuestInitialization(initialization, { policy, expectedBinding, requester, jobId });
     if (requester === ZeroAddress || typeof jobId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(jobId) ||
         canonical(challenge.binding) !== canonical(expectedBinding)) throw Error('Challenge differs from the approved guest assignment');
     // The caller cannot supply a channel key. The private key is non-extractable

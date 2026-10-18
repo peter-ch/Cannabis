@@ -2,7 +2,7 @@
 
 `scripts/build-guest-image.py` assembles a Linux kernel and complete in-memory boot filesystem containing the [pinned guest evidence services](guest-service-build.md), Node, Python, age and the Cannabis control-plane modules. The current entry point checks those components and powers off. It has no customer-job intake, operating worker endpoint or confidential-hardware authorization.
 
-This image is a step toward the measured worker described in [worker deployment](worker-deployment.md). It is not a mainnet service release. The workload launcher, enforcement of initialization policy, protected runtime, resource limits, authenticated transport and real hardware acceptance remain required.
+This image is a step toward the measured worker described in [worker deployment](worker-deployment.md). It is not a mainnet service release. Assignment initialization is integrated into the control-plane startup API; its hardware acceptance, the workload launcher, protected runtime, resource limits and authenticated transport remain required.
 
 ## Inputs and assembly
 
@@ -44,6 +44,8 @@ This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It atta
 
 Inside the VM, the entry point mounts ephemeral runtime storage, disables core dumps and further kernel-module loading, checks embedded files, exercises the Python extensions and age executable, and starts the actual attestation agent and REST bridge on loopback. Both production CPU probes must reject the unsupported sample profile with their exact structured refusal. Import errors, missing libraries and unexpected success fail the check. No hardware evidence, channel key, job key or customer computation is requested. The services are terminated and the VM powers off.
 
+The boot check also runs the [initialization gate](guest-initialization.md) with both CPU profiles. It requires exact refusal on unsupported hardware and verifies that child services and sockets are removed. A cancelled startup, changed service binary and occupied loopback port must fail. An existing listener is never queried as if it were the spawned bridge.
+
 The check deliberately does not treat execution on real SNP/TDX hardware as an accepted deployment: that requires the separate initialization, measurement, negative-case and full workload acceptance run. Do not turn an ordinary boot result into an attestation policy.
 
 ## Connect these artifacts to measured launch
@@ -52,6 +54,6 @@ For SNP, the reviewed launch chain must cover firmware, kernel, initramfs, kerne
 
 For TDX, firmware and runtime measurement registers must cover the entire boot chain. [Contrast's reference-value documentation](https://docs.edgeless.systems/contrast/1.22/architecture/components/manifest) illustrates this distinction, including binding an external root filesystem through its integrity root in measured kernel arguments. Cannabis's current image has its userspace inside the initramfs; it does not yet have a reviewed firmware/TDX measurement calculation. Do not substitute a firmware-only measurement or an ordinary SHA256 file digest for that evidence.
 
-The separate [firmware and SNP measurement tools](guest-firmware.md) now calculate candidate reference values from pinned firmware and verified private copies of these boot artifacts. They do not establish a hardware-approved reference or enforce a `HOST_DATA`/`MRCONFIGID` initialization policy. The next integration must enforce the actual assignment and runtime policy before opening an evidence/key-delivery path. Keep the [existing worker acceptance requirements](worker-deployment.md#complete-the-worker-acceptance-run).
+The separate [firmware and SNP measurement tools](guest-firmware.md) calculate candidate reference values from pinned firmware and verified private copies of these boot artifacts. They do not establish a hardware-approved reference. The initialization gate binds the retained assignment to `HOST_DATA`/`MRCONFIGID` through the pinned agent; actual hardware mismatch/success cases and enforcement of the loaded workload policy still require the [worker acceptance run](worker-deployment.md#complete-the-worker-acceptance-run).
 
 The published artifacts are build source and instructions. Before distributing guest binaries, complete the dependency/source and license review, preserve upstream and distribution notices, and satisfy the source-availability obligations of included components. A repeat build on one machine is not independent reconstruction or a security audit.

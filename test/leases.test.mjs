@@ -18,6 +18,7 @@ import { AttestationLedger, trusteeRuntimeData, requestTrusteeResult, trusteeEvi
 import { keyDeliveryPayload, sealJobKeyDelivery, openJobKeyDelivery, recoverRequesterJobKey, inspectKeyDelivery } from '../compute/key_delivery.mjs';
 import { settlementTerms } from '../scripts/compute-escrow.mjs';
 import { policy } from '../scripts/compute-plan.mjs';
+import { guestInitialization } from '../compute/guest_initialization.mjs';
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
 const utc=t=>new Date(t*1000).toISOString().replace('.000Z','Z');
@@ -275,16 +276,18 @@ async function deliverySetup({maxTokenAgeSeconds=90}={}) {
     const attestationPolicy={schema:'cannabis.attestation.trustee-policy.v1',issuer:'FixtureAS',signingJwk:verifierKey.publicKey.export({format:'jwk'}),
       verifierBuild:'synthetic CPU fixture',appraisalPolicyId:'fixture-cpu',maxTokenAgeSeconds,maxTokenLifetimeSeconds:300,challengeTTLSeconds:90,tee:'snp',
       measurements:{launch:'11'.repeat(48),initData:'22'.repeat(32),minimumTCB:{bootloader:1,tee:1,snp:1,microcode:1}}};
-    attestations=new AttestationLedger(path.join(dir,'attestation.sqlite'),attestationPolicy,clock);
     const taskSHA256=createHash('sha256').update(Buffer.concat([Buffer.from('cannabis.task.v1\0'),Buffer.from(info.descriptor.ciphertextSHA256,'hex'),Buffer.alloc(4)])).digest('hex');
     assert.equal(info.descriptor.requirements[0].taskSHA256,taskSHA256);
     const run={runtimeSHA256:'b'.repeat(64),taskSHA256,attempt:1,rank:0,worldSize:1,acceleratorClass:'cpu'};
     const binding=leaseAttestationBinding(s.ledger,lease.leaseId,h(50),run,time);
+    const initialization={schema:'cannabis.guest-initialization.v1',tee:'snp',requester:s.request.job.requester,jobId:s.request.job.id,binding};
+    attestationPolicy.measurements.initData=guestInitialization(initialization).digest;
+    attestations=new AttestationLedger(path.join(dir,'attestation.sqlite'),attestationPolicy,clock);
     const challenge=attestations.challenge(binding),guest=generateKeyPairSync('ec',{namedCurve:'prime256v1'}),channel=guest.publicKey.export({format:'jwk'});
     const request={releaseId:h(501),leaseId:lease.leaseId,nonce:challenge.nonce,channelJwk:channel,descriptor:info.descriptor,notBefore:time,expiresAt:time+60};
     const payload=keyDeliveryPayload(s.ledger,attestations,request,time);
     const approval={request,requesterSignature:await owner.signTypedData(payload.domain,payload.types,payload.value)};
-    const d={...s,dir,info,lease,clock,time,challenge,guest,channel,request,payload,approval,attestations,attestationPolicy,
+    const d={...s,dir,info,lease,clock,time,challenge,guest,channel,request,payload,approval,attestations,attestationPolicy,initialization,
       setTime:t=>{time=t;},cleanup:()=>{attestations.close();s.ledger.close();removeDeliveryFixture(dir);}};
     d.token=earFixture(d);d.network={...network,maxHeadAgeSeconds:120};
     d.load=expected=>recoverRequesterJobKey(info.source,expected);
@@ -398,7 +401,7 @@ test('concurrent key delivery journals one ciphertext and consumes its challenge
 test('guest-held channel opens and prepares the funded task once without exposing its private contract',async()=>{
   const d=await deliverySetup(),agent=await guestAgentFixture();let guest,as,captured;
   try {
-    guest=await GuestEvidenceSession.create({policy:d.attestationPolicy,challenge:d.challenge,expectedBinding:d.challenge.binding,
+    guest=await GuestEvidenceSession.create({initialization:d.initialization,policy:d.attestationPolicy,challenge:d.challenge,expectedBinding:d.challenge.binding,
       requester:d.payload.requester,jobId:d.payload.jobId,agentUrl:agent.url},{clock:d.clock});
     const evidence=await guest.evidence();
     const request={...d.request,channelJwk:evidence.channelJwk};
@@ -429,7 +432,7 @@ test('guest-held channel opens and prepares the funded task once without exposin
 test('closing a consumed guest session cancels preparation and cannot reopen its key',async()=>{
   const d=await deliverySetup(),agent=await guestAgentFixture();let guest,pending;
   try {
-    guest=await GuestEvidenceSession.create({policy:d.attestationPolicy,challenge:d.challenge,expectedBinding:d.challenge.binding,
+    guest=await GuestEvidenceSession.create({initialization:d.initialization,policy:d.attestationPolicy,challenge:d.challenge,expectedBinding:d.challenge.binding,
       requester:d.payload.requester,jobId:d.payload.jobId,agentUrl:agent.url},{clock:d.clock});
     const evidence=await guest.evidence(),request={...d.request,channelJwk:evidence.channelJwk};
     const payload=keyDeliveryPayload(d.ledger,d.attestations,request,d.clock());

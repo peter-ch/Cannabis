@@ -36,6 +36,7 @@ export const guideGroups = [
     ['key-delivery', 'Encrypted key delivery', 'Bind each key envelope to the approved job and guest channel.'],
     ['worker-deployment', 'Worker deployment', 'The acceptance requirements for a confidential worker.'],
     ['guest-attestation', 'Guest evidence', 'Connect guest-held channels with hardware evidence.'],
+    ['guest-initialization', 'Bind the guest assignment', 'Check the approved job before opening its evidence channel.'],
     ['guest-workload', 'The approved workload', 'Move from an attested session to the protected workload.'],
     ['guest-service-build', 'Build guest services', 'Reproduce the pinned evidence-service binaries.'],
     ['guest-image-build', 'Build a guest image', 'Assemble and check the kernel and boot filesystem.'],

@@ -62,7 +62,7 @@ export function validateAttestationPolicy(policy) {
   return sha256(canonical(policy));
 }
 
-function validateBinding(b) {
+export function validateAttestationBinding(b) {
   exact(b, ['chainId', 'escrow', 'orderId', 'leaseDigest', 'reservationId', 'packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass']);
   integer(b.chainId, 1, Number.MAX_SAFE_INTEGER); address(b.escrow);
   for (const k of ['orderId', 'leaseDigest', 'reservationId']) bytes32(b[k]);
@@ -81,7 +81,7 @@ export function leaseAttestationBinding(ledger, leaseId, reservationId, run, now
   const job = record.agreement.request.job;
   const binding = { chainId: ledger.context.chainId, escrow: record.escrow, orderId: record.orderId,
     leaseDigest: record.digest, reservationId, packageSHA256: job.packageSHA256, policySHA256: job.policySHA256, ...run };
-  validateBinding(binding); return binding;
+  validateAttestationBinding(binding); return binding;
 }
 
 function validateChallenge(c, policyDigest, policy, now) {
@@ -90,7 +90,7 @@ function validateChallenge(c, policyDigest, policy, now) {
   hex(c.nonce, 32); integer(now, 1, Number.MAX_SAFE_INTEGER); integer(c.issuedAt, 1, now);
   integer(c.expiresAt, c.issuedAt + 1, c.issuedAt + policy.challengeTTLSeconds);
   if (c.expiresAt <= now) throw Error('Attestation challenge expired');
-  validateBinding(c.binding);
+  validateAttestationBinding(c.binding);
 }
 
 // The protected guest generates the channel key. Its private half never leaves it.
@@ -226,7 +226,7 @@ export class AttestationLedger {
   transaction(fn) { this.db.exec('BEGIN IMMEDIATE'); try { const r = fn(); this.db.exec('COMMIT'); return r; } catch (e) { this.db.exec('ROLLBACK'); throw e; } }
   close() { this.db.close(); }
   challenge(binding) {
-    binding = structuredClone(binding); validateBinding(binding);
+    binding = structuredClone(binding); validateAttestationBinding(binding);
     const now = this.clock(); integer(now, 1, Number.MAX_SAFE_INTEGER - 120);
     const challenge = { schema: 'cannabis.attestation.challenge.v1', nonce: randomBytes(32).toString('hex'), issuedAt: now,
       expiresAt: now + this.policy.challengeTTLSeconds, attestationPolicySHA256: this.policyDigest, binding };
