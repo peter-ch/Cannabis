@@ -7,7 +7,7 @@ import { assertPublicNarration } from './media-metadata.mjs';
 import { buildDocPages, resolveGuideLink } from './build-doc-pages.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'dist-site');
-const siteOrigin = 'https://cannabiss.online';
+const siteOrigin = 'https://cannabis-coin.online';
 const narration = JSON.parse(fs.readFileSync(path.join(root, 'media/narration.json')));
 assertPublicNarration(narration);
 const spoken = fs.readFileSync(path.join(root, 'media/narration.txt'), 'utf8').replace(/\r\n?/g, '\n').trim();
