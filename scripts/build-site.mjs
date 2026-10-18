@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { buildMediaPages, displayText, verifyCaptionText } from './build-media-pages.mjs';
 import { createHash } from 'node:crypto';
 import { assertPublicNarration } from './media-metadata.mjs';
+import { buildDocPages, resolveGuideLink } from './build-doc-pages.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'dist-site');
 const siteOrigin = 'https://cannabiss.online';
@@ -37,6 +38,7 @@ buildMediaPages(out);
 fs.cpSync(path.join(root, 'docs'), path.join(out, 'docs'), { recursive: true });
 fs.cpSync(path.join(root, 'compute'), path.join(out, 'compute'), { recursive: true,
   filter: source => fs.statSync(source).isDirectory() ? path.basename(source) !== '__pycache__' : /\.(md|json|py|mjs)$/.test(source) });
+const docRoutes = buildDocPages(out);
 fs.mkdirSync(path.join(out, 'media'), { recursive: true });
 for (const name of ['cannabis-landscape.mp4', 'cannabis-portrait.mp4', 'narration.txt', 'captions.srt']) {
   const source = path.join(root, 'media', name);
@@ -56,10 +58,18 @@ for (const entry of fs.readdirSync(path.join(root, 'media/series'), { withFileTy
     else fs.copyFileSync(source, target);
   }
 }
-const pages = fs.readdirSync(out).filter(name => name.endsWith('.html')).sort();
+const pages = fs.readdirSync(out, { recursive: true }).map(name => name.split(path.sep).join('/')).filter(name => name.endsWith('.html')).sort();
+const assetVersions = new Map(['style.css', 'site.js', 'docs.js'].map(name => [name, createHash('sha256').update(fs.readFileSync(path.join(out, name))).digest('hex').slice(0, 12)]));
 for (const name of pages) {
   let html = fs.readFileSync(path.join(out, name), 'utf8');
-  html = html.replaceAll('href="/', 'href="./').replaceAll('src="/', 'src="./').replaceAll('poster="/', 'poster="./');
+  const prefix = '../'.repeat(name.split('/').length - 1) || './';
+  html = html.replace(/\b(href|src|poster)="([^"]*)"/g, (_, attribute, value) => {
+    if (attribute === 'href') value = resolveGuideLink(value, name, docRoutes);
+    if (value.startsWith('/') && !value.startsWith('//')) value = prefix + value.slice(1);
+    const localAsset = path.posix.normalize(path.posix.join(path.posix.dirname(name), value));
+    if (assetVersions.has(localAsset)) value += `?v=${assetVersions.get(localAsset)}`;
+    return `${attribute}="${value}"`;
+  });
   const canonical = siteOrigin + '/' + (name === 'index.html' ? '' : name);
   html = html.replace('</head>', `<link rel="canonical" href="${canonical}"></head>`);
   fs.writeFileSync(path.join(out, name), html);

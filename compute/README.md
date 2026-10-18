@@ -32,7 +32,7 @@ Use schema `cannabis.compute.job.v1`. The planner validates these exact fields a
 
 The private bundle contains the actual program/entrypoint, arguments, dataset/model locators, credentials, acceptance instructions and output policy. None of these belong in the public manifest or host launch arguments. The protected launcher will decode and validate them only after attestation and authorized key release.
 
-The published fee policy lives in [policy.json](policy.json). A 100 Cannabis job budget allocates 99 to the worker pool and 1 to the founder. All arithmetic uses 18-decimal token base units. Fractional fees round down to the smallest unit. Fees apply to accepted paid work, not refunded amounts; network fees are separate. This is a quote, not an escrow or a payment record.
+The published fee policy lives in [policy.json](policy.json). A 100 Cannabis job budget allocates 99 to the worker pool and 1 to the founder. All arithmetic uses 18-decimal token base units. Gross budgets and positive accepted awards must be multiples of 100 base units so the 1% service fee is exact, including on very small jobs. Nonrepresentable amounts are rejected. Fees apply to accepted paid work, not refunded amounts; network fees are separate. This is a quote, not an escrow or a payment record.
 
 ## Worker advertisements
 

@@ -42,5 +42,8 @@
     "hardhat": "3.20.0",
     "jose": "6.2.12",
     "solc": "0.8.37"
+  },
+  "devDependencies": {
+    "markdown-it": "15.0.3"
   }
 }

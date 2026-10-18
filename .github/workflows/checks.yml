@@ -33,6 +33,8 @@ jobs:
         run: python -m unittest discover -s test -p 'test_guest_measure.py' -v
       - run: npm audit --audit-level=high
       - run: npm run build:site
+      - name: Check public pages, documentation links and sections
+        run: python scripts/check-site.py
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:

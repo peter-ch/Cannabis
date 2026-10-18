@@ -16,7 +16,12 @@ const server = http.createServer((req, res) => {
   let file;
   try {
     const url = new URL(req.url, 'http://127.0.0.1');
-    const name = decodeURIComponent(url.pathname);
+    let name = decodeURIComponent(url.pathname);
+    const legacy = /^\/docs\/[a-z-]+\.md$/.test(name) ? name.replace(/\.md$/, '.html') : /^\/compute\/(examples\/)?README\.md$/.test(name) ? name.replace(/README\.md$/, 'index.html') : null;
+    if (legacy && fs.existsSync(path.join(root, legacy.slice(1)))) {
+      res.writeHead(308, { Location: legacy + url.search }); res.end(); return;
+    }
+    if (name.endsWith('/')) name += 'index.html';
     file = fs.realpathSync(path.resolve(root, '.' + (name === '/' ? '/index.html' : name)));
     if (!file.startsWith(root + path.sep) || !fs.statSync(file).isFile()) throw Error();
   } catch { res.writeHead(404).end(); return; }
