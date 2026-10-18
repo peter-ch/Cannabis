@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import resource
+import re
 import select
 import shutil
 import stat
@@ -29,7 +30,7 @@ BWRAP_SHA256 = 'e318903862396f96de3df57264e0158682b952fd3fb53ac23d876413e7b30f71
 SECCOMP = '/usr/lib/x86_64-linux-gnu/libseccomp.so.2.5.5'
 SECCOMP_SHA256 = 'b4d9140a7797ccf3ac14f5d9d579b64f157111662940cb8330c632b11a8cea8e'
 MOUNTS = ('proc', 'dev', 'sys', 'run', 'tmp', 'work', 'input', 'output')
-_entered = False
+_entered = None
 
 
 def _libc():
@@ -227,12 +228,17 @@ def _filter():
 
 def enter_private_mount_namespace():
     global _entered
-    if sys.platform != 'linux' or os.geteuid() != 0 or len(os.listdir('/proc/self/task')) != 1 or _entered:
-        raise ValueError('Require one dedicated privileged single-threaded supervisor per sandbox')
+    if sys.platform != 'linux' or os.geteuid() != 0 or len(os.listdir('/proc/self/task')) != 1:
+        raise ValueError('Require one dedicated privileged single-threaded supervisor per job')
+    identity = (os.getpid(), os.stat('/proc/self/ns/mnt').st_ino)
+    if _entered is not None:
+        if _entered != identity:
+            raise ValueError('Protected supervisor process or mount namespace changed')
+        return  # Decode, runtime and encoder scopes share this private namespace.
     libc = _libc()
     _call(libc.unshare(0x00020000))  # CLONE_NEWNS
     _call(libc.mount(None, b'/', None, 0x4000 | 0x40000, None))  # recursive private propagation
-    _entered = True
+    _entered = (os.getpid(), os.stat('/proc/self/ns/mnt').st_ino)
 
 
 @dataclass(frozen=True)
@@ -319,13 +325,18 @@ class NativeSandbox:
             self.close()
             raise
 
-    def run(self, argv, *, cancelled=None):
+    def run(self, argv, *, environment=None, cancelled=None):
         if self._ran or self._guard is None:
             raise ValueError('Sandbox permits exactly one launch')
         if (not isinstance(argv, list) or not argv or len(argv) > 256 or
             any(not isinstance(x, str) or '\0' in x or len(x.encode()) > 16384 for x in argv) or
             not argv[0].startswith('/') or sum(len(x.encode()) + 1 for x in argv) > 131072):
             raise ValueError('Require a bounded absolute runtime command')
+        environment = {} if environment is None else dict(environment)
+        if (len(environment) > 128 or any(not isinstance(k, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', k)
+                or not isinstance(v, str) or '\0' in v for k, v in environment.items())
+                or sum(len(k.encode()) + len(v.encode()) + 2 for k, v in environment.items()) > 65536):
+            raise ValueError('Require a bounded private runtime environment')
         if tree_digest(self._root) != self._expected_root:
             raise ValueError('Approved runtime changed before execution')
         self._ran = True
@@ -351,6 +362,8 @@ class NativeSandbox:
             fd = os.open(self._path / name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
             self._fds.append(fd)
             args += ['--bind-fd', str(fd), destination]
+        for key, value in sorted(environment.items()):
+            args += ['--setenv', key, value]
         args += ['--remount-ro', '/dev', '--seccomp', str(filter_fd), '--chdir', '/work', '--', *argv]
         # Trusted launcher setup is a distinct process, never Python preexec_fn
         # in a possibly threaded application. No command or content is logged.

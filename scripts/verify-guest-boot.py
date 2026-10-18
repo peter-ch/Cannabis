@@ -91,6 +91,14 @@ def main():
             or sandbox.get('customerCodeExecuted') is not False or sandbox.get('hardwareValidated') is not False
             or sandbox.get('checks') != {name: True for name in sandbox_cases}):
         raise ValueError('Guest runtime isolation checks did not pass')
+    native = result.get('nativeChecks', {})
+    native_cases = {'success', 'tampered', 'metadata', 'group', 'dependency', 'missing-output', 'symlink-output',
+                    'decode-quota', 'encode-quota', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel'}
+    if (native.get('schema') != 'cannabis.guest-native-check.v1' or native.get('kernel') != report['kernelRelease']
+            or native.get('checks') != {name: True for name in native_cases}
+            or any(native.get(k) is not False for k in ['customerCodeExecuted', 'hardwareValidated', 'realPaidJob'])
+            or any(native.get(k) is not True for k in ['ownedEncryptedExecution', 'requesterReconstruction'])):
+        raise ValueError('Encrypted guest execution checks did not pass')
     if result['schema'] != 'cannabis.guest-boot-check.v1' or result['kernel'] != report['kernelRelease'] or result['imageFilesVerified'] != report['embeddedFiles'] or result['tee'] != 'sample' or result['profileChecks'] != [{'profile':p, 'unsupportedHardwareRejected':True} for p in ['snp','tdx']] or any(result[k] is not False for k in ['requestedEvidence','acceptedJobKeys','launchedCustomerWork','hardwareValidated']):
         raise ValueError('Unexpected guest result')
     final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}

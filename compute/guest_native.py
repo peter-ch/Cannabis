@@ -1,0 +1,147 @@
+"""Encrypted package -> native runtime -> encrypted result INSIDE a guest.
+
+The enclosing measured launcher must admit the assignment, runtime and hardware
+before supplying a key. This component never establishes funding or attestation.
+"""
+from dataclasses import asdict, dataclass, field
+import copy
+import hashlib
+import os
+from pathlib import Path
+
+from .client import canonical, safe_name
+from .guest_helpers import ProtectedStaging, run_guarded_helper
+from .guest_resources import ResourceLimits
+from .guest_sandbox import NativeSandbox, ScratchLimits, tree_digest, _directory
+from .job_keys import RecoveredJobKey
+
+NATIVE_ADAPTER = 'native-linux-x86_64-v1'
+
+
+@dataclass(frozen=True)
+class NativeTaskResult:
+    report: dict
+    # Task names and the receipt belong to the private requester channel.
+    receipt: dict = field(repr=False)
+    ciphertext: Path = field(repr=False)
+
+
+class NativeTaskPlan:
+    """Retain the scheduler-approved runtime and task limits before key release.
+
+    digestSHA256 means guest_sandbox.tree_digest's canonical inventory for this
+    adapter, not a download/archive digest. A different adapter defines its own
+    semantics. The caller must independently approve these retained values.
+    """
+    def __init__(self, rootfs, runtime, resources, *, process_limit, scratch_inodes):
+        runtime, resources = copy.deepcopy(runtime), copy.deepcopy(resources)
+        if (not isinstance(runtime, dict) or set(runtime) - {'adapter', 'digestSHA256', 'architecture', 'os', 'features'}
+                or runtime.get('adapter') != NATIVE_ADAPTER or runtime.get('architecture') != 'x86_64'
+                or runtime.get('os') != 'linux' or runtime.get('features', []) != []):
+            raise ValueError('Unsupported native runtime profile; another reviewed adapter is required')
+        if (not isinstance(resources, dict) or set(resources) - {'cpus', 'memoryMiB', 'scratchMiB', 'wallSeconds', 'nodes', 'accelerators', 'acceleratorMemoryMiB'}
+                or resources.get('nodes') != 1 or resources.get('accelerators', 0) != 0 or resources.get('acceleratorMemoryMiB', 0) != 0
+                or type(resources.get('scratchMiB')) is not int):
+            raise ValueError('This adapter requires a single CPU rank; never reduce a group or accelerator job')
+        self._limits = ResourceLimits.from_task(resources, process_limit=process_limit)
+        self._scratch = ScratchLimits(resources['scratchMiB'] * 1024**2, scratch_inodes)
+        self._root = Path(rootfs)
+        if tree_digest(self._root) != runtime.get('digestSHA256'):
+            raise ValueError('Runtime tree differs from the approved inventory')
+        self._runtime, self._resources, self._used = runtime, resources, False
+
+    def run(self, parent, ciphertext, key, binding, destination, *, age, helper_limits, staging_limits, max_input_bytes, cancelled=None):
+        """Consume one guest-opened job key; publish only fully sealed ciphertext.
+
+        helper_limits/staging_limits are explicit additional reservation budgets,
+        not capacity silently borrowed from another customer. Each helper has a
+        separate checked cgroup and guardian; native execution has its own.
+        """
+        binding = copy.deepcopy(binding)
+        if self._used or not isinstance(key, RecoveredJobKey):
+            raise ValueError('Require an unused retained plan and guest-opened key')
+        self._used = True
+        if (binding.get('runtimeSHA256') != self._runtime['digestSHA256'] or binding.get('worldSize') != 1
+                or binding.get('rank') != 0 or binding.get('acceleratorClass') != 'cpu'):
+            raise ValueError('Delivered assignment differs from the retained runtime')
+        if not isinstance(helper_limits, ResourceLimits) or not isinstance(staging_limits, ScratchLimits):
+            raise ValueError('Require retained helper and staging budgets')
+        if type(max_input_bytes) is not int or not 0 <= max_input_bytes <= staging_limits.bytes:
+            raise ValueError('Require a bounded approved input size')
+        if tree_digest(self._root) != self._runtime['digestSHA256']:
+            raise ValueError('Approved runtime changed before decoding')
+        destination = Path(destination)
+        fd = _directory(destination.parent, memory=False)
+        os.close(fd)
+        if os.path.lexists(destination):
+            raise FileExistsError('Encrypted result destination already exists')
+        with ProtectedStaging(staging_limits) as staging:
+            job = asdict(key)
+            job['identity'] = key.identity.decode('ascii')
+            decoded = run_guarded_helper(parent, helper_limits, {'operation': 'decode', 'source': str(ciphertext),
+                'job': job, 'binding': binding, 'destination': str(staging.path / 'inputs'), 'age': age,
+                'maxBytes': max_input_bytes}, cancelled=cancelled)
+            job.clear()
+            spec, decoded_report = decoded['workload'], decoded['report']
+            task = spec['tasks'][decoded_report['taskIndex']]
+            if canonical(task['runtime']) != canonical(self._runtime) or canonical(task['resources']) != canonical(self._resources):
+                raise ValueError('Private task differs from retained matching metadata')
+            if task.get('dependsOn', []):
+                raise ValueError('Dependency tasks require authenticated input reconstruction before this adapter can run')
+            launch = task['launch']
+            if set(launch) - {'argv', 'environment', 'stdout', 'stderr'} or 'argv' not in launch:
+                raise ValueError('Unsupported native launch settings')
+            if 'environment' in launch and not isinstance(launch['environment'], dict):
+                raise ValueError('Native environment must be an explicit mapping')
+            log_names = [safe_name(launch[k]) for k in ('stdout', 'stderr') if k in launch]
+            if len(set(log_names)) != len(log_names) or any(name not in task['outputs'] for name in log_names):
+                raise ValueError('Returned logs must have distinct declared encrypted output paths')
+            with NativeSandbox(parent, self._root, staging.path / 'inputs', self._runtime['digestSHA256'],
+                    self._limits, self._scratch) as sandbox:
+                executed = sandbox.run(launch['argv'], environment=launch.get('environment'), cancelled=cancelled)
+                if not executed['success']:
+                    raise RuntimeError('Native task failed; no result accepted')
+                for stream in ('stdout', 'stderr'):
+                    if stream in launch:
+                        target = sandbox.output_directory / launch[stream]
+                        # Walk through real directories only: a customer can
+                        # otherwise leave a symlink aimed at the control plane.
+                        current = sandbox.output_directory
+                        for part in Path(launch[stream]).parts[:-1]:
+                            current = current / part
+                            if not current.exists():
+                                current.mkdir(mode=0o700)
+                            if current.is_symlink() or not current.is_dir():
+                                raise ValueError('Unsafe output log directory')
+                        os.link(sandbox._path / stream, target, follow_symlinks=False)
+                receipt = run_guarded_helper(parent, helper_limits, {'operation': 'seal-result', 'spec': spec,
+                    'taskId': task['id'], 'packageSHA256': binding['packageSHA256'],
+                    'root': str(sandbox.output_directory), 'recipient': key.result_recipient,
+                    'destination': str(staging.path / 'result.age'), 'attempt': binding['attempt'], 'rank': 0,
+                    'age': age}, cancelled=cancelled)
+            if cancelled is not None and cancelled.is_set():
+                raise RuntimeError('Native task cancelled before encrypted publication')
+            # No plaintext or private receipt is written outside the protected
+            # scopes. Reserve only this invocation's ciphertext destination.
+            created = False
+            try:
+                with destination.open('xb') as out:
+                    created = True
+                    os.chmod(destination, 0o600)
+                    digest, count = hashlib.sha256(), 0
+                    with (staging.path / 'result.age').open('rb') as incoming:
+                        for chunk in iter(lambda: incoming.read(262144), b''):
+                            count += len(chunk)
+                            if count > staging_limits.bytes or (cancelled is not None and cancelled.is_set()):
+                                raise RuntimeError('Encrypted publication cancelled or exceeds budget')
+                            digest.update(chunk)
+                            out.write(chunk)
+                    if count != receipt['ciphertextBytes'] or digest.hexdigest() != receipt['ciphertextSHA256']:
+                        raise ValueError('Encrypted result changed during publication')
+            except BaseException:
+                if created:
+                    destination.unlink()
+                raise
+        return NativeTaskResult({'schema': 'cannabis.guest-native-result.v1', 'executionCompleted': True,
+            'resultEncrypted': True, 'runtimeCleanupVerified': True, 'hardwareAdmissionEstablished': False,
+            'paymentAccepted': False}, receipt, destination)

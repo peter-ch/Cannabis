@@ -176,7 +176,8 @@ memory and stdout/stderr logs. Its byte and inode limits therefore apply across
 those paths. The input copy also consumes that quota. These tmpfs mounts explicitly
 disable swapping; ordinary tmpfs can use swap unless configured otherwise.
 [Linux tmpfs documentation](https://docs.kernel.org/filesystems/tmpfs.html).
-Authenticated staging outside this boundary still needs its own protected budget.
+Authenticated staging uses the separate explicitly budgeted protected scope
+described below; it does not borrow the customer's scratch allowance.
 
 The trusted trampoline joins the resource group before executing pinned
 Bubblewrap. It drops groups, capabilities and host privileges, clears the
@@ -197,7 +198,8 @@ transport integration; do not enable unrestricted networking as a shortcut.
 CUDA, ROCm and other device paths are similarly conditional on validated
 confidential hardware and an appropriate device policy.
 
-`run()` permits one bounded command. The supervisor monitors the guardian and
+`run()` permits one bounded command and an explicit bounded private environment.
+Host environment variables are never inherited. The supervisor monitors the guardian and
 runtime together. Completion requires the whole resource group to be empty and
 removed before it can report success. Cancellation and expiry report failure.
 Guardian failure uses retained group descriptors to stop the workload and raises
@@ -224,9 +226,68 @@ sudo python3 -I -B scripts/check-guest-sandbox.py
 Use a disposable Linux environment with the exact pinned tools and enabled
 cgroup controllers. The checker runs owned fixture code, not customer programs.
 A successful ordinary VM check does not demonstrate confidentiality against a
-worker operator. Real attestation, actual runtime admission, authenticated input
-and output integration, protected transport and end-to-end paid acceptance remain
+worker operator. Real attestation, actual runtime admission, protected transport,
+outer lifecycle integration and end-to-end paid acceptance remain
 required before this becomes an operating worker.
+
+## Encrypted native task execution
+
+`compute/guest_native.py` connects package authentication, native execution and
+result encryption. A retained `NativeTaskPlan` checks the approved runtime tree
+before use. For `native-linux-x86_64-v1`, `runtime.digestSHA256` means the canonical
+path/type/mode/content inventory produced by `tree_digest`, not the digest of a
+downloaded archive. The measured launcher must select and approve this plan
+before releasing a key. Caller-supplied matching values are not admission.
+
+The private package must match the retained runtime, resource limits, package,
+task, attempt, rank and return recipient. The plan permits one execution. It
+supports a single CPU rank with an absolute argument vector and private
+environment. Programs read `/input` and write declared files under `/output`.
+Optional stdout/stderr destinations must be distinct declared encrypted outputs.
+The adapter refuses groups, accelerators, unknown launch settings and dependency
+tasks needing upstream reconstruction. These capabilities need further adapters
+and transport integration; they are not silently reduced to standalone work.
+
+Trusted decoding and result encryption run as separate bounded helpers. Each
+joins a checked cgroup before reading its anonymous request pipe and has an
+independent guardian. CPU, memory, process count, wall time and control-response
+size are bounded. No key, launch contract or decoded log is written to process
+arguments, environment variables or host-visible helper diagnostics. Customer
+programs still run only in the native sandbox.
+
+One private `noswap,nodev,nosuid,noexec` tmpfs holds authenticated staging and the
+encrypted result. Its byte and inode budgets are additional explicit reservation
+requirements. Native inputs and output/log storage retain their own shared quota.
+The control plane must reserve all these capacities and its own bounded memory,
+including the approved immutable runtime. Linux cgroup limits follow process
+membership and hierarchy; they do not replace those whole-VM reservations.
+[Linux cgroup documentation](https://docs.kernel.org/admin-guide/cgroup-v2.html).
+
+The encoder runs only after the native process tree is verified empty. It checks
+declared regular outputs and encrypts to the requester-bound recipient while the
+sandbox context is still protected. Only complete ciphertext is copied out, with
+its size and digest rechecked. The receipt remains private. Failed programs,
+missing files, symlinks, quota exhaustion, cancellation and late helper completion
+produce no accepted result. Requester decryption and reconstruction still precede
+quality acceptance and payment.
+
+The real-kernel owned check runs encrypted input through the native program and
+reconstructs encrypted output and logs with a separate requester key. It also
+exercises ciphertext tampering, mismatched resource metadata, unsupported groups
+and dependencies, missing/symlink outputs, decode/encode staging exhaustion,
+helper expiry, cancellation, owner death and a stopped owner:
+
+```sh
+sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-native.py
+```
+
+The boot image runs these owned checks and powers off. It is still not a customer
+launcher: connection to the initialized evidence session, finalized funded lease,
+fresh key-delivery admission, protected distributed transport and outer VM/key
+lifecycle remains unfinished. An ordinary VM check proves neither protection
+against its host operator nor an independently reviewed paid service. A stopped
+control plane may retain memory after its helpers are killed; external lifecycle
+enforcement must dispose of the guest. No physical-erasure claim is made.
 
 ## Connect these artifacts to measured launch
 

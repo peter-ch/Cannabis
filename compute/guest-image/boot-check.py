@@ -99,7 +99,13 @@ def main():
             print('CANNABIS_SANDBOX_FAILURE ' + sandbox.stderr.decode(errors='replace')[-8192:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Runtime isolation acceptance failed')
         sandbox_checks = json.loads(sandbox.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        PHASE = 'encrypted_native_execution'
+        native = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-native.py'], capture_output=True, timeout=240)
+        if native.returncode:
+            print('CANNABIS_NATIVE_FAILURE ' + native.stderr.decode(errors='replace')[-8192:].replace('\n', ' | '), flush=True)
+            raise RuntimeError('Encrypted native execution acceptance failed')
+        native_checks = json.loads(native.stdout)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:
