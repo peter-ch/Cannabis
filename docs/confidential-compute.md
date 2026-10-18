@@ -16,6 +16,8 @@ There is no downgrade to ordinary workers when confidential capacity is unavaila
 
 ## Hardware support
 
+Before provisioning a worker, check its measured boot and initialization controls against the [worker deployment requirements](worker-deployment.md). Confidential VM products differ in the evidence and launch controls they expose.
+
 Confidential CPU execution can use supported [AMD SEV-SNP platforms](https://www.amd.com/en/developer/sev.html) or [Intel TDX platforms](https://www.intel.com/content/www/us/en/security/confidential-computing.html), subject to verified configuration and current security policy. An AMD CPU TEE does not automatically protect an attached AMD GPU.
 
 NVIDIA documents confidential GPU execution and attestation for supported hardware/configurations, including [H100-class confidential GPU environments](https://docs.nvidia.com/attestation/attestation-client-tools-sdk/latest/gpu_and_switch_attestation.html). GPU, CPU and interconnect protection must all cover the job's data path.
