@@ -18,6 +18,7 @@ __pycache__/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.sqlite-journal
 media/series/*.wav
 media/series/build/
 media/series/broll/*.download.mp4

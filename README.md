@@ -41,6 +41,7 @@ The suite checks real zero-knowledge proofs, replay and recipient-substitution a
 - [Privacy and security design](docs/privacy-security.md)
 - [Efficient-network approach](docs/energy.md)
 - [Community claim workflow](docs/community-claims.md)
+- [Provider signature checks and private enrollment intake](docs/person-verification.md)
 - [Encrypted participant identity and offline proofs](docs/claim-identity.md)
 - [Complete membership download and chain-state checks](docs/membership-snapshot.md)
 - [Mainnet release preparation](docs/mainnet-release.md)

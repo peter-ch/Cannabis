@@ -28,7 +28,7 @@ for (const format of ['landscape', 'portrait']) {
 if (fs.existsSync(out)) {
   const resolved = fs.realpathSync(out);
   if (path.dirname(resolved) !== fs.realpathSync(root) || path.basename(resolved) !== 'dist-site') throw Error('Unexpected build-directory target');
-  fs.rmSync(resolved, { recursive: true, force: true });
+  fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 fs.mkdirSync(out, { recursive: true });
 fs.cpSync(path.join(root, 'web'), out, { recursive: true });
