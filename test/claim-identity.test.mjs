@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { Group } from '@semaphore-protocol/group';
 import { verifyProof } from '@semaphore-protocol/proof';
-import { maybeGetSnarkArtifacts, Project } from '@zk-kit/artifacts';
 import { createEncryptedIdentity, inspectEncryptedIdentity, generateClaimProof, validateMembershipSnapshot, claimScope } from '../claims/identity.mjs';
 
 let directory, age, identityFile, vault, backup, context, snapshot, artifacts;
@@ -30,7 +31,16 @@ before(async () => {
   context = { chainId: '31337', token, root: new Group(commitments).root.toString(), memberCount: commitments.length };
   snapshot = { schema: 'cannabis.membership-snapshot.v1', chainId: context.chainId, token, root: context.root, commitments };
   // Download only in fixture setup. The participant API must use explicitly supplied pinned bytes.
-  const paths = await maybeGetSnarkArtifacts(Project.SEMAPHORE, { parameters: [7], version: '4.13.0' });
+  // Await the output stream's completion before reading or pinning fixture bytes.
+  // The shared downloader can return while its final writes are still pending.
+  const paths = {};
+  for (const extension of ['wasm', 'zkey']) {
+    const file = path.join(directory, 'semaphore-7.' + extension);
+    const response = await fetch('https://snark-artifacts.pse.dev/semaphore/4.13.0/semaphore-7.' + extension);
+    assert.ok(response.ok && response.body, 'Unable to download the proving fixture');
+    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(file, { flags: 'wx', mode: 0o600 }));
+    paths[extension] = file;
+  }
   const artifact = file => { const data = fs.readFileSync(file); return { path: file, bytes: data.length, sha256: digest(data) }; };
   artifacts = { depth: 7, wasm: artifact(paths.wasm), zkey: artifact(paths.zkey) };
 });
@@ -38,7 +48,7 @@ after(async () => {
   await globalThis.curve_bn128?.terminate();
   if (directory) {
     // Remove only explicitly created fixture files from the verified owned directory.
-    for (const name of ['owner.key', 'participant.age', 'corrupt.age', 'other.key', 'other.age', 'bad.key', 'config.json', 'result.json', 'membership.json', 'proof.json', 'bad-proof.json']) fs.rmSync(path.join(directory, name), { force: true });
+    for (const name of ['owner.key', 'participant.age', 'corrupt.age', 'other.key', 'other.age', 'bad.key', 'config.json', 'result.json', 'membership.json', 'proof.json', 'bad-proof.json', 'semaphore-7.wasm', 'semaphore-7.zkey']) fs.rmSync(path.join(directory, name), { force: true });
     fs.rmdirSync(directory);
   }
 });
