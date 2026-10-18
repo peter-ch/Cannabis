@@ -1,0 +1,3 @@
+The Cannabis coin compute client uses a general-purpose workload contract. Package your software, declare its runtime, specify inputs and outputs, and set resource limits.
+New adapters can extend the format. A script, a virtual machine checkpoint, a renderer, or coordinated model training can each describe what they need.
+Whole jobs can target one suitable node. Workloads with declared dependencies can form a task graph. Distributed programs can request compatible groups. The runtime and splitting rules preserve what your program is meant to do.

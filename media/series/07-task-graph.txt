@@ -1,0 +1,3 @@
+A Cannabis coin computing job begins with its dependencies. Independent tasks can run together. Tasks that need earlier outputs wait until those outputs are ready.
+The client packages the workload and encrypts its private contents. Candidate placement matches runtime, memory, accelerators, quoted cost, and delivery estimates.
+The protected execution design returns encrypted outputs bound to the original job. Your client verifies their integrity, decrypts them, and reconstructs the declared result files. Custom merging logic must be declared and run in an approved environment.

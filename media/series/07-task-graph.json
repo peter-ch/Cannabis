@@ -1,0 +1,27 @@
+{
+  "id": "07-task-graph",
+  "scriptSHA256": "b16635fe1d9b8f8a2b9012879c07486aa57d632ec0fb1621ab280bd27a1f2864",
+  "text": "A Cannabis coin computing job begins with its dependencies. Independent tasks can run together. Tasks that need earlier outputs wait until those outputs are ready.\nThe client packages the workload and encrypts its private contents. Candidate placement matches runtime, memory, accelerators, quoted cost, and delivery estimates.\nThe protected execution design returns encrypted outputs bound to the original job. Your client verifies their integrity, decrypts them, and reconstructs the declared result files. Custom merging logic must be declared and run in an approved environment.",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 11.44,
+      "text": "A Cannabis coin computing job begins with its dependencies. Independent tasks can run together. Tasks that need earlier outputs wait until those outputs are ready."
+    },
+    {
+      "start": 11.74,
+      "end": 22.54,
+      "text": "The client packages the workload and encrypts its private contents. Candidate placement matches runtime, memory, accelerators, quoted cost, and delivery estimates."
+    },
+    {
+      "start": 22.84,
+      "end": 37.88,
+      "text": "The protected execution design returns encrypted outputs bound to the original job. Your client verifies their integrity, decrypts them, and reconstructs the declared result files. Custom merging logic must be declared and run in an approved environment."
+    }
+  ],
+  "sampleRate": 24000,
+  "seconds": 37.88,
+  "peak": 0.65234375,
+  "clippedSamples": 0,
+  "wavSHA256": "bee5fc285e789daf4476042d8badcb59989ab860766bd627ec57a4a2a1b8ec7e"
+}

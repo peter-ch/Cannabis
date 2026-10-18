@@ -1,0 +1,172 @@
+{
+  "schema": "cannabis.film-series.v1",
+  "date": "2026-10-18",
+  "voice": "English narration",
+  "status": "Preparing mainnet launch",
+  "films": [
+    {
+      "id": "01-welcome",
+      "title": "Grow something wild",
+      "art": [
+        "crystal-dawn",
+        "crystal-prism",
+        "crystal-crown"
+      ],
+      "lines": [
+        "Meet Cannabis coin. A bold community, a brilliant identity, and an ambitious idea: put computing power to useful work.",
+        "Open code. Visible rules. Privacy at the heart of the design. And a community allocation built around people.",
+        "We are preparing the public launch. Explore the project, bring your skills, and help shape what comes next. Let's grow something wild."
+      ]
+    },
+    {
+      "id": "02-join",
+      "title": "Your place in the community",
+      "art": [
+        "crystal-aurora",
+        "crystal-dew",
+        "crystal-dawn"
+      ],
+      "lines": [
+        "There is more than one way to help Cannabis coin grow. Developers can review code. Creators can share original artwork. Curious people can ask good questions.",
+        "Start with the official project website and GitHub repository. Read the published rules, follow release updates, and join the discussion.",
+        "When enrollment opens, use the verified instructions and your own wallet. Keep your recovery secrets private. Your next step today: explore, contribute, and stay connected."
+      ]
+    },
+    {
+      "id": "03-claims",
+      "title": "One person. One claim.",
+      "art": [
+        "crystal-crown",
+        "crystal-dew",
+        "crystal-aurora"
+      ],
+      "lines": [
+        "Ninety-nine percent of the capped Cannabis coin supply is allocated to community claims. The published design gives four hundred and twenty tokens to each eligible verified person, once.",
+        "Up to nine hundred and ninety thousand people can participate. Everyone starts from the same public opening time.",
+        "A zero-knowledge membership proof checks eligibility while keeping the underlying membership identity out of the public claim. Enrollment will open after the verification provider and launch requirements complete review."
+      ]
+    },
+    {
+      "id": "04-vesting",
+      "title": "Visible rules. Long-term commitment.",
+      "art": [
+        "crystal-monolith",
+        "crystal-facets",
+        "crystal-crown"
+      ],
+      "lines": [
+        "Cannabis coin has a fixed maximum supply of four hundred and twenty million tokens. Ninety-nine percent is reserved for community claims.",
+        "The founder allocation is one percent: four point two million tokens, locked at creation and released gradually over twenty-four calendar months from the public opening.",
+        "That schedule is written into the contract design. The separate compute service fee is one percent of accepted paid work. Explore the source and see how the rules fit together."
+      ]
+    },
+    {
+      "id": "05-efficiency",
+      "title": "Put energy into useful work",
+      "art": [
+        "crystal-tide",
+        "crystal-waterfall",
+        "crystal-dew"
+      ],
+      "lines": [
+        "Cannabis coin is built around efficient participation. There is no proof-of-work mining race and no competition to burn computation for new tokens.",
+        "The target network uses Ethereum proof-of-stake settlement. Useful computation happens separately, for tasks that requesters actually need and agree to pay for.",
+        "Training, rendering, analysis, simulation, and other software workloads can fit the architecture. The goal is productive computing, with measured costs and clear results. Bring a useful problem. Help build a useful network."
+      ]
+    },
+    {
+      "id": "06-any-workload",
+      "title": "One format. Any software workload.",
+      "art": [
+        "crystal-prism",
+        "compute-packages",
+        "crystal-monolith"
+      ],
+      "lines": [
+        "The Cannabis coin compute client uses a general-purpose workload contract. Package your software, declare its runtime, specify inputs and outputs, and set resource limits.",
+        "New adapters can extend the format. A script, a virtual machine checkpoint, a renderer, or coordinated model training can each describe what they need.",
+        "Whole jobs can target one suitable node. Workloads with declared dependencies can form a task graph. Distributed programs can request compatible groups. The runtime and splitting rules preserve what your program is meant to do."
+      ]
+    },
+    {
+      "id": "07-task-graph",
+      "title": "From a task graph to your result",
+      "art": [
+        "compute-network-client",
+        "crystal-tide",
+        "compute-packages"
+      ],
+      "lines": [
+        "A Cannabis coin computing job begins with its dependencies. Independent tasks can run together. Tasks that need earlier outputs wait until those outputs are ready.",
+        "The client packages the workload and encrypts its private contents. Candidate placement matches runtime, memory, accelerators, quoted cost, and delivery estimates.",
+        "The protected execution design returns encrypted outputs bound to the original job. Your client verifies their integrity, decrypts them, and reconstructs the declared result files. Custom merging logic must be declared and run in an approved environment."
+      ]
+    },
+    {
+      "id": "08-confidentiality",
+      "title": "Private work. Protected execution.",
+      "art": [
+        "compute-packages",
+        "crystal-aurora",
+        "crystal-facets"
+      ],
+      "lines": [
+        "Your code, inputs, checkpoints, and outputs belong to your job. Cannabis coin requires encryption in storage and transit, plus protection while the program is running.",
+        "The execution design releases keys only into an attested environment that meets the job's policy. Each participating accelerator and network path must support that protection.",
+        "Ordinary hardware compatibility alone is not enough. The confidential worker service still needs integration and review. Public payments and some scheduling metadata remain visible. Explore the design and help strengthen it."
+      ]
+    },
+    {
+      "id": "09-pricing",
+      "title": "Clear quotes. Accepted results.",
+      "art": [
+        "compute-pricing",
+        "crystal-prism",
+        "crystal-crown"
+      ],
+      "lines": [
+        "Fair compute pricing starts with clear quotes. Each provider declares the resources, expected delivery time, and price before the requester commits a budget.",
+        "The proposed pricing model can include a delivery bonus, agreed in advance and earned only when the complete result meets the deadline and acceptance rules.",
+        "On the Cannabis coin network, an accepted payment of one hundred tokens sends ninety-nine to workers and one to the founder. Refunded amounts earn no founder fee. Estimates guide selection; verified results and agreed terms determine acceptance."
+      ]
+    },
+    {
+      "id": "10-payments",
+      "title": "How job escrow works",
+      "art": [
+        "crystal-monolith",
+        "compute-pricing",
+        "crystal-aurora"
+      ],
+      "lines": [
+        "The Cannabis coin escrow contract implementation records the budget, worker shares, deadlines, review period, and dispute resolver before work begins. Every worker must accept the terms.",
+        "A requester reviews the encrypted delivery and can approve it or open a dispute. The contract also defines cancellation, refunds, and timeout outcomes.",
+        "Pay attention to the review window: an undisputed delivery becomes payable when that window expires. The contract still needs independent review and deployment. Read the payment guide, understand the terms, and help build a dependable service."
+      ]
+    },
+    {
+      "id": "11-compute-economy",
+      "title": "Money for useful computing",
+      "art": [
+        "crystal-dawn",
+        "compute-network-client",
+        "crystal-aurora"
+      ],
+      "lines": [
+        "Cannabis coin is being built as money for useful computing. Requesters buy services. Providers earn for accepted delivery. Clear commitments connect the currency to work people need.",
+        "A provider offer specifies the computing service, price, availability, and delivery terms. The reservation system must prevent overbooking. Protected workers return encrypted results for your client to verify and assemble.",
+        "The founder receives one percent of accepted payments. Service backing requires real available capacity and fulfilled commitments. Those provider integrations are being prepared. Explore the economic design and help build a network that earns its place through useful work."
+      ]
+    },
+    {
+      "id": "00-crystal-introduction",
+      "title": "Brilliant by nature.",
+      "art": [
+        "crystal-prism"
+      ],
+      "lines": [
+        "Meet Cannabis coin. A bold community, a brilliant identity, and an ambitious idea: put computing power to useful work."
+      ]
+    }
+  ]
+}

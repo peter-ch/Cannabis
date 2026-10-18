@@ -1,0 +1,16 @@
+{
+  "schema": "cannabis.workload.v1",
+  "id": "replace-with-opaque-job-id",
+  "policySHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "files": ["software.bundle", "inputs.bundle"],
+  "tasks": [{
+    "id": "compute",
+    "dependsOn": [],
+    "runtime": {"adapter":"your-runtime-adapter","digestSHA256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","architecture":"amd64","os":"linux"},
+    "launch": {"adapterSpecificContract": {"software":"software.bundle","inputs":"inputs.bundle"}},
+    "resources": {"cpus":4,"memoryMiB":8192,"scratchMiB":16384,"wallSeconds":3600,"nodes":1,"accelerators":0,"acceleratorMemoryMiB":0},
+    "outputs": ["result.bundle"],
+    "outputMaxBytes": 1073741824
+  }],
+  "assembly": [{"task":"compute","output":"result.bundle","destination":"result.bundle"}]
+}

@@ -1,0 +1,3 @@
+Fair compute pricing starts with clear quotes. Each provider declares the resources, expected delivery time, and price before the requester commits a budget.
+The proposed pricing model can include a delivery bonus, agreed in advance and earned only when the complete result meets the deadline and acceptance rules.
+On the Cannabis coin network, an accepted payment of one hundred tokens sends ninety-nine to workers and one to the founder. Refunded amounts earn no founder fee. Estimates guide selection; verified results and agreed terms determine acceptance.

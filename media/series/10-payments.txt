@@ -1,0 +1,3 @@
+The Cannabis coin escrow contract implementation records the budget, worker shares, deadlines, review period, and dispute resolver before work begins. Every worker must accept the terms.
+A requester reviews the encrypted delivery and can approve it or open a dispute. The contract also defines cancellation, refunds, and timeout outcomes.
+Pay attention to the review window: an undisputed delivery becomes payable when that window expires. The contract still needs independent review and deployment. Read the payment guide, understand the terms, and help build a dependable service.

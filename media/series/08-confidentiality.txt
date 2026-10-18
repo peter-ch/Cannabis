@@ -1,0 +1,3 @@
+Your code, inputs, checkpoints, and outputs belong to your job. Cannabis coin requires encryption in storage and transit, plus protection while the program is running.
+The execution design releases keys only into an attested environment that meets the job's policy. Each participating accelerator and network path must support that protection.
+Ordinary hardware compatibility alone is not enough. The confidential worker service still needs integration and review. Public payments and some scheduling metadata remain visible. Explore the design and help strengthen it.

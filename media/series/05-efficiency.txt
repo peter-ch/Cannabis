@@ -1,0 +1,3 @@
+Cannabis coin is built around efficient participation. There is no proof-of-work mining race and no competition to burn computation for new tokens.
+The target network uses Ethereum proof-of-stake settlement. Useful computation happens separately, for tasks that requesters actually need and agree to pay for.
+Training, rendering, analysis, simulation, and other software workloads can fit the architecture. The goal is productive computing, with measured costs and clear results. Bring a useful problem. Help build a useful network.

@@ -1,0 +1,46 @@
+name: Build, test and publish
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run compile
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install verified age streaming encryption tool
+        run: |
+          curl --fail --location --output /tmp/cannabis-age.tar.gz https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz
+          echo 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  /tmp/cannabis-age.tar.gz' | sha256sum --check
+          tar -xzf /tmp/cannabis-age.tar.gz -C /tmp
+          echo '/tmp/age' >> "$GITHUB_PATH"
+      - run: npm test
+      - name: Verify generic compute client and placement
+        run: python -m unittest discover -s test -p 'test_compute_client.py' -v
+      - run: npm audit --audit-level=high
+      - run: npm run build:site
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          path: dist-site
+  pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

@@ -1,0 +1,28 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:05.243
+A Cannabis computing job begins with its dependencies. Independent tasks can
+
+00:00:05.243 --> 00:00:10.487
+run together. Tasks that need earlier outputs wait until those outputs
+
+00:00:10.487 --> 00:00:11.440
+are ready.
+
+00:00:11.740 --> 00:00:17.397
+The client packages the workload and encrypts its private contents. Candidate
+
+00:00:17.397 --> 00:00:22.540
+placement matches runtime, memory, accelerators, quoted cost, and delivery estimates.
+
+00:00:22.840 --> 00:00:27.311
+The protected execution design returns encrypted outputs bound to the original
+
+00:00:27.311 --> 00:00:31.783
+job. Your client verifies their integrity, decrypts them, and reconstructs the
+
+00:00:31.783 --> 00:00:36.254
+declared result files. Custom merging logic must be declared and run
+
+00:00:36.254 --> 00:00:37.880
+in an approved environment.

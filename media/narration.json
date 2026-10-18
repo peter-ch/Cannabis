@@ -1,0 +1,42 @@
+{
+  "text": "Meet Cannabis coin. A bold idea. A little green energy. A community ready to grow.\nWe're building a memecoin for efficient networks, with privacy at the heart of community claims.\nNo proof-of-work. No competitive hash grinding. Bring your energy to the community.\nNinety-nine percent for the community. One percent for the founder, vested over twenty-four months.\nZero-knowledge proofs protect eligibility privacy. One verified person. One claim. Public launch ahead.\nCannabis coin. Grow something wild. Build it together.",
+  "sample_rate": 24000,
+  "seconds": 37.25,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 7.28,
+      "text": "Meet Cannabis coin. A bold idea. A little green energy. A community ready to grow."
+    },
+    {
+      "start": 7.53,
+      "end": 13.37,
+      "text": "We're building a memecoin for efficient networks, with privacy at the heart of community claims."
+    },
+    {
+      "start": 13.62,
+      "end": 18.98,
+      "text": "No proof-of-work. No competitive hash grinding. Bring your energy to the community."
+    },
+    {
+      "start": 19.23,
+      "end": 24.75,
+      "text": "Ninety-nine percent for the community. One percent for the founder, vested over twenty-four months."
+    },
+    {
+      "start": 25.0,
+      "end": 33.48,
+      "text": "Zero-knowledge proofs protect eligibility privacy. One verified person. One claim. Public launch ahead."
+    },
+    {
+      "start": 33.73,
+      "end": 37.25,
+      "text": "Cannabis coin. Grow something wild. Build it together."
+    }
+  ],
+  "scriptSHA256": "bba2ac704338524752c994d3530e7833cf3325f06a433705e4a59e2920fe3821",
+  "sampleRate": 24000,
+  "wavSHA256": "18f4ae24fe5ac01c64cc911f9eae26e124f9baf88ea04ea679e1b0e84f4dd1e6",
+  "peak": 0.6953125,
+  "clippedSamples": 0
+}

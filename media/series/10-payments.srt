@@ -1,0 +1,39 @@
+1
+00:00:00,000 --> 00:00:05,210
+The Cannabis escrow contract implementation records the budget, worker shares, deadlines,
+
+2
+00:00:05,210 --> 00:00:10,419
+review period, and dispute resolver before work begins. Every worker must
+
+3
+00:00:10,419 --> 00:00:11,840
+accept the terms.
+
+4
+00:00:12,140 --> 00:00:17,611
+A requester reviews the encrypted delivery and can approve it or
+
+5
+00:00:17,611 --> 00:00:23,083
+open a dispute. The contract also defines cancellation, refunds, and timeout
+
+6
+00:00:23,083 --> 00:00:23,580
+outcomes.
+
+7
+00:00:23,880 --> 00:00:28,451
+Pay attention to the review window: an undisputed delivery becomes payable
+
+8
+00:00:28,451 --> 00:00:33,022
+when that window expires. The contract still needs independent review and
+
+9
+00:00:33,022 --> 00:00:37,593
+deployment. Read the payment guide, understand the terms, and help build
+
+10
+00:00:37,593 --> 00:00:38,840
+a dependable service.

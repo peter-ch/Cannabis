@@ -1,0 +1,3 @@
+Cannabis coin has a fixed maximum supply of four hundred and twenty million tokens. Ninety-nine percent is reserved for community claims.
+The founder allocation is one percent: four point two million tokens, locked at creation and released gradually over twenty-four calendar months from the public opening.
+That schedule is written into the contract design. The separate compute service fee is one percent of accepted paid work. Explore the source and see how the rules fit together.

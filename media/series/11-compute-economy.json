@@ -1,0 +1,27 @@
+{
+  "id": "11-compute-economy",
+  "scriptSHA256": "64231f40c9a61f7089cb8e555920cf91f5eb59bd9f24282b8b1dbb3181da876a",
+  "text": "Cannabis coin is being built as money for useful computing. Requesters buy services. Providers earn for accepted delivery. Clear commitments connect the currency to work people need.\nA provider offer specifies the computing service, price, availability, and delivery terms. The reservation system must prevent overbooking. Protected workers return encrypted results for your client to verify and assemble.\nThe founder receives one percent of accepted payments. Service backing requires real available capacity and fulfilled commitments. Those provider integrations are being prepared. Explore the economic design and help build a network that earns its place through useful work.",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 10.64,
+      "text": "Cannabis coin is being built as money for useful computing. Requesters buy services. Providers earn for accepted delivery. Clear commitments connect the currency to work people need."
+    },
+    {
+      "start": 10.94,
+      "end": 25.9,
+      "text": "A provider offer specifies the computing service, price, availability, and delivery terms. The reservation system must prevent overbooking. Protected workers return encrypted results for your client to verify and assemble."
+    },
+    {
+      "start": 26.2,
+      "end": 43.72,
+      "text": "The founder receives one percent of accepted payments. Service backing requires real available capacity and fulfilled commitments. Those provider integrations are being prepared. Explore the economic design and help build a network that earns its place through useful work."
+    }
+  ],
+  "sampleRate": 24000,
+  "seconds": 43.72,
+  "peak": 0.65625,
+  "clippedSamples": 0,
+  "wavSHA256": "60d1d627272b242e0d14201df35b67a2926e12438dc9f0852ebf4c2044363b21"
+}

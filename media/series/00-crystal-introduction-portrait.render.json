@@ -1,0 +1,29 @@
+{
+  "signature": "b898ab75fee850b5b65a6c35f8dfaf96d05502c9e02bb5a96412a5a24fbdd100",
+  "scriptSHA256": "f873989602e85b69a3dfb38349febe926efa077c3046319f0487f8dd42f19601",
+  "voiceSHA256": "df0dbe9df95d6c613c554881d25c559e157c7027ab7a1afd5fb1cf1f3c81cfa3",
+  "sources": [
+    "media/series/broll/crystal-monolith.mp4"
+  ],
+  "sourceKinds": [
+    "animation"
+  ],
+  "motionLoops": [
+    "forward/reverse with matched endpoints"
+  ],
+  "audio": "English narration only",
+  "seconds": 8.541667,
+  "width": 1080,
+  "height": 1920,
+  "fps": 24,
+  "videoCodec": "h264",
+  "audioCodec": "aac",
+  "audioStreams": 1,
+  "bytes": 5073983,
+  "sha256": "b806e3ec5101d0e3c74c5f1a68061cf84e9df21088f189fc1c95df00b45aeb44",
+  "captionTiming": "proportional within narration segments",
+  "captionsSHA256": {
+    "srt": "f71e4bf4c6be65981a36dca8d241df5ca2981be942f58f9d6e62092f0eebf4c3",
+    "vtt": "63f7bf15cb4d853d12e45b22926966d9ac4412f0b8dae5019cf5f49d60b80b29"
+  }
+}

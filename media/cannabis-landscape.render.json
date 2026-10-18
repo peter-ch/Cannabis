@@ -1,0 +1,11 @@
+{
+  "scriptSHA256": "bba2ac704338524752c994d3530e7833cf3325f06a433705e4a59e2920fe3821",
+  "voiceSHA256": "18f4ae24fe5ac01c64cc911f9eae26e124f9baf88ea04ea679e1b0e84f4dd1e6",
+  "sha256": "211bee37104984607b5592a05a2eb35959fc1907e0398efd131629f4d4c3fa64",
+  "bytes": 15563513,
+  "seconds": 37.266667,
+  "width": 1920,
+  "height": 1080,
+  "audio": "English narration only",
+  "captionsSHA256": "2288acee39738b54de7f9f8c5fb662e21d6cf7ad1e1f6aa68a1e792f195f027a"
+}

@@ -1,0 +1,10 @@
+{
+  "schema": "cannabis.compute.policy.v1",
+  "feeBasisPoints": 100,
+  "founderRecipient": "0xe02Ad92413aD0a3Aac8263eE3C2Bd9410955F89b",
+  "tokenName": "Cannabis",
+  "tokenDecimals": 18,
+  "feeAppliesTo": "accepted-paid-work",
+  "feeRounding": "down-to-token-base-unit",
+  "status": "preparing-service"
+}

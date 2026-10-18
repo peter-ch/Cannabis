@@ -1,0 +1,28 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:05.683
+Your code, inputs, checkpoints, and outputs belong to your job. Cannabis
+
+00:00:05.683 --> 00:00:11.367
+requires encryption in storage and transit, plus protection while the program
+
+00:00:11.367 --> 00:00:12.400
+is running.
+
+00:00:12.700 --> 00:00:17.522
+The execution design releases keys only into an attested environment that
+
+00:00:17.522 --> 00:00:22.345
+meets the job's policy. Each participating accelerator and network path must
+
+00:00:22.345 --> 00:00:23.660
+support that protection.
+
+00:00:23.960 --> 00:00:29.240
+Ordinary hardware compatibility alone is not enough. The confidential worker service
+
+00:00:29.240 --> 00:00:34.520
+still needs integration and review. Public payments and some scheduling metadata
+
+00:00:34.520 --> 00:00:38.840
+remain visible. Explore the design and help strengthen it.

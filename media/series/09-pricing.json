@@ -1,0 +1,27 @@
+{
+  "id": "09-pricing",
+  "scriptSHA256": "f2a407d101d482ac294c3db5f453b785067e313c17b9a4607641b008f742078c",
+  "text": "Fair compute pricing starts with clear quotes. Each provider declares the resources, expected delivery time, and price before the requester commits a budget.\nThe proposed pricing model can include a delivery bonus, agreed in advance and earned only when the complete result meets the deadline and acceptance rules.\nOn the Cannabis coin network, an accepted payment of one hundred tokens sends ninety-nine to workers and one to the founder. Refunded amounts earn no founder fee. Estimates guide selection; verified results and agreed terms determine acceptance.",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 9.36,
+      "text": "Fair compute pricing starts with clear quotes. Each provider declares the resources, expected delivery time, and price before the requester commits a budget."
+    },
+    {
+      "start": 9.66,
+      "end": 19.42,
+      "text": "The proposed pricing model can include a delivery bonus, agreed in advance and earned only when the complete result meets the deadline and acceptance rules."
+    },
+    {
+      "start": 19.72,
+      "end": 36.68,
+      "text": "On the Cannabis coin network, an accepted payment of one hundred tokens sends ninety-nine to workers and one to the founder. Refunded amounts earn no founder fee. Estimates guide selection; verified results and agreed terms determine acceptance."
+    }
+  ],
+  "sampleRate": 24000,
+  "seconds": 36.68,
+  "peak": 0.69140625,
+  "clippedSamples": 0,
+  "wavSHA256": "3c3bae435854aa8d026f2750aa5534345371a0dfde60ec00e466ce21dfd662d4"
+}

@@ -1,0 +1,27 @@
+{
+  "id": "02-join",
+  "scriptSHA256": "3309d61c5366a41e8a91d273f7fc464bc9943c3c5a5437ed5117329276f19b5c",
+  "text": "There is more than one way to help Cannabis coin grow. Developers can review code. Creators can share original artwork. Curious people can ask good questions.\nStart with the official project website and GitHub repository. Read the published rules, follow release updates, and join the discussion.\nWhen enrollment opens, use the verified instructions and your own wallet. Keep your recovery secrets private. Your next step today: explore, contribute, and stay connected.",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 15.6,
+      "text": "There is more than one way to help Cannabis coin grow. Developers can review code. Creators can share original artwork. Curious people can ask good questions."
+    },
+    {
+      "start": 15.9,
+      "end": 24.78,
+      "text": "Start with the official project website and GitHub repository. Read the published rules, follow release updates, and join the discussion."
+    },
+    {
+      "start": 25.08,
+      "end": 37.08,
+      "text": "When enrollment opens, use the verified instructions and your own wallet. Keep your recovery secrets private. Your next step today: explore, contribute, and stay connected."
+    }
+  ],
+  "sampleRate": 24000,
+  "seconds": 37.08,
+  "peak": 0.52734375,
+  "clippedSamples": 0,
+  "wavSHA256": "be299c6344ee9824417b0caacf7f815720d49782d4cbde92f02307e24efea6b7"
+}

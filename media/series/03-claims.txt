@@ -1,0 +1,3 @@
+Ninety-nine percent of the capped Cannabis coin supply is allocated to community claims. The published design gives four hundred and twenty tokens to each eligible verified person, once.
+Up to nine hundred and ninety thousand people can participate. Everyone starts from the same public opening time.
+A zero-knowledge membership proof checks eligibility while keeping the underlying membership identity out of the public claim. Enrollment will open after the verification provider and launch requirements complete review.
