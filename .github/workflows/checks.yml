@@ -55,7 +55,16 @@ jobs:
           PY
           sudo dpkg --install /tmp/cannabis-sandbox-packages/libcap2.deb /tmp/cannabis-sandbox-packages/libseccomp2.deb /tmp/cannabis-sandbox-packages/bubblewrap.deb
       - name: Exercise native guest filesystem, syscall, network and storage isolation
-        run: sudo python3 -I -B scripts/check-guest-sandbox.py
+        run: |
+          # Match the measured guest's namespace policy only on this disposable
+          # runner. Ubuntu's host AppArmor restriction otherwise denies bwrap's
+          # private loopback initialization. Restore the host setting on exit.
+          if test -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
+            previous=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)
+            trap 'sudo sysctl -qw kernel.apparmor_restrict_unprivileged_userns="$previous"' EXIT
+            sudo sysctl -qw kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          sudo python3 -I -B scripts/check-guest-sandbox.py
       - run: npm audit --audit-level=high
       - run: npm run build:work-service
       - run: npm run build:site
