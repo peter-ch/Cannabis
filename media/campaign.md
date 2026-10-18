@@ -14,7 +14,7 @@ Candidate handle: CannabisCommunity (availability not checked). Declare project/
 
 Cannabis. A little wild. A lot of purpose. 🌱 An open community building a currency for useful computing. Bring your ideas, explore the code and help shape what comes next. Preparing mainnet launch.
 
-[Explore Cannabis](https://peter-ch.github.io/Cannabis/) · [Open source](https://github.com/peter-ch/Cannabis)
+[Explore Cannabis](https://cannabiss.online/) · [Open source](https://github.com/peter-ch/Cannabis)
 
 ## Useful-compute update
 
@@ -24,7 +24,7 @@ The job service is planned. Do not advertise available jobs, earnings, customers
 
 ## Video caption
 
-Good ideas need good company. 🌱 Explore Cannabis: useful computing, open code and a community with room for your ideas. Preparing mainnet launch. Find your place: https://peter-ch.github.io/Cannabis/#join
+Good ideas need good company. 🌱 Explore Cannabis: useful computing, open code and a community with room for your ideas. Preparing mainnet launch. Find your place: https://cannabiss.online/#join
 
 ## Technical blog
 
@@ -32,7 +32,7 @@ Good ideas need good company. 🌱 Explore Cannabis: useful computing, open code
 
 Cannabis brings a little green energy to open-source crypto. Big character, visible rules and a community ready to grow. The production project is built for an Ethereum proof-of-stake-secured EVM network, with no proof-of-work competition.
 
-Community participation uses verified-person claims with a common public opening. Read the [allocation, vesting and service terms](https://peter-ch.github.io/Cannabis/terms.html) before participating.
+Community participation uses verified-person claims with a common public opening. Read the [allocation, vesting and service terms](https://cannabiss.online/terms.html) before participating.
 
 Semaphore zero-knowledge membership proofs protect which enrolled identity made a claim. Wallet transactions remain public. A reviewed enrollment provider must enforce distinct-person eligibility; Cannabis will not collect identity documents.
 
@@ -40,7 +40,7 @@ The computing economy is central: requesters buy useful services, providers earn
 
 ## Computing economy post
 
-Useful work. Clear prices. Cannabis. 🌱 We are building money for real computing services, with signed provider offers, encrypted workloads and transparent payment rules. Capacity redemption and protected workers are the next integration steps. Explore the design: https://peter-ch.github.io/Cannabis/network.html
+Useful work. Clear prices. Cannabis. 🌱 We are building money for real computing services, with signed provider offers, encrypted workloads and transparent payment rules. Capacity redemption and protected workers are the next integration steps. Explore the design: https://cannabiss.online/network.html
 
 The source, claim contracts, launch preparation, original artwork and English narrated films are public. We are preparing mainnet launch through provider integration, independent security/privacy review and the applicable launch requirements.
 
@@ -48,7 +48,7 @@ Bring a good idea, a clear bug report or a creative contribution. Let’s grow s
 
 ## Campaign graphics
 
-Use the [sharing library](https://peter-ch.github.io/Cannabis/share.html) for nine composed graphics: three messages, each in landscape, square and portrait. The website and films use the same emerald, crystal and lime identity. Keep launch status intact and link to the project.
+Use the [sharing library](https://cannabiss.online/share.html) for nine composed graphics: three messages, each in landscape, square and portrait. The website and films use the same emerald, crystal and lime identity. Keep launch status intact and link to the project.
 
 - Purpose: “A little wild. A lot of purpose.” Invite people to explore the wider idea.
 - Computing: “Grow something useful.” Invite builders to read the code and architecture.
@@ -56,7 +56,7 @@ Use the [sharing library](https://peter-ch.github.io/Cannabis/share.html) for ni
 
 ## Distribution
 
-Lead with useful computing, protected workloads, community and the crystal identity. Use only the promotional film selection in [distribution.json](distribution.json). Allocation/payment explainers and diagrams belong to the [terms library](https://peter-ch.github.io/Cannabis/terms.html); they are not advertising assets. Link readers to the project terms and preserve complete disclosures in participation and payment flows.
+Lead with useful computing, protected workloads, community and the crystal identity. Use only the promotional film selection in [distribution.json](distribution.json). Allocation/payment explainers and diagrams belong to the [terms library](https://cannabiss.online/terms.html); they are not advertising assets. Link readers to the project terms and preserve complete disclosures in participation and payment flows.
 
 Never access or publish to Facebook or Instagram, including through cross-posting integrations. No fake engagement, fabricated supporters, mass unsolicited messages, impersonation, manufactured urgency or guaranteed-return claims.
 

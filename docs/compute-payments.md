@@ -57,7 +57,7 @@ Arbitrary workloads use a `cannabis.compute.order.v2` job object containing an o
 
 ## Quoted rates and delivery incentives
 
-The [pricing diagram](https://peter-ch.github.io/Cannabis/assets/diagrams/compute-pricing.png) illustrates the proposed next pricing layer. It is not a live price feed or an implemented metered settlement service. Node quotes may be derived from accepted resources and bounded durations, and an explicitly agreed bonus may reward a correct complete result delivered by a deadline. Quotes should include the founder fee so the requester sees the entire gross cost.
+The [pricing diagram](https://cannabiss.online/assets/diagrams/compute-pricing.png) illustrates the proposed next pricing layer. It is not a live price feed or an implemented metered settlement service. Node quotes may be derived from accepted resources and bounded durations, and an explicitly agreed bonus may reward a correct complete result delivered by a deadline. Quotes should include the founder fee so the requester sees the entire gross cost.
 
 In the illustration, A quotes 4 minutes at 10 Cannabis per minute; B quotes 6 minutes at 5; assembly quotes 2 minutes at 10. Accepted base quotes total 90. A and B run concurrently, so the estimated end-to-end duration is `max(4, 6) + 2 + 1 overhead = 9 minutes`. The 1 minute represents total queue, transfer, attestation and client-verification overhead in this hypothetical example. An agreed gross delivery bonus of 10 makes the charged total 100: workers 99, founder 1. Without an earned bonus, a gross award of 90 would allocate 89.10 to workers, 0.90 to the founder and refund the remaining 10 of a 100 budget.
 

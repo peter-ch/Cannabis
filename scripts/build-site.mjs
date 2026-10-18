@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { assertPublicNarration } from './media-metadata.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'dist-site');
+const siteOrigin = 'https://cannabiss.online';
 const narration = JSON.parse(fs.readFileSync(path.join(root, 'media/narration.json')));
 assertPublicNarration(narration);
 const spoken = fs.readFileSync(path.join(root, 'media/narration.txt'), 'utf8').replace(/\r\n?/g, '\n').trim();
@@ -55,10 +56,16 @@ for (const entry of fs.readdirSync(path.join(root, 'media/series'), { withFileTy
     else fs.copyFileSync(source, target);
   }
 }
-for (const name of fs.readdirSync(out).filter(name => name.endsWith('.html'))) {
+const pages = fs.readdirSync(out).filter(name => name.endsWith('.html')).sort();
+for (const name of pages) {
   let html = fs.readFileSync(path.join(out, name), 'utf8');
   html = html.replaceAll('href="/', 'href="./').replaceAll('src="/', 'src="./').replaceAll('poster="/', 'poster="./');
+  const canonical = siteOrigin + '/' + (name === 'index.html' ? '' : name);
+  html = html.replace('</head>', `<link rel="canonical" href="${canonical}"></head>`);
   fs.writeFileSync(path.join(out, name), html);
 }
+fs.writeFileSync(path.join(out, 'robots.txt'), `User-agent: *\nAllow: /\nSitemap: ${siteOrigin}/sitemap.xml\n`);
+fs.writeFileSync(path.join(out, 'sitemap.xml'), '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+  pages.map(name => `  <url><loc>${siteOrigin}/${name === 'index.html' ? '' : name}</loc></url>`).join('\n') + '\n</urlset>\n');
 fs.writeFileSync(path.join(out, '.nojekyll'), '');
 console.log('Built public project website in dist-site/');
