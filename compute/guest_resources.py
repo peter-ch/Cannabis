@@ -213,13 +213,14 @@ class JobResourceGroup:
         """
         if self._fd is None:
             raise RuntimeError('Resource group is closed')
-        while self.populated:
+        while True:
             if cancelled is not None and cancelled.is_set():
                 return {'reason': 'cancelled', **self.close()}
             if time.monotonic() >= self.deadline:
                 return {'reason': 'deadline', **self.close()}
+            if not self.populated:
+                return {'reason': 'empty', **self.close()}
             time.sleep(0.01)
-        return {'reason': 'empty', **self.close()}
 
     def close(self):
         """Kill the entire tree, prove it empty, then remove only our new group.

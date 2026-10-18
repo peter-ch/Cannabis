@@ -141,6 +141,13 @@ def check(parent):
         finish(proc)
         assert report['reason'] == 'cancelled' and proc.returncode == -9
         results['cancelTreeKill'] = report
+    # An empty group observed after expiry is not evidence of timely completion.
+    # A delayed supervisor must fail closed instead of reporting success.
+    with JobResourceGroup(parent, ResourceLimits(250, 32 * 1024**2, 8, 1)) as group:
+        time.sleep(1.05)
+        report = group.wait()
+        assert report['reason'] == 'deadline' and report['removed']
+        results['lateObservationRejected'] = report
     # A broken/changed limit cannot become a launcher admission.
     with JobResourceGroup(parent, base) as group:
         (group.path / 'memory.max').write_text(str(64 * 1024**2))

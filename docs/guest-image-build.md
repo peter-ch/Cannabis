@@ -65,6 +65,8 @@ Normal scheduling is required; the isolated runtime must remove capabilities and
 real-time scheduling privileges that could bypass these controls.
 
 The live supervisor waits for completion, cancellation or a monotonic wall deadline.
+Expiry and cancellation take precedence even when the group is already empty;
+late observation cannot establish that the job finished on time.
 Cleanup uses the kernel's tree-wide kill operation, checks that no processes remain,
 then removes only the group it created. A new process session does not escape that
 cleanup. Failure to prove cleanup is an error requiring guest retirement. A separate
