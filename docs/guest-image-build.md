@@ -2,11 +2,11 @@
 
 `scripts/build-guest-image.py` assembles a Linux kernel and complete in-memory boot filesystem containing the [pinned guest evidence services](guest-service-build.md), Node, Python, age and the Cannabis control-plane modules. The current entry point checks those components and powers off. It has no customer-job intake, operating worker endpoint or confidential-hardware authorization.
 
-This image is a step toward the measured worker described in [worker deployment](worker-deployment.md). It is not a mainnet service release. Assignment initialization and kernel resource enforcement are integrated into its checks. Hardware acceptance, the isolated workload launcher, protected storage, authenticated transport and independent review remain required.
+This image is a step toward the measured worker described in [worker deployment](worker-deployment.md). It is not a mainnet service release. Assignment initialization, kernel resource enforcement and native runtime isolation are integrated into its component checks. The complete admitted workload launcher, protected transport, outer VM/key lifecycle, hardware acceptance and independent review remain required.
 
 ## Inputs and assembly
 
-Use Linux x86_64, Python 3.12+, `dpkg-deb`, `depmod` and internet access for the first input download. The [input lock](../compute/guest-image/inputs.json) pins 39 Ubuntu 24.04 package archives, the kernel release, Node and age distributions, the JavaScript dependency lock and both guest-service binary hashes. The package pins were obtained from Ubuntu's signed package indices with an empty installation state and separate empty archive cache, so already cached host packages were not omitted from the dependency closure.
+Use Linux x86_64, Python 3.12+, `dpkg-deb`, `depmod` and internet access for the first input download. The [input lock](../compute/guest-image/inputs.json) pins 42 Ubuntu 24.04 package archives, including Bubblewrap, libcap and libseccomp, plus the kernel release, Node and age distributions, the JavaScript dependency lock and both guest-service binary hashes. The initial package closure was obtained from Ubuntu's signed package indices with an empty installation state and separate empty archive cache. The isolation additions and their dependencies were checked against the distribution's package metadata; cached host packages are not substitutes for pinned guest inputs.
 
 Build the evidence services first. Then run from this repository:
 
@@ -28,6 +28,14 @@ The output contains `vmlinuz`, `initramfs.cpio.gz`, `cmdline`, `build.json`, the
 
 The embedded file manifest checks regular-file contents during the boot check. This is local integrity evidence, not a hardware signature or proof against an operator controlling an ordinary VM. There is no persistent root disk or host filesystem mount. Customer execution will additionally require enforced isolation and protected temporary storage; the boot image does not establish those properties by itself.
 
+Early boot copies only the embedded top-level image paths into a separate 1 GiB,
+unswappable tmpfs root, then uses the pinned BusyBox `switch_root` to release the
+original initramfs tree and start the guest initializer. The handoff is necessary
+because Linux does not permit `pivot_root` from the initial rootfs; the workload
+sandbox relies on that operation. No external disk or files enter this handoff.
+The component check verifies the new root's filesystem and mount restrictions
+before checking its file manifest. [Linux root-switching requirements](https://www.man7.org/linux/man-pages/man2/pivot_root.2.html).
+
 The JavaScript runtime carries ethers and jose with locked transitive dependencies. Escrow inspection uses a checked-in ABI instead of loading the Solidity compiler inside the guest. Automated checks compare that ABI with the current compiled contract. Contract source, deployed-code hash checks and payment semantics are unchanged.
 
 ## Run the actual VM boot check
@@ -40,7 +48,7 @@ python3 scripts/verify-guest-boot.py \
   --output /work/cannabis-image-first-boot
 ```
 
-This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default deadline is five minutes; failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private.
+This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default boot-check deadline is ten minutes, allowing CPU emulation of all component checks; individual workload deadlines remain enforced separately. Failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private.
 
 Inside the VM, the entry point mounts ephemeral runtime storage, disables core dumps and further kernel-module loading, checks embedded files, exercises the Python extensions and age executable, and starts the actual attestation agent and REST bridge on loopback. Both production CPU probes must reject the unsupported sample profile with their exact structured refusal. Import errors, missing libraries and unexpected success fail the check. No hardware evidence, channel key, job key or customer computation is requested. The services are terminated and the VM powers off.
 
@@ -141,6 +149,84 @@ on fatal failure. Simultaneous loss of owner and guardian, kernel failure and a
 privileged attacker inside the guest require that outer lifecycle boundary.
 Filesystem, network and device isolation must keep workloads away from both
 control processes and their handles before customer execution is admitted.
+
+## Native runtime isolation
+
+`compute/guest_sandbox.py` implements one native Linux CPU execution boundary
+inside a measured guest. It launches arbitrary software supported by the approved
+runtime tree; the check's Python program is an example workload. Other runtimes,
+coordinated groups and accelerators remain part of the network scope and require
+their own compatible, validated adapters. This boundary alone neither admits
+hardware nor releases a key, accepts payment or proves useful output.
+
+Create `NativeSandbox` only in a dedicated, privileged, single-threaded trusted
+supervisor. Supply the retained approved runtime-tree digest, authenticated input
+directory, validated `ResourceLimits` and `ScratchLimits`, and the configured
+cgroup parent. Root and input trees must be root-owned on protected unswappable
+memory storage, without writable ancestors, special files or hard links. The
+runtime digest binds file contents, paths, executable permissions and symlink
+targets; mount destinations must be real empty directories. The runtime is checked
+again before launch. The enclosing launcher must obtain its expected digest from
+the retained approved assignment, rather than trusting a worker-supplied value.
+
+The supervisor arms its independent guardian before creating runtime storage.
+A private mount namespace contains the read-only runtime and input mounts, plus
+one scratch filesystem shared by work files, output, temporary files, shared
+memory and stdout/stderr logs. Its byte and inode limits therefore apply across
+those paths. The input copy also consumes that quota. These tmpfs mounts explicitly
+disable swapping; ordinary tmpfs can use swap unless configured otherwise.
+[Linux tmpfs documentation](https://docs.kernel.org/filesystems/tmpfs.html).
+Authenticated staging outside this boundary still needs its own protected budget.
+
+The trusted trampoline joins the resource group before executing pinned
+Bubblewrap. It drops groups, capabilities and host privileges, clears the
+environment, disables core dumps and locked memory, bounds file descriptors and
+file size, and enables `no_new_privs`. Namespaces isolate users, processes, IPC,
+networking, hostname and cgroup visibility. Further user namespaces are disabled.
+The workload sees only its root, inputs, writable paths, private read-only proc
+and minimal synthetic devices. Control processes, sockets and hardware devices
+are not included. Control descriptors are closed before customer instructions.
+
+A pinned libseccomp implementation constructs an explicit x86-64 syscall policy.
+It permits ordinary processes, threads, files and local Unix sockets, while
+denying unapproved syscalls, privilege changes, namespace creation, process
+inspection, kernel administration and IP/netlink/packet/vsock socket creation.
+There is currently no external or distributed network path in this primitive.
+Authenticated, encrypted rank communication requires a separately reviewed
+transport integration; do not enable unrestricted networking as a shortcut.
+CUDA, ROCm and other device paths are similarly conditional on validated
+confidential hardware and an appropriate device policy.
+
+`run()` permits one bounded command. The supervisor monitors the guardian and
+runtime together. Completion requires the whole resource group to be empty and
+removed before it can report success. Cancellation and expiry report failure.
+Guardian failure uses retained group descriptors to stop the workload and raises
+a fatal error requiring guest retirement. The final guardian response is
+acknowledged before socket closure, with a bounded drain for racing requests.
+
+Keep the sandbox context alive while a trusted encoder consumes outputs and logs
+inside the protected guest. Unmounting is checked and never uses lazy detachment;
+failure requires guest retirement. Owner-process death kills the job tree and
+releases its private mounts when the final namespace owner exits. This does not
+implement outer VM disposal, key retirement, protection against simultaneous
+supervisor/guardian loss, or physical erasure of every memory copy.
+
+Nine actual-kernel checks exercise read-only roots and inputs, hidden control
+paths/devices, syscall and network refusal, unprivileged identity, descriptor
+closure, allowed local IPC/processes/threads, aggregate storage, inode and log
+quotas, expiry, cancellation, owner death, guardian failure and a changed runtime.
+The same owned checks are included in the boot image and Linux CI:
+
+```sh
+sudo python3 -I -B scripts/check-guest-sandbox.py
+```
+
+Use a disposable Linux environment with the exact pinned tools and enabled
+cgroup controllers. The checker runs owned fixture code, not customer programs.
+A successful ordinary VM check does not demonstrate confidentiality against a
+worker operator. Real attestation, actual runtime admission, authenticated input
+and output integration, protected transport and end-to-end paid acceptance remain
+required before this becomes an operating worker.
 
 ## Connect these artifacts to measured launch
 

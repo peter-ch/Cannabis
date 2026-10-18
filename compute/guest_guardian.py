@@ -125,6 +125,15 @@ def guardian_main(channel_fd, owner_fd, parent_fd, group_fd):
         report = {'reason': reason, **group.close()}
         try:
             _send(channel, report)
+            # A deadline may race the owner's finish/cancel message. Closing a
+            # UNIX seqpacket socket with unread input can discard the queued
+            # result with ECONNRESET. Keep the completed result available until
+            # acknowledged, draining raced commands under a short fixed bound.
+            end = time.monotonic() + 2
+            while not _dead(owner_fd) and time.monotonic() < end:
+                channel.settimeout(max(0.001, end - time.monotonic()))
+                if _receive(channel) == {'ack': True}:
+                    break
         except (OSError, EOFError):
             pass  # The kernel cleanup still completed after owner death.
     except BaseException:
@@ -154,7 +163,7 @@ class GuardedResources:
         self._process = self._channel = self._pidfd = None
         self._result = None
         self._broken = False
-        self.path, self.limits = self._group.path, limits
+        self.path, self.limits, self.deadline = self._group.path, limits, self._group.deadline
         remote = owner_fd = None
         try:
             local, remote = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -243,6 +252,10 @@ class GuardedResources:
                 except BrokenPipeError:
                     pass  # A deadline result may already be queued.
             result = _receive(self._channel)
+            try:
+                _send(self._channel, {'ack': True})
+            except BrokenPipeError:
+                pass
             self._process.wait(timeout=5)
             allowed = {'finished', 'cancelled', 'deadline', 'not-empty', 'invalid-command', 'channel-closed'}
             if (self._process.returncode != 0 or not isinstance(result, dict) or result.get('reason') not in allowed

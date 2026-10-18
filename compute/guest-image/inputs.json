@@ -7,6 +7,14 @@
   "sourceDateEpoch": 1789091056,
   "packages": [
     {
+      "package": "bubblewrap",
+      "version": "0.9.0-1ubuntu0.3",
+      "architecture": "amd64",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.9.0-1ubuntu0.3_amd64.deb",
+      "bytes": 50436,
+      "sha256": "2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094"
+    },
+    {
       "package": "busybox-static",
       "version": "1:1.36.1-6ubuntu3.1",
       "architecture": "amd64",
@@ -69,6 +77,14 @@
       "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/libc6_2.39-0ubuntu8.9_amd64.deb",
       "bytes": 3264314,
       "sha256": "ff5557d99b51f761c4b7c92368b9cc45565eda17df9bf9eb4b134d09825008be"
+    },
+    {
+      "package": "libcap2",
+      "version": "1:2.66-5ubuntu2.4",
+      "architecture": "amd64",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libc/libcap2/libcap2_2.66-5ubuntu2.4_amd64.deb",
+      "bytes": 30500,
+      "sha256": "23c627c77c66552a658e62852f244f4946dc543898e0ec5428d5dc6bffde2d6a"
     },
     {
       "package": "libcrypt1",
@@ -173,6 +189,14 @@
       "url": "https://archive.ubuntu.com/ubuntu/pool/main/r/readline/libreadline8t64_8.2-4build1_amd64.deb",
       "bytes": 152856,
       "sha256": "563977a16df03b611f5239cc1e9a0426e86479fcc616b5c9e200ea32063119e5"
+    },
+    {
+      "package": "libseccomp2",
+      "version": "2.5.5-1ubuntu3.1",
+      "architecture": "amd64",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libseccomp/libseccomp2_2.5.5-1ubuntu3.1_amd64.deb",
+      "bytes": 50424,
+      "sha256": "33fc96f1e008d27c042a3db9bcd16f7f4d49e866f7a3141b758a799328dbdc3f"
     },
     {
       "package": "libselinux1",

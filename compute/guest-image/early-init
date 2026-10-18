@@ -1,0 +1,22 @@
+#!/bin/busybox sh
+# Transfer the pinned initramfs into a real, bounded, unswappable root mount.
+# No network, disks, customer data, keys or external files enter this step.
+export PATH=/usr/bin:/bin
+umask 077
+ulimit -c 0
+fail() {
+    echo 'CANNABIS_BOOT_CHECK root_handoff_failure'
+    /bin/busybox poweroff -f
+    while :; do /bin/busybox sleep 60; done
+}
+/bin/busybox mkdir -m 0755 /guest-root || fail
+/bin/busybox mount -t tmpfs -o nosuid,nodev,noswap,mode=0755,size=1024m tmpfs /guest-root || fail
+# Copy only known top-level image paths. Never recurse into the new root mount.
+for entry in bin sbin lib lib64 usr etc opt root boot dev proc sys run tmp init; do
+    [ -e "/$entry" ] || [ -L "/$entry" ] || fail
+    /bin/busybox cp -a "/$entry" /guest-root/ || fail
+done
+# The initial rootfs cannot be pivot_root()ed. switch_root releases that old
+# in-memory tree and makes subsequent workload pivot_root isolation possible.
+exec /bin/busybox switch_root /guest-root /opt/cannabis/guest-init
+fail

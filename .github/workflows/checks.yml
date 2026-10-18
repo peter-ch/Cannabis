@@ -4,7 +4,7 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,6 +37,25 @@ jobs:
         run: sudo python3 -I -B scripts/check-guest-resources.py
       - name: Verify cleanup after supervisor death and stopped supervisors
         run: sudo python3 -I -B scripts/check-guest-guardian.py
+      - name: Install pinned tools for disposable Linux isolation checks
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, urllib.request
+          target = pathlib.Path('/tmp/cannabis-sandbox-packages')
+          target.mkdir(exist_ok=False)
+          lock = json.loads(pathlib.Path('compute/guest-image/inputs.json').read_text())
+          selected = [p for p in lock['packages'] if p['package'] in {'bubblewrap','libcap2','libseccomp2'}]
+          assert len(selected) == 3
+          for entry in selected:
+              assert entry['url'].startswith('https://archive.ubuntu.com/ubuntu/pool/main/')
+              with urllib.request.urlopen(entry['url'],timeout=60) as response:
+                  data = response.read(entry['bytes']+1)
+              assert len(data) == entry['bytes'] and hashlib.sha256(data).hexdigest() == entry['sha256']
+              (target / (entry['package']+'.deb')).write_bytes(data)
+          PY
+          sudo dpkg --install /tmp/cannabis-sandbox-packages/libcap2.deb /tmp/cannabis-sandbox-packages/libseccomp2.deb /tmp/cannabis-sandbox-packages/bubblewrap.deb
+      - name: Exercise native guest filesystem, syscall, network and storage isolation
+        run: sudo python3 -I -B scripts/check-guest-sandbox.py
       - run: npm audit --audit-level=high
       - run: npm run build:work-service
       - run: npm run build:site

@@ -150,13 +150,15 @@ def main():
     for source in sorted((ROOT / 'compute').iterdir()):
         if source.is_file() and source.suffix in ['.mjs', '.py', '.json']:
             copy_text(source, project / 'compute' / source.name)
-    for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'check-guest-guardian.py', 'compute-guest-guardian.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs']:
+    for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'check-guest-guardian.py', 'compute-guest-guardian.py', 'check-guest-sandbox.py', 'compute-guest-sandbox.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in lock['guestServices']:
         shutil.copyfile(services / name, tree / 'usr/local/bin' / name)
         (tree / 'usr/local/bin' / name).chmod(0o755)
-    copy_text(INPUTS / 'init', tree / 'init')
+    copy_text(INPUTS / 'early-init', tree / 'init')
     (tree / 'init').chmod(0o755)
+    copy_text(INPUTS / 'init', project / 'guest-init')
+    (project / 'guest-init').chmod(0o755)
     copy_text(INPUTS / 'boot-check.py', project / 'boot-check.py')
     (tree / 'etc/passwd').write_text('root:x:0:0:root:/root:/usr/sbin/nologin\ncannabis:x:1000:1000:workload:/run/workload:/usr/sbin/nologin\n')
     (tree / 'etc/group').write_text('root:x:0:\ncannabis:x:1000:\n')

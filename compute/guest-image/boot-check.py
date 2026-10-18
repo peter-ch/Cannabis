@@ -15,6 +15,12 @@ def main():
     os.umask(0o077)
     processes = []
     try:
+        PHASE = 'ephemeral_root'
+        root_mounts = [line.split() for line in Path('/proc/self/mountinfo').read_text().splitlines() if line.split()[4] == '/']
+        if (len(root_mounts) != 1 or root_mounts[0][-3] != 'tmpfs'
+                or 'noswap' not in root_mounts[0][-1].split(',')
+                or not {'nosuid', 'nodev'} <= set(root_mounts[0][5].split(','))):
+            raise RuntimeError('Guest root was not handed off to protected memory storage')
         PHASE = 'embedded_files'
         manifest = json.loads(Path('/opt/cannabis/image-files.json').read_text())
         for entry in manifest:
@@ -87,7 +93,13 @@ def main():
             print('CANNABIS_GUARDIAN_FAILURE ' + guardian.stderr.decode(errors='replace')[-4096:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Guardian acceptance failed')
         guardian_checks = json.loads(guardian.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        PHASE = 'runtime_isolation'
+        sandbox = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-sandbox.py'], capture_output=True, timeout=180)
+        if sandbox.returncode:
+            print('CANNABIS_SANDBOX_FAILURE ' + sandbox.stderr.decode(errors='replace')[-8192:].replace('\n', ' | '), flush=True)
+            raise RuntimeError('Runtime isolation acceptance failed')
+        sandbox_checks = json.loads(sandbox.stdout)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:

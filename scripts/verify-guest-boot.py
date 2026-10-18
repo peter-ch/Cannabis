@@ -16,7 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--timeout', type=int, default=300)
+    parser.add_argument('--timeout', type=int, default=600)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     image, out = args.image.resolve(), args.output.resolve()
@@ -85,6 +85,12 @@ def main():
             or guardian.get('customerCodeExecuted') is not False or guardian.get('hardwareValidated') is not False
             or guardian.get('checks') != {name: True for name in guardian_cases}):
         raise ValueError('Independent guest cleanup checks did not pass')
+    sandbox = result.get('sandboxChecks', {})
+    sandbox_cases = {'isolation', 'storage', 'inodes', 'logs', 'deadline', 'cancel', 'owner-death', 'guardian-failure', 'changed-runtime'}
+    if (sandbox.get('schema') != 'cannabis.guest-sandbox-check.v1' or sandbox.get('kernel') != report['kernelRelease']
+            or sandbox.get('customerCodeExecuted') is not False or sandbox.get('hardwareValidated') is not False
+            or sandbox.get('checks') != {name: True for name in sandbox_cases}):
+        raise ValueError('Guest runtime isolation checks did not pass')
     if result['schema'] != 'cannabis.guest-boot-check.v1' or result['kernel'] != report['kernelRelease'] or result['imageFilesVerified'] != report['embeddedFiles'] or result['tee'] != 'sample' or result['profileChecks'] != [{'profile':p, 'unsupportedHardwareRejected':True} for p in ['snp','tdx']] or any(result[k] is not False for k in ['requestedEvidence','acceptedJobKeys','launchedCustomerWork','hardwareValidated']):
         raise ValueError('Unexpected guest result')
     final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}
