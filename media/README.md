@@ -6,7 +6,6 @@ Original brand artwork, English narrated films and technical illustrations for t
 - [Portrait introduction](https://peter-ch.github.io/Cannabis/media/series/00-crystal-introduction-portrait.mp4)
 - [Introduction transcript](series/00-crystal-introduction.txt) and [captions](series/00-crystal-introduction.srt)
 - [Shareable campaign graphics](https://peter-ch.github.io/Cannabis/share.html)
-- [Crystal collection](https://peter-ch.github.io/Cannabis/collection.html)
 - [Computing architecture](https://peter-ch.github.io/Cannabis/network.html)
 - [Documentation films](https://peter-ch.github.io/Cannabis/learn.html)
 

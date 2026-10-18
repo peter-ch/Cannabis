@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import html
 import json
+import zipfile
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
@@ -17,7 +18,7 @@ FORMATS = {'landscape': (1200, 630), 'square': (1080, 1080), 'portrait': (1080, 
 CAMPAIGNS = {
     'purpose': {
         'art': 'prestige', 'label': 'CURIOSITY IS A GOOD START.',
-        'title': 'A little wild.<br>A lot of<br><em>purpose.</em>',
+        'title': 'Grow like<br>nature. Power<br><em>what’s next.</em>',
         'copy': 'A currency for useful computing.<br>A community for people who make things happen.',
         'action': 'Be part of what’s next',
     },
@@ -52,7 +53,7 @@ h1{font-weight:500;font-size:76px;letter-spacing:-4.5px;line-height:.99;margin:2
 def layout(name, format_name):
     item = CAMPAIGNS[name]
     image = (ROOT / f'web/assets/crystal-{item["art"]}.png').as_uri()
-    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cannabis campaign</title><style>{CSS}</style></head><body class="{name} {format_name}"><main class="canvas"><div class="brand"><b>✳</b> Cannabis<span>.</span></div><div class="art"><img src="{html.escape(image, quote=True)}" alt="Emerald crystal artwork"><div class="caption">CANNABIS / BRILLIANT BY NATURE</div></div><div class="copy"><div class="label">{item['label']}</div><h1>{item['title']}</h1><p class="description">{item['copy']}</p><div class="action">{item['action']} <span>↗</span></div></div><div class="footer"><span class="status"><span class="dot"></span> Preparing mainnet launch</span><span>peter-ch.github.io/Cannabis</span></div></main></body></html>'''
+    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cannabis campaign</title><style>{CSS}</style></head><body class="{name} {format_name}"><main class="canvas"><div class="brand"><b>✳</b> Cannabis<span>.</span></div><div class="art"><img src="{html.escape(image, quote=True)}" alt="Emerald crystal artwork"><div class="caption">CANNABIS / BRILLIANT BY NATURE</div></div><div class="copy"><div class="label">{item['label']}</div><h1>{item['title']}</h1><p class="description">{item['copy']}</p><div class="action">{item['action']} <span>↗</span></div></div><div class="footer"><span class="status"><span class="dot"></span> Preparing mainnet launch</span><span>cannabis-coin.online</span></div></main></body></html>'''
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -90,6 +91,14 @@ def main():
         finally:
             browser.close()
     (BUILD/'exports.json').write_text(json.dumps(records, indent=2)+'\n', encoding='utf-8')
+    files = [OUT / f'{name}-{format_name}.png' for name in CAMPAIGNS for format_name in FORMATS]
+    if all(file.exists() for file in files):
+        with zipfile.ZipFile(OUT / 'cannabis-graphics.zip', 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            for file in files:
+                info = zipfile.ZipInfo(file.name, (2026, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o644 << 16
+                archive.writestr(info, file.read_bytes())
 
 if __name__ == '__main__':
     main()

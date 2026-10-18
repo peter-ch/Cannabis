@@ -6,13 +6,13 @@ Spoken naming: every voiceover must call the project "Cannabis coin". Visual nam
 
 ## Project identity
 
-Cannabis. A little wild. A lot of purpose.
+Cannabis. Grow like nature. Power what’s next.
 
 Candidate handle: CannabisCommunity (availability not checked). Declare project/founder affiliation. The currency is named exactly Cannabis. Use one truthful project identity and identify sponsored content.
 
 ## Short announcement
 
-Cannabis. A little wild. A lot of purpose. 🌱 An open community building a currency for useful computing. Bring your ideas, explore the code and help shape what comes next. Preparing mainnet launch.
+Cannabis. Grow like nature. Power what’s next. 🌱 An open community building a currency for useful computing. Bring your ideas, explore the code and help shape what comes next. Preparing mainnet launch.
 
 [Explore Cannabis](https://cannabis-coin.online/) · [Open source](https://github.com/peter-ch/Cannabis)
 
@@ -50,7 +50,7 @@ Bring a good idea, a clear bug report or a creative contribution. Let’s grow s
 
 Use the [sharing library](https://cannabis-coin.online/share.html) for nine composed graphics: three messages, each in landscape, square and portrait. The website and films use the same emerald, crystal and lime identity. Keep launch status intact and link to the project.
 
-- Purpose: “A little wild. A lot of purpose.” Invite people to explore the wider idea.
+- Purpose: “Grow like nature. Power what’s next.” Invite people to explore the wider idea.
 - Computing: “Grow something useful.” Invite builders to read the code and architecture.
 - Community: “Bring your curiosity. Leave a mark.” Invite thoughtful contributions and conversation.
 

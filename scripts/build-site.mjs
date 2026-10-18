@@ -76,12 +76,12 @@ for (const name of pages) {
     return `${attribute}="${value}"`;
   });
   html = html.replace(/\bsrcset="([^"]*)"/g, (_, value) => `srcset="${value.split(',').map(item => item.trim().replace(/^\/(?!\/)/, prefix)).join(', ')}"`);
-  const canonical = siteOrigin + '/' + (name === 'index.html' ? '' : name);
+  const canonical = siteOrigin + '/' + (['index.html', 'collection.html'].includes(name) ? '' : name);
   html = html.replace('</head>', `<link rel="canonical" href="${canonical}"></head>`);
   fs.writeFileSync(path.join(out, name), html);
 }
 fs.writeFileSync(path.join(out, 'robots.txt'), `User-agent: *\nAllow: /\nSitemap: ${siteOrigin}/sitemap.xml\n`);
 fs.writeFileSync(path.join(out, 'sitemap.xml'), '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
-  pages.map(name => `  <url><loc>${siteOrigin}/${name === 'index.html' ? '' : name}</loc></url>`).join('\n') + '\n</urlset>\n');
+  pages.filter(name => name !== 'collection.html').map(name => `  <url><loc>${siteOrigin}/${name === 'index.html' ? '' : name}</loc></url>`).join('\n') + '\n</urlset>\n');
 fs.writeFileSync(path.join(out, '.nojekyll'), '');
 console.log('Built public project website in dist-site/');

@@ -26,7 +26,6 @@ const assignments = {
   'launch-review':'knowledge-prism', 'risks':'moonlit-geode', 'README':'compute-engine'
 };
 export function artName(topic) { return assignments[topic.split('/').pop().replace(/\.md$/, '')] ?? 'knowledge-prism'; }
-export const editorialCollection = Object.keys(descriptions);
 export function editorialArt(name, className = 'editorial-art', loading = 'lazy') {
   const modern = Object.hasOwn(descriptions, name), src = `/assets/${modern ? 'editorial/' : ''}${name}.webp`;
   const alt = descriptions[name] ?? 'Emerald crystal sculpture with natural light and prismatic reflections';

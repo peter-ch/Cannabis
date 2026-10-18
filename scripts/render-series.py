@@ -99,7 +99,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def event(a,b,style,text):return f'Dialogue: 0,{ass_time(a)},{ass_time(b)},{style},,0,0,0,,{text}\n'
     ass+=event(0,duration,'Label','CANNABIS / '+film['id'][:2])
     ass+=event(0,duration,'Title','\\N'.join(textwrap.wrap(display_text(film['title']),width=24 if portrait else 46)))
-    ass+=event(0,duration,'Footer','peter-ch.github.io/Cannabis\\NPreparing mainnet launch · A little wild. A lot of purpose.')
+    ass+=event(0,duration,'Footer','cannabis-coin.online\\NPreparing mainnet launch · Grow like nature. Power what’s next.')
     for s in chunks:ass+=event(s['start'],s['end'],'Caption','\\N'.join(textwrap.wrap(s['text'],width=34 if portrait else 76)))
     subtitle=BUILD/f"{film['id']}-{fmt}.ass";subtitle.write_text(ass,encoding='utf-8-sig', newline='\n')
     args=['ffmpeg','-y','-hide_banner','-loglevel','warning','-filter_complex_threads','2']

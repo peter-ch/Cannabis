@@ -1,12 +1,12 @@
 # Cannabis
 
-**A little wild. A lot of purpose.**
+**Grow like nature. Power what’s next.**
 
 Cannabis is a production cryptocurrency project built around efficient community participation and privacy-preserving eligibility. **Status: preparing mainnet launch.** [Explore Cannabis](https://cannabis-coin.online/).
 
 **Money for useful computing.** The economic objective is real service demand: people pay in Cannabis for accepted computing work, while providers publish capacity and enforceable redemption terms. Read the [compute economy and backing requirements](docs/compute-economy.md). Service backing becomes operational only when defined provider commitments can actually be redeemed and fulfilled.
 
-![Cannabis — A little wild. A lot of purpose.](web/assets/campaign/purpose-landscape.png)
+![Cannabis — Grow like nature. Power what’s next.](web/assets/campaign/purpose-landscape.png)
 
 The contracts define a fixed supply cap and one-time verified-person community claims with a common public opening. Read the [allocation, vesting and service terms](docs/tokenomics.md) before participating.
 

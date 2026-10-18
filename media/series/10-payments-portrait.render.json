@@ -1,5 +1,5 @@
 {
-  "signature": "e62b69e3f483752500d11bcc09356d7123bbef560f86a6cbef3f2544b3523ed2",
+  "signature": "4bec53dea7b1813f7c9e8477e67d6f700f9556df0731d145fd1f99a112a8344c",
   "scriptSHA256": "bbb0bd1cffdec65fa988c51955c5fa59cc711aaa08fb57e33ad33490a0ff0f1a",
   "voiceSHA256": "be0c17dd208990e8782856a3106e476eddc07dbe0eaafd7e9fb7beb80cdaf760",
   "sources": [
@@ -25,8 +25,8 @@
   "videoCodec": "h264",
   "audioCodec": "aac",
   "audioStreams": 1,
-  "bytes": 15055237,
-  "sha256": "bd30960d68424ea48067d5a39b23f9a8fc750dd6a630bfb2c9cc67bf14ff5e7b",
+  "bytes": 15052343,
+  "sha256": "7b30233c5660a12dc5c879b9f7ebfd554ab5e0b266f93537478b9d16e61abdc3",
   "captionTiming": "proportional within narration segments",
   "captionsSHA256": {
     "srt": "fdc602ae8050c387cb012aed98aa80b641ed5e4c020755079e9e507102063dcd",
