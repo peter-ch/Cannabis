@@ -20,6 +20,8 @@
     "build:site": "node scripts/build-site.mjs",
     "prepare:launch": "node scripts/prepare-launch.mjs",
     "quote:launch": "node scripts/quote-launch.mjs",
+    "participant": "node scripts/participant.mjs",
+    "exercise:local": "node scripts/exercise-activity.mjs",
     "check:dependencies": "node scripts/check-dependencies.mjs"
   },
   "license": "MIT",

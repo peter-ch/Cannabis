@@ -37,6 +37,7 @@ The suite checks real zero-knowledge proofs, replay and recipient-substitution a
 
 ## Project material
 
+- [Windows guided participant setup](docs/windows-setup.md)
 - [Token rules and architecture](docs/technical-paper.md)
 - [Privacy and security design](docs/privacy-security.md)
 - [Efficient-network approach](docs/energy.md)

@@ -73,10 +73,12 @@ export function createEncryptedIdentity({ age, recipient, vault }) {
     return { schema: 'cannabis.claim-identity.public.v1', commitment, ciphertextSHA256: sha256(ciphertext), ciphertextBytes: ciphertext.length, enrolled: false };
   } finally { plaintext.fill(0); secret.fill(0); wipeIdentity(identity); }
 }
-async function withIdentity({ age, vault, identityFile, commitment }, operation) {
+async function withIdentity({ age, vault, identityFile, identityKey, commitment }, operation) {
   decimal(commitment);
   const ciphertext = readBounded(vault, 16384);
-  const ownerKey = readBounded(identityFile, 4096);
+  const suppliedKey = identityKey;
+  if (suppliedKey !== undefined && (identityFile !== undefined || !Buffer.isBuffer(suppliedKey) || suppliedKey.length < 1 || suppliedKey.length > 4096)) throw Error('Use one bounded owner identity source');
+  const ownerKey = suppliedKey === undefined ? readBounded(identityFile, 4096) : Buffer.from(suppliedKey);
   let plaintext, identity, staging;
   try {
     const lines = ownerKey.toString('ascii').split(/\r?\n/).filter(line => line && !line.startsWith('#'));
@@ -127,7 +129,7 @@ function pinnedArtifact(spec, maxBytes) {
   return data; // Prove from these checked bytes, without reopening an attacker-replaceable path.
 }
 export async function generateClaimProof(options) {
-  const { snapshot, context, artifacts } = structuredClone(options);
+  const { snapshot, context, artifacts } = structuredClone({ snapshot: options.snapshot, context: options.context, artifacts: options.artifacts });
   const recipient = address(options.recipient), group = validateMembershipSnapshot(snapshot, context);
   exact(artifacts, ['depth', 'wasm', 'zkey']);
   if (artifacts.depth !== group.depth || artifacts.depth < 7 || artifacts.depth > 20) throw Error('Proving artifacts must match the complete group depth');

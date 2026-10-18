@@ -74,6 +74,18 @@ test('wrong expected identity, wrong owner key and modified ciphertext fail reco
   const bad = path.join(directory, 'bad.key'); fs.writeFileSync(bad, 'AGE-PLUGIN-SHOULD-NOT-EXECUTE\n');
   await assert.rejects(inspectEncryptedIdentity({ ...config(), identityFile: bad }), /native age/);
 });
+
+test('in-memory owner key recovers without a plaintext key file and refuses ambiguous sources', async () => {
+  const identityKey = fs.readFileSync(identityFile), retained = Buffer.from(identityKey);
+  try {
+    const options = { ...config(), identityFile: undefined, identityKey };
+    assert.equal((await inspectEncryptedIdentity(options)).commitment, backup.commitment);
+    assert.deepEqual(identityKey, retained, 'The caller retains ownership of its input buffer');
+    await assert.rejects(inspectEncryptedIdentity({ ...config(), identityKey }), /one bounded owner identity source/);
+    await assert.rejects(inspectEncryptedIdentity({ ...options, identityKey: identityKey.toString('ascii') }), /one bounded owner identity source/);
+    await assert.rejects(inspectEncryptedIdentity({ ...options, identityKey: Buffer.alloc(4097) }), /one bounded owner identity source/);
+  } finally { identityKey.fill(0); retained.fill(0); }
+});
 test('complete membership, canonical integers and deployment context are enforced', () => {
   assert.equal(validateMembershipSnapshot(snapshot, context).size, 128);
   assert.throws(() => validateMembershipSnapshot({ ...snapshot, chainId: '1' }, context), /context mismatch/);
