@@ -20,8 +20,24 @@ def sha(path):
 
 
 def checked(path, record):
-    if path.stat().st_size != record['bytes'] or sha(path) != record['sha256']:
-        raise ValueError('A recorded boot artifact changed')
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    with os.fdopen(os.open(path, flags), 'rb') as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError('Require regular boot artifacts')
+        if info.st_size != record['bytes']:
+            raise ValueError('A recorded boot artifact changed')
+        digest, total = hashlib.sha256(), 0
+        remaining = record['bytes'] + 1
+        while remaining:
+            chunk = source.read(min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            digest.update(chunk)
+            total += len(chunk)
+            remaining -= len(chunk)
+        if total != record['bytes'] or digest.hexdigest() != record['sha256']:
+            raise ValueError('A recorded boot artifact changed')
 
 
 def snapshot(path, destination, record):

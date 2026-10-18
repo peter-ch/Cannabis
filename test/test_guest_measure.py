@@ -57,6 +57,8 @@ class MeasurementInputTests(unittest.TestCase):
         link = self.directory / 'indirect'
         link.symlink_to(self.original)
         with self.assertRaises(OSError):
+            measure.checked(link, self.record)
+        with self.assertRaises(OSError):
             measure.snapshot(link, self.output, self.record)
         self.assertFalse(self.output.exists())
 
@@ -64,6 +66,8 @@ class MeasurementInputTests(unittest.TestCase):
     def test_fifo_is_rejected_without_blocking(self):
         fifo = self.directory / 'fifo'
         os.mkfifo(fifo)
+        with self.assertRaisesRegex(ValueError, 'regular boot artifacts'):
+            measure.checked(fifo, self.record)
         with self.assertRaisesRegex(ValueError, 'regular boot artifacts'):
             measure.snapshot(fifo, self.output, self.record)
         self.assertFalse(self.output.exists())
