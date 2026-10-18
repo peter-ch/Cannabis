@@ -150,7 +150,7 @@ def main():
     for source in sorted((ROOT / 'compute').iterdir()):
         if source.is_file() and source.suffix in ['.mjs', '.py', '.json']:
             copy_text(source, project / 'compute' / source.name)
-    for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs']:
+    for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'check-guest-guardian.py', 'compute-guest-guardian.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in lock['guestServices']:
         shutil.copyfile(services / name, tree / 'usr/local/bin' / name)

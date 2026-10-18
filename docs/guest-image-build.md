@@ -69,8 +69,8 @@ Expiry and cancellation take precedence even when the group is already empty;
 late observation cannot establish that the job finished on time.
 Cleanup uses the kernel's tree-wide kill operation, checks that no processes remain,
 then removes only the group it created. A new process session does not escape that
-cleanup. Failure to prove cleanup is an error requiring guest retirement. A separate
-watchdog must still dispose of the guest if the supervisor itself crashes. These
+cleanup. Failure to prove cleanup is an error requiring guest retirement. The
+independent guardian below handles supervisor death and stopped supervisors. These
 semantics follow the [Linux cgroup-v2 interface](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html).
 
 The boot check executes bounded owned programs to verify CPU throttling, whole-group
@@ -92,6 +92,55 @@ need their own protected budgets. Kernel counters are operational evidence, not
 trusted billing or proof of useful work. Admission must bind the actual loaded
 adapter, all resource limits, devices, network peers and funded assignment before
 any customer program or content key is exposed to it.
+
+## Independent process guardian
+
+`compute/guest_guardian.py` adds a separate trusted process to enforce cleanup even
+when the supervisor exits, receives SIGKILL, or stops responding. Arm
+`GuardedResources(parent, limits)` before key release or starting a runtime, retain
+it throughout the job, and call `assert_alive()` before admission. It does not
+execute a customer program or establish confidential hardware.
+
+While work runs, monitor `guard.fileno()` alongside the runtime's process handle
+in the supervisor's selector. Readability means call `wait()` to collect a terminal
+result or handle unexpected guardian failure. Once the runtime has exited, request
+`wait(action='finish')`. Do not leave a guardian failure unobserved while waiting
+indefinitely for the runtime. The control socket is non-inheritable and must never
+be passed to customer processes.
+
+The owner opens a Linux process handle before spawning the guardian. Both retain
+descriptors for the same newly created resource group. Startup data is queued on
+a private bounded socket before spawn, and the owner waits for an armed response.
+Only descriptor numbers enter the helper command line; the helper inherits no
+customer file handles, environment, terminal or log output. It runs outside the
+workload resource group. The guardian watches the process handle rather than a
+reusable PID or socket EOF alone, so a leaked copy of the owner's socket cannot
+conceal owner death. This uses [Python's Linux pidfd interface](https://docs.python.org/3/library/os.html#os.pidfd_open).
+
+The guardian independently enforces the retained monotonic deadline, kills the
+complete process tree, verifies it empty and removes the original group. An early
+`wait(action='finish')` while work remains terminates the job and reports
+`not-empty`; it never disables protection for a live job. Late completion remains
+a deadline failure. `wait(action='cancel')` terminates and cleans up. The owner
+checks actual kernel removal before accepting a terminal response. If the guardian
+unexpectedly dies, the owner uses its retained group descriptors for cleanup and
+raises a fatal error instead of restarting protection around an uncertain job.
+
+Ten kernel checks cover normal finish, cancellation, refused busy finish, owner
+SIGKILL, owner exit without finalizers, a stopped owner's deadline, a deliberately
+leaked control socket, guardian failure, independent expiry and late finish. The
+same checks run in CI and in the pinned boot image:
+
+```sh
+sudo python3 -I -B scripts/check-guest-guardian.py
+```
+
+This guardian contains workload processes; it does not erase staging data, retire
+keys, or power off a VM. The deployment controller must still dispose of the guest
+on fatal failure. Simultaneous loss of owner and guardian, kernel failure and a
+privileged attacker inside the guest require that outer lifecycle boundary.
+Filesystem, network and device isolation must keep workloads away from both
+control processes and their handles before customer execution is admitted.
 
 ## Connect these artifacts to measured launch
 

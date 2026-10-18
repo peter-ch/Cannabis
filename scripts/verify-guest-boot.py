@@ -77,6 +77,14 @@ def main():
             or checks['lateObservationRejected']['reason'] != 'deadline'
             or checks['normalExit']['reason'] != 'empty' or any(checks[name] is not True for name in refusals)):
         raise ValueError('Guest kernel did not enforce its resource limits')
+    guardian = result.get('guardianChecks', {})
+    guardian_cases = {'normalFinish', 'cancelTree', 'busyFinishRefused', 'ownerSIGKILL', 'stoppedOwnerDeadline',
+                      'leakedSocketOwnerDeath', 'ownerExitWithoutFinalizer', 'guardianFailureRefusedAndCleaned',
+                      'independentDeadline', 'lateFinishRefused'}
+    if (guardian.get('schema') != 'cannabis.guest-guardian-check.v1' or guardian.get('kernel') != report['kernelRelease']
+            or guardian.get('customerCodeExecuted') is not False or guardian.get('hardwareValidated') is not False
+            or guardian.get('checks') != {name: True for name in guardian_cases}):
+        raise ValueError('Independent guest cleanup checks did not pass')
     if result['schema'] != 'cannabis.guest-boot-check.v1' or result['kernel'] != report['kernelRelease'] or result['imageFilesVerified'] != report['embeddedFiles'] or result['tee'] != 'sample' or result['profileChecks'] != [{'profile':p, 'unsupportedHardwareRejected':True} for p in ['snp','tdx']] or any(result[k] is not False for k in ['requestedEvidence','acceptedJobKeys','launchedCustomerWork','hardwareValidated']):
         raise ValueError('Unexpected guest result')
     final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}

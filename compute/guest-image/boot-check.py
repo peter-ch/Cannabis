@@ -81,7 +81,13 @@ def main():
             print('CANNABIS_RESOURCE_FAILURE ' + resources.stderr.decode(errors='replace')[-4096:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Kernel resource acceptance failed')
         resource_checks = json.loads(resources.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        PHASE = 'guardian_cleanup'
+        guardian = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-guardian.py'], capture_output=True, timeout=180)
+        if guardian.returncode:
+            print('CANNABIS_GUARDIAN_FAILURE ' + guardian.stderr.decode(errors='replace')[-4096:].replace('\n', ' | '), flush=True)
+            raise RuntimeError('Guardian acceptance failed')
+        guardian_checks = json.loads(guardian.stdout)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:

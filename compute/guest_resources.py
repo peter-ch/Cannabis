@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import ctypes
+import errno
 import os
 from pathlib import Path
 import sys
@@ -231,6 +232,14 @@ class JobResourceGroup:
         """
         if self._parent is None:
             return dict(self._report or {})
+        if self._fd is not None and self._removed():
+            # A trusted guardian can remove our exact group first. kernfs
+            # unlinks only an empty group; never act on a replacement by name.
+            os.close(self._fd)
+            os.close(self._parent)
+            self._fd = self._parent = None
+            self._report = {'removed': True, 'populated': False, 'guardianRemoved': True}
+            return dict(self._report)
         if self._fd is not None:
             try:
                 _write(self._fd, 'cgroup.kill', '1')
@@ -247,6 +256,11 @@ class JobResourceGroup:
                 raise ResourceCleanupError('Guest process tree cleanup failed') from error
         if self._created:
             try:
+                entry = os.stat(self._name, dir_fd=self._parent, follow_symlinks=False)
+                if self._fd is not None:
+                    opened = os.fstat(self._fd)
+                    if (entry.st_dev, entry.st_ino) != (opened.st_dev, opened.st_ino):
+                        raise ResourceCleanupError('Guest resource group identity changed')
                 os.rmdir(self._name, dir_fd=self._parent)
             except OSError as error:
                 raise ResourceCleanupError('Guest resource group removal failed') from error
@@ -256,6 +270,16 @@ class JobResourceGroup:
         self._fd = self._parent = None
         self._report = {**(self._report or {}), 'populated': False, 'removed': True}
         return dict(self._report)
+
+    def _removed(self):
+        """Verify removal of this retained kernel object, not just its name."""
+        try:
+            _read(self._fd, 'cgroup.events')
+        except OSError as error:
+            if error.errno not in [errno.ENOENT, errno.ENODEV]:
+                raise
+            return os.readlink(f'/proc/self/fd/{self._fd}').endswith('/' + self._name + ' (deleted)')
+        return False
 
     def __enter__(self):
         return self
