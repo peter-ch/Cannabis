@@ -43,6 +43,13 @@ def main():
         cached = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-python.py'],
             capture_output=True, timeout=30, check=True)
         python_checks = json.loads(cached.stdout)
+        phase('embedded_runtime_preparation')
+        runtime = subprocess.run(['/usr/bin/python3','-I','-B','/opt/cannabis/scripts/check-guest-runtime.py'],
+            capture_output=True, timeout=180)
+        if runtime.returncode:
+            print('CANNABIS_RUNTIME_FAILURE '+runtime.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
+            raise RuntimeError('Embedded runtime preparation failed')
+        runtime_checks = json.loads(runtime.stdout)
         phase('configured_entry_closed')
         # No launch request, configured runtime or customer intake is staged in
         # the component boot. The fixed entry must import and fail closed.
@@ -145,7 +152,7 @@ def main():
             print('CANNABIS_LAUNCHER_FAILURE '+launcher.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
             raise RuntimeError('Outer launch transport checks failed')
         launcher_checks=json.loads(launcher.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'runtimeChecks':runtime_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:

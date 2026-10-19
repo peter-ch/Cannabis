@@ -58,6 +58,15 @@ def main():
     result = json.loads(lines[0])
     if result.get('configuredEntryClosed') is not True or result.get('outerLauncherClosed') is not True:
         raise ValueError('Fixed configured entry did not refuse the unprepared boot')
+    runtime = result.get('runtimeChecks', {})
+    runtime_cases = {'embeddedInventoryMatches', 'changedContentsRefused', 'unsafePermissionsRefused',
+        'hardlinksRefused', 'symlinkDestinationRefused', 'occupiedDestinationRefused', 'ordinaryStorageRefused',
+        'rootWriteRefused', 'mountDowngradeRefused', 'nativeProgramExecuted', 'checkedMountRetirement'}
+    if (runtime.get('schema') != 'cannabis.guest-runtime-check.v1' or runtime.get('kernel') != report['kernelRelease']
+            or runtime.get('runtime') != report.get('nativeRuntime')
+            or runtime.get('checks') != {name: True for name in runtime_cases}
+            or any(runtime.get(k) is not False for k in ['customerCodeExecuted','hardwareValidated','realPaidJob'])):
+        raise ValueError('Embedded runtime preparation checks did not pass')
     if result.get('pythonChecks') != {'schema': 'cannabis.guest-python-check.v1',
             'cachedControlImports': True, 'changedSourceInvalidatesCache': True,
             'assertionsPreserved': True, 'customerKeysUsed': False, 'hardwareValidated': False}:

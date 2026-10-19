@@ -5,6 +5,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import gzip
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -162,7 +163,7 @@ def main():
     for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'check-guest-guardian.py', 'compute-guest-guardian.py', 'check-guest-sandbox.py', 'compute-guest-sandbox.py', 'check-guest-native.py', 'compute-guest-helper.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs', 'compute-guest-control.py', 'check-guest-job.py', 'compute-guest-native-pipe.py', 'check-guest-execution.py', 'compute-guest-admission.py', 'compute-guest-session.mjs']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     copy_text(ROOT / 'scripts/check-guest-python.py', project / 'scripts/check-guest-python.py')
-    for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py']:
+    for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py','check-guest-runtime.py']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in lock['guestServices']:
         shutil.copyfile(services / name, tree / 'usr/local/bin' / name)
@@ -190,6 +191,12 @@ def main():
     bytecode = json.loads(compiled.stdout)
     bytecode['compilerScriptSHA256'] = digest(compiler_script)
     (project / 'python-bytecode.json').write_text(json.dumps(bytecode, separators=(',', ':')) + '\n')
+    recipe = ROOT / 'scripts/build-guest-runtime.py'
+    spec = importlib.util.spec_from_file_location('guest_runtime_recipe', recipe)
+    runtime_builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime_builder)
+    runtime = runtime_builder.build_runtime(tree, project / 'runtime')
+    (project / 'runtime.json').write_text(json.dumps(runtime, separators=(',', ':')) + '\n')
     # Record all embedded regular-file contents. This is a build manifest, not
     # remote attestation; firmware must cover the kernel/initrd/cmdline chain.
     manifest = [{'path':'/' + p.relative_to(tree).as_posix(), 'sha256':digest(p)} for p in sorted(tree.rglob('*')) if p.is_file() and not p.is_symlink()]
@@ -199,6 +206,8 @@ def main():
     write_initramfs(tree, out / 'initramfs.cpio.gz', lock['sourceDateEpoch'])
     report = {'schema':'cannabis.guest-image-build.v1', 'kernelRelease':lock['kernelRelease'], 'inputsSHA256':digest(INPUTS / 'inputs.json'), 'builderSHA256':digest(Path(__file__)), 'embeddedFiles':len(manifest), 'outputs':{name:{'sha256':digest(out/name), 'bytes':(out/name).stat().st_size} for name in ['vmlinuz', 'initramfs.cpio.gz', 'cmdline']}, 'bootPurpose':'component acceptance; powers off without workload intake', 'hardwareValidated':False, 'executionAuthorized':False, 'independentReproduction':False}
     report['pythonBytecode'] = bytecode
+    report['nativeRuntime'] = runtime
+    report['runtimeRecipeSHA256'] = digest(recipe)
     (out / 'build.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report))
 

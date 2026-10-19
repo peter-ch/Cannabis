@@ -29,6 +29,7 @@ from compute.job_keys import _new_identity, pack_job
 from compute.guest_job import GuestJobScope
 from compute.guest_launch_snapshot import LaunchSnapshot
 from compute.guest_launcher import authorize_launch, relay_guest
+from compute.guest_runtime import FrozenRuntime
 
 
 def public_launch_frame(fd):
@@ -53,6 +54,7 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--tools',type=Path,help='Optional directory of already verified fixture tools')
     parser.add_argument('--node-path',type=Path,help='Optional directory of verified native Node dependencies')
+    parser.add_argument('--runtime',type=Path,help='Optional built image runtime to copy into owned protected memory')
     args=parser.parse_args()
     spec=importlib.util.spec_from_file_location('owned_execution_fixture',ROOT/'scripts/check-guest-execution.py')
     fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
@@ -70,7 +72,7 @@ def main():
         for name in ['node','age','age-keygen']:
             source=args.tools/name if args.tools else Path(shutil.which(name) or '/usr/local/bin/'+name)
             shutil.copyfile(source,tools/name);(tools/name).chmod(0o755)
-        profile,_,_,_,workload=fixture.fixture(base,tools)
+        profile,_,_,_,workload=fixture.fixture(base,tools,runtime_source=args.runtime)
         owner_secret,owner_public=_new_identity(str(tools/'age'))
         workload['resultRecipient']=owner_public
         identity=base/'owned-requester.key'
@@ -138,11 +140,15 @@ def main():
             else:raise AssertionError('Changed launch was accepted before allocation')
         assert not any(p.is_dir() for p in parent.iterdir())
         with LaunchSnapshot(*snapshot_args(public['signedConfiguration'])) as snapshot:
-            admitted,deadline,transport=authorize_launch(str(tools/'node'),fixture.sha(tools/'node'),str(verifier),fixture.sha(verifier),snapshot.fd)
+            admitted,deadline,transport,admitted_source=authorize_launch(str(tools/'node'),fixture.sha(tools/'node'),str(verifier),fixture.sha(verifier),snapshot.fd)
             assert admitted.value==profile
-            scope=GuestJobScope(parent,admitted.total,admitted.control,deadline=deadline)
-            proc=scope.start(str(tools/'node'),fixture.sha(tools/'node'),str(guest_controller),fixture.sha(guest_controller),launch_fd=snapshot.fd)
-            assert relay_guest(scope,proc,to_guest,from_guest,max_ciphertext_bytes=transport['maxCiphertextBytes'])['reason']=='finished'
+            assert admitted_source==request['execution']['source']
+            with FrozenRuntime(admitted_source['rootfs'],admitted.value['runtime']['digestSHA256']) as prepared:
+                deadline.check()
+                prepared.verify()
+                scope=GuestJobScope(parent,admitted.total,admitted.control,deadline=deadline)
+                proc=scope.start(str(tools/'node'),fixture.sha(tools/'node'),str(guest_controller),fixture.sha(guest_controller),launch_fd=snapshot.fd)
+                assert relay_guest(scope,proc,to_guest,from_guest,max_ciphertext_bytes=transport['maxCiphertextBytes'])['reason']=='finished'
         raw,_=requester_proc.communicate(timeout=30)
         code=requester_proc.returncode
         assert code==0, f'Owned funded controller exited {code}'
@@ -152,7 +158,10 @@ def main():
         assert owner_secret.strip() not in raw
         result['wholeTreeCleanup']=True
         result['checks'].update(authorizationBeforeAllocation=True,changedLaunchRefusedBeforeAllocation=True,
-            sealedLaunchReverifiedInControl=True,guardianMonitoredEncryptedRelay=True)
+            sealedLaunchReverifiedInControl=True,guardianMonitoredEncryptedRelay=True,
+            authorizedRuntimePreparedBeforeControl=True,runtimeMountRetired=True)
+        result['runtimeSource']='built image' if args.runtime else 'owned fixture'
+        result['runtimeSHA256']=profile['runtime']['digestSHA256']
         result['kernel']=os.uname().release
         print(json.dumps(result))
     finally:

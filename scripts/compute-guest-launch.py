@@ -14,6 +14,7 @@ from compute.guest_job import GuestJobScope
 from compute.guest_launcher import authorize_launch, relay_guest
 from compute.guest_launch_snapshot import LaunchSnapshot, read_public_file
 from compute.guest_execution import _unique
+from compute.guest_runtime import FrozenRuntime, image_runtime
 
 ROOT = Path('/opt/cannabis')
 NODE = '/usr/local/bin/node'
@@ -38,10 +39,17 @@ def main():
     inputs = Path('/run/cannabis-launch')
     with LaunchSnapshot(read_public_file(inputs/'configuration.json',256*1024),
             read_public_file(inputs/'initialization.json',65536),read_public_file(inputs/'request.json',16*1024**2)) as snapshot:
-        profile, deadline, transport = authorize_launch(NODE,pins[NODE],VERIFIER,pins[VERIFIER],snapshot.fd)
-        with GuestJobScope('/sys/fs/cgroup',profile.total,profile.control,deadline=deadline) as scope:
-            proc = scope.start(NODE,pins[NODE],ENTRY,pins[ENTRY],launch_fd=snapshot.fd)
-            relay_guest(scope,proc,sys.stdin.fileno(),sys.stdout.fileno(),max_ciphertext_bytes=transport['maxCiphertextBytes'])
+        profile, deadline, transport, source = authorize_launch(NODE,pins[NODE],VERIFIER,pins[VERIFIER],snapshot.fd)
+        runtime = image_runtime(ROOT/'runtime.json')
+        if source['rootfs'] != runtime['path'] or profile.value['runtime'] != runtime['runtime']:
+            raise ValueError('The authorized runtime is not provided by this image')
+        with FrozenRuntime(runtime['path'],runtime['runtime']['digestSHA256'],
+                max_bytes=runtime['fileBytes'],max_entries=runtime['inventoryEntries']) as prepared:
+            deadline.check()
+            prepared.verify()
+            with GuestJobScope('/sys/fs/cgroup',profile.total,profile.control,deadline=deadline) as scope:
+                proc = scope.start(NODE,pins[NODE],ENTRY,pins[ENTRY],launch_fd=snapshot.fd)
+                relay_guest(scope,proc,sys.stdin.fileno(),sys.stdout.fileno(),max_ciphertext_bytes=transport['maxCiphertextBytes'])
 
 
 if __name__ == '__main__':

@@ -73,6 +73,7 @@ jobs:
             sudo sysctl -qw kernel.apparmor_restrict_unprivileged_userns=0
           fi
           sudo python3 -I -B scripts/check-guest-sandbox.py
+          sudo /usr/bin/python3 -I -B scripts/check-guest-runtime.py --image-root /
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-native.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-execution.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py

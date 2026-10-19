@@ -65,6 +65,35 @@ The JavaScript runtime carries ethers and jose with locked transitive dependenci
 
 ## Run the actual VM boot check
 
+The builder also assembles `/opt/cannabis/runtime` from the pinned guest Python
+interpreter, standard library and shared libraries. The recipe does not inspect
+the builder's installed dependencies or execute submitted software. It copies
+image-contained files, preserves executable modes and source-validated caches,
+and supplies empty sandbox mount destinations. Control-plane code, authorities,
+attestation services and customer data are outside this runtime tree. Other
+software environments require additional reviewed recipes or runtime adapters.
+
+`/opt/cannabis/runtime.json` records the native inventory digest, regular-file
+bytes and entry count; `build.json` records that descriptor and the recipe hash.
+These byte counts describe the files, not a whole-VM memory reservation. The
+runtime pages, image, kernel and services still need independently budgeted
+capacity outside the job subtree.
+
+After public signature verification, the fixed outer launcher requires the
+signed runtime path and inventory to match this embedded descriptor. It verifies
+root ownership, permissions, protected `noswap` storage, content and empty mount
+destinations, then creates and checks a read-only `nosuid,nodev` bind mount in its
+private namespace before starting the job controller. Runtime inspection inside
+the contained session remains required before key creation. Failure to unmount
+after the job is fatal and requires disposal of the whole VM.
+
+The owned kernel checks reject changed contents, writable permissions, hard
+links, symlink or occupied mount destinations and storage outside protected
+memory. They also verify that root cannot write through the prepared mount, a
+mount-permission downgrade is detected, an isolated program loads the embedded
+interpreter and libraries, and the mount retires after execution. These checks do
+not establish hardware confidentiality or solve whole-VM rollback and disposal.
+
 Install `qemu-system-x86_64`, then run:
 
 ```sh
@@ -73,7 +102,7 @@ python3 scripts/verify-guest-boot.py \
   --output /work/cannabis-image-first-boot
 ```
 
-This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default boot-check deadline is thirty minutes, allowing CPU emulation of the expanded 80-case suite; individual component, workload and cleanup deadlines remain enforced separately. Failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private. The owned entry point emits bounded phase names so slow or stalled checks can be distinguished without customer content.
+This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default boot-check deadline is thirty minutes, allowing CPU emulation of the expanded 91-case suite; individual component, workload and cleanup deadlines remain enforced separately. Failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private. The owned entry point emits bounded phase names so slow or stalled checks can be distinguished without customer content.
 
 Inside the VM, the entry point mounts ephemeral runtime storage, disables core dumps and further kernel-module loading, checks embedded files, exercises the Python extensions and age executable, and starts the actual attestation agent and REST bridge on loopback. Both production CPU probes must reject the unsupported sample profile with their exact structured refusal. Import errors, missing libraries and unexpected success fail the check. No hardware evidence, channel key, job key or customer computation is requested. The services are terminated and the VM powers off.
 

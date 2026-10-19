@@ -52,7 +52,7 @@ export function readRetainedLaunch(authorities) {
 export function publicLaunchAdmission(launch) {
   const service=nativeServiceCommitment(launch.execution);
   return {schema:'cannabis.guest-launch-admission.v1',profile:launch.execution.profile,
-    serviceSHA256:service.serviceSHA256,units:service.units,interval:launch.interval,transport:launch.transport};
+    serviceSHA256:service.serviceSHA256,units:service.units,interval:launch.interval,transport:launch.transport,source:launch.execution.source};
 }
 export function validateLaunchAuthorities(input) {
   const a=structuredClone(input);

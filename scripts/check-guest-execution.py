@@ -55,10 +55,13 @@ try {
     return script
 
 
-def fixture(base, tools):
-    specification = importlib.util.spec_from_file_location('native_runtime_fixture', ROOT/'scripts/check-guest-sandbox.py')
-    module = importlib.util.module_from_spec(specification); specification.loader.exec_module(module)
-    module.fixture(base/'root')
+def fixture(base, tools, *, runtime_source=None):
+    if runtime_source is None:
+        specification = importlib.util.spec_from_file_location('native_runtime_fixture', ROOT/'scripts/check-guest-sandbox.py')
+        module = importlib.util.module_from_spec(specification); specification.loader.exec_module(module)
+        module.fixture(base/'root')
+    else:
+        shutil.copytree(runtime_source, base/'root', symlinks=True)
     source = base/'input'; source.mkdir(mode=0o700)
     (source/'data.txt').write_text('owned private channel input')
     (source/'program.py').write_text("print('owned private channel log'); open('/output/result.txt','w').write(open('/input/data.txt').read().upper())")

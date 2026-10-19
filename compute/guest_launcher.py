@@ -6,6 +6,7 @@ time and unconditional VM disposal. Process cleanup alone does not supply those.
 """
 import json
 import os
+from pathlib import Path
 import select
 import signal
 import subprocess
@@ -45,10 +46,14 @@ def authorize_launch(node, node_sha256, verifier, verifier_sha256, snapshot_fd):
         if proc.wait(timeout=max(0.001, started+60-time.monotonic())) != 0 or time.monotonic() >= started+60:
             raise ValueError('Public launch authorization failed')
         value = json.loads(raw, object_pairs_hook=_unique)
-        exact(value, ['schema','profile','serviceSHA256','units','interval','transport'])
+        exact(value, ['schema','profile','serviceSHA256','units','interval','transport','source'])
         if value['schema'] != 'cannabis.guest-launch-admission.v1':
             raise ValueError('Unexpected launch authorization response')
         profile = NativeServiceProfile(value['profile'], value['serviceSHA256'], value['units'])
+        exact(value['source'], ['python','rootfs','age','ciphertext','destination'])
+        if any(not isinstance(p,str) or not Path(p).is_absolute() or '..' in Path(p).parts
+                or '\\' in p or '\0' in p for p in value['source'].values()):
+            raise ValueError('Invalid authorized guest paths')
         exact(value['interval'], ['start','end'])
         exact(value['transport'], ['timeoutMs','maxCiphertextBytes'])
         transport = value['transport']
@@ -60,7 +65,7 @@ def authorize_launch(node, node_sha256, verifier, verifier_sha256, snapshot_fd):
         # the signed service interval or the launch allowance after verification.
         deadline = ExecutionDeadline(min(service.monotonic_end, started+transport['timeoutMs']/1000))
         deadline.check()
-        return profile, deadline, transport
+        return profile, deadline, transport, value['source']
     finally:
         if proc is not None:
             try: os.killpg(proc.pid, signal.SIGKILL)
