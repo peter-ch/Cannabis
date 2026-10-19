@@ -41,8 +41,10 @@ export async function relayAuthenticatedSession(guest,requester,options={}) {
     const launch=structuredClone(options.launch);
     claimPeerChannel(requester,'provider',launch.funding.consent,launch.initialization,launch.funding.proof);
     return await relayConfiguredSession(guest,requester,{...options,launch});
-  } catch(error) {guest?.fail?.();requester?.fail?.();throw error;}
-  finally {requester?.close?.();}
+  } catch(error) {guest?.fail?.();requester?.fail?.();requester?.close?.();throw error;}
+  // The owning listener closes the peer after its handler finishes guest
+  // termination. Closing it here would cancel the bound boot socket while the
+  // guest is still retiring its acknowledged result and protected resources.
 }
 export async function relayConfiguredSession(guest,requester,{launch,origin,spool,reserveResult,signal,
   fetchImpl=globalThis.fetch,wait}={}) {

@@ -216,12 +216,49 @@ handoff. The connector does not redirect, try unselected endpoints or unlock a
 wallet. A replacement route requires an explicit selection and fresh signatures.
 
 The operator's session callback can use `relayAuthenticatedSession` with its
-retained prepared launch and sealed guest channel. Closing the listener stops
+retained prepared launch and sealed guest channel. On successful result transport
+the handler retains ownership of the peer until guest termination finishes;
+closing it immediately would cancel the guest while cleanup is still running.
+Closing the listener stops
 intake and destroys connections. Its bounded shutdown report distinguishes closed
 sockets from handlers still pending cleanup; such a report cannot claim that a
 worker, VM or customer keys have been retired. Resource/VM guardians and checked
 cleanup remain required. The visible signing workflow, complete operator storage
 accounting and durable independent operation remain release requirements.
+
+### Requester challenge and operating guest handoff
+
+After `connectBookedPeer`, the requester calls `sendLaunchHandoff` with its locally
+retained configuration, initialized assignment, proof and attestation-ledger
+challenge. The provider calls `receiveLaunchHandoff` inside the listener's
+already-consumed route. Only the bounded public challenge crosses the connection;
+the provider retains its own configuration, proof and network selection. The
+challenge commitment binds the exact assignment and TLS exporter. The provider
+checks challenge policy/time/binding and fresh funding before acknowledging it.
+Cancellation, expiry or failure cannot reopen the consumed route.
+
+The returned process-local ticket may stage one socket owned by the VM launcher
+through `operator/guest-boot-channel.mjs`. `stageOperatingGuest` waits for the
+fixed READY marker, streams canonical bounded public boot files, then consumes
+exactly the STAGED marker before installing the existing encrypted-frame parser.
+Pipelined encrypted-protocol bytes remain available to that parser. The total
+transport and challenge budgets include handoff and staging; neither stage
+renews the booked service interval. Copied ticket reports, replacement launch
+objects and a second staging attempt are refused.
+
+`relayOperatingGuest` uses that retained launch/channel with the physical result
+store and encrypted relay. Successful result transport enters
+`awaiting-guest-exit`; it is not proof that a VM or its keys have been retired.
+The owning host adapter must finish checked termination before closing its
+transport or reclaiming uncertain capacity. Complete ciphertext and dispatch
+uncertainty retain their existing recovery rules.
+
+These adapters do not spawn a VM or attest hardware. The guarded integration
+uses an explicitly labeled boot-intake fixture around actual isolated guest
+processes; it is not a successful confidential operating-VM boot. The production
+host launcher, whole-operator resource accounting, checked hardware lifecycle
+and genuine paid acceptance remain required. No plaintext execution fallback or
+hardware-admission claim is supplied by READY, STAGED or the challenge receipt.
 
 ## Local encrypted result reservations and recovery
 

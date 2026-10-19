@@ -25,6 +25,7 @@ import { sendEncryptedInput } from '../../compute/input_transport.mjs';
 import { receiveSessionResultAccess } from '../../requester/session-access.mjs';
 import { receiveHostedResult } from '../../requester/hosted-result.mjs';
 import { connectBookedPeer } from '../../compute/peer_network.mjs';
+import { sendLaunchHandoff } from '../../compute/launch_handoff.mjs';
 import tlsFixture from '../../test/helpers/peer-tls-fixture.json' with {type:'json'};
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
@@ -136,6 +137,8 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
       signApproval:p=>requester.signTypedData(p.domain,p.types,p.value)});
     assert.equal(wire.report.channelAuthenticated,true);assert.equal(wire.report.configurationSHA256,configurationSHA256);
     assert.equal(wire.report.hardwareVerified,false);bootstrapWire.fail();bootstrapWire.close();
+    const handoff=await sendLaunchHandoff(wire,{signed:signedConfiguration,initialization,proof},challenge);
+    assert.equal(handoff.executionAuthorized,false);assert.equal(handoff.keyReleaseAuthorized,false);
   }
   const inputTransfer=await sendEncryptedInput(wire,{source:input.inputCiphertext,
     packageSHA256:input.descriptor.ciphertextSHA256,maxCiphertextBytes:input.execution.profile.ciphertext.inputBytes});

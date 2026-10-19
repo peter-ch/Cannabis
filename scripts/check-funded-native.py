@@ -162,7 +162,7 @@ def main():
             if args.hosted:
                 operator_source=ROOT/'test/helpers/funded_native_operator.mjs'
                 operator_controller=base/'owned-operator.mjs'
-                operator_controller.write_text(re.sub(r"from '([.][.]/[.][.]/[^']+)'",
+                operator_controller.write_text(re.sub(r"from '([.]/[^']+|[.][.]/[.][.]/[^']+)'",
                     lambda m:"from '"+(operator_source.parent/m.group(1)).resolve().as_uri()+"'",operator_source.read_text()))
                 operator_controller.chmod(0o600)
                 operator_read,relay_write=os.pipe();relay_read,operator_write=os.pipe()
@@ -190,6 +190,11 @@ def main():
                 assert relay_guest(scope,proc,relay_read,relay_write,max_ciphertext_bytes=transport['maxCiphertextBytes'],
                     max_input_ciphertext_bytes=admitted.ciphertext.inputBytes)['reason']=='finished'
             deadline.check()
+        if args.hosted:
+            # The guarded guest has exited and its scope/storage mounts retired.
+            # This parent owns the relay pipe ends; retaining them until the
+            # operator exits would hide EOF and deadlock lifecycle completion.
+            for fd in [relay_read,relay_write]:os.close(fd);wire_fds.remove(fd)
         # After encrypted delivery, five fresh result-CLI processes each retain
         # their own 30-second bound, followed by local settlement checks. A
         # single CLI's limit cannot also bound this whole sequential phase.
@@ -208,12 +213,13 @@ def main():
             assert report['peerAssignmentSHA256']==report['peerRouteId']
             assert report['durableDispatchRetained'] and report['restartedDispatchRefused']
             assert report['localSpoolReservationRetained'] and report['physicalSpoolCapacityChecked']
+            assert report['requesterChallengeHandedOff'] and report['operatingPrefixRetained'] and report['bootIntakeIsFixture']
             assert not report['guestCompletionObserved'] and not report['paymentAuthorized'] and not report['hardwareValidated']
             assert Path(report['sourceFile']).is_file() and Path(report['directory']).parent==spool
             result['checks'].update(separateSessionOperator=True,hostedSignatureForwarded=True,completeEncryptedSpoolRetained=True,
                                    bookedTLSProviderAuthenticated=True,bookedAssignmentRouted=True,peerListenerDisposed=True,
                                      durableDispatchRetained=True,restartedDispatchRefused=True,localSpoolReservationRetained=True,
-                                     physicalSpoolCapacityChecked=True)
+                                     physicalSpoolCapacityChecked=True,requesterChallengeHandedOff=True,operatingPrefixRetained=True)
         assert not list(parent.glob('job-*'))
         assert owner_secret.strip() not in raw
         result['wholeTreeCleanup']=True

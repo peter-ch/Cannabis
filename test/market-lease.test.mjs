@@ -34,6 +34,9 @@ import { PeerDispatchJournal } from '../compute/peer_dispatch.mjs';
 import tlsFixture from './helpers/peer-tls-fixture.json' with {type:'json'};
 import {ProviderApprovals} from '../operator/provider-approvals.mjs';
 import {validateProviderReview} from '../operator/provider-wallet.js';
+import {sendLaunchHandoff,receiveLaunchHandoff,consumeLaunchHandoff} from '../compute/launch_handoff.mjs';
+import {stageOperatingGuest,relayOperatingGuest} from '../operator/guest-boot-channel.mjs';
+import {operatingBootFixture} from './helpers/operating_boot_fixture.mjs';
 
 const h = n => '0x' + n.toString(16).padStart(64, '0');
 const utc = n => new Date(n * 1000).toISOString().replace('.000Z', 'Z');
@@ -987,6 +990,89 @@ test('guest consent revocation closes retained funding and cannot be revived by 
   await (await contractWorker.connect(workers[0]).approveDigest(digest,true)).wait();
   await assert.rejects(retained.refresh(),/closed/);
 });
+
+const handoffLocal=x=>({signed:x.source.consent,initialization:x.initialization,proof:x.proof});
+async function handoffPair(t,x) {
+  const pair=await peerTLSPair(t);
+  const channels=await Promise.all(['requester','provider'].map(role=>authenticatePeerChannel(pair[role],peerOptions(x,pair,role))));
+  t.after(()=>channels.forEach(c=>c.close()));return channels;
+}
+async function handoffTicket(t,x) {
+  const [requester,provider]=await handoffPair(t,x),local=handoffLocal(x),options={clock:x.clock};
+  const [ack,ticket]=await Promise.all([sendLaunchHandoff(requester,local,x.challenge,options),receiveLaunchHandoff(provider,local,options)]);
+  assert.equal(ack.challengeSHA256,ticket.challengeSHA256);assert.equal(ack.keyReleaseAuthorized,false);
+  return {requester,provider,ticket};
+}
+
+test('launch handoff retains exact public boot files and refuses copied or reused capabilities',async t=>{
+  const x=await configuredFixture(t),{ticket,provider}=await handoffTicket(t,x);
+  assert.throws(()=>consumeLaunchHandoff(structuredClone(ticket)));
+  const fixture=await operatingBootFixture({...handoffLocal(x),request:{proof:x.proof,challenge:x.challenge}});
+  t.after(()=>fixture.close());
+  const session=await stageOperatingGuest(fixture.socket,ticket);t.after(()=>session.close());
+  assert.equal(fixture.staged(),true);assert.equal(session.publicPrefixStaged,true);
+  assert.deepEqual(session.snapshot(),{phase:'staged',guestRetirementVerified:false,hardwareValidated:false});
+  assert.throws(()=>consumeLaunchHandoff(ticket));
+  assert.equal(provider.signal.aborted,false);
+  await assert.rejects(relayOperatingGuest({...session}));
+  // Raw/copied spool status cannot turn boot acknowledgements into execution.
+  await assert.rejects(relayOperatingGuest(session,{spool:{}}));
+  assert.equal(provider.signal.aborted,true);assert.equal(session.snapshot().phase,'failed');
+});
+
+test('launch handoff refuses substituted metadata, stale challenges and an inactive funded order',async t=>{
+  const x=await configuredFixture(t),local=handoffLocal(x);
+  for(const alter of [m=>m.proof=x.proof,m=>m.assignmentSHA256=h(91),m=>m.channelBinding=h(92),
+    m=>m.challenge.binding.taskSHA256='ef'.repeat(32),m=>m.challenge.attestationPolicySHA256='ab'.repeat(32),
+    m=>m.challenge.expiresAt=x.clock(),m=>m.challengeSHA256=h(93)]) {
+    const [requester,provider]=await handoffPair(t,x);
+    const message={protocol:'cannabis.launch-handoff.v1',operation:'challenge',assignmentSHA256:provider.report.assignmentSHA256,
+      channelBinding:provider.report.binding.channelBinding,challengeSHA256:'0x'+createHash('sha256').update(
+        // Canonical encoding is part of the wire commitment, not fixture data.
+        canonicalHandoff(x.challenge)).digest('hex'),challenge:structuredClone(x.challenge)};
+    alter(message);const rejected=assert.rejects(receiveLaunchHandoff(provider,local,{clock:x.clock}));
+    await requester.writeJSON(message);await rejected;assert.equal(provider.signal.aborted,true);
+  }
+  const [requester,provider]=await handoffPair(t,x);
+  await (await x.escrow.connect(workers[0]).deliver(x.orderId,h(95))).wait();
+  const result=await Promise.allSettled([sendLaunchHandoff(requester,local,x.challenge,{clock:x.clock}),
+    receiveLaunchHandoff(provider,local,{clock:x.clock})]);assert.ok(result.every(r=>r.status==='rejected'));
+});
+
+test('launch handoff and operating boot retain cancellation, deadlines and failure consumption',async t=>{
+  const x=await configuredFixture(t),local=handoffLocal(x);
+  for(const cancel of [false,true]) {
+    const [,provider]=await handoffPair(t,x),controller=new AbortController();
+    const rejected=assert.rejects(receiveLaunchHandoff(provider,local,{clock:x.clock,timeoutMs:75,signal:controller.signal}));
+    if(cancel)controller.abort();await rejected;assert.equal(provider.signal.aborted,true);
+  }
+  for(const mode of ['silent','wrong-ready','missing-staged','wrong-staged','cancel']) {
+    const {ticket,provider}=await handoffTicket(t,x),controller=new AbortController();
+    const fixture=await operatingBootFixture({...local,request:{proof:x.proof,challenge:x.challenge}},{mode:mode==='cancel'?'silent':mode});
+    try {
+      const rejected=assert.rejects(stageOperatingGuest(fixture.socket,ticket,{timeoutMs:100,signal:controller.signal}));
+      if(mode==='cancel')controller.abort();await rejected;
+      assert.throws(()=>consumeLaunchHandoff(ticket));assert.equal(provider.signal.aborted,true);assert.equal(fixture.socket.destroyed,true);
+    }finally{await fixture.close();}
+  }
+});
+
+test('launch handoff failure keeps listener dispatch consumed across a new connection',async t=>{
+  const x=await configuredFixture(t),entered=later();
+  const listener=await localListener(x,[localPeerRoute(x,async(channel,local)=>{
+    try{await receiveLaunchHandoff(channel,{signed:local.signed,initialization:local.initialization,proof:local.proof},
+      {timeoutMs:75,clock:x.clock});}finally{entered.resolve();}
+  })]);t.after(()=>listener.close());
+  const channel=await localConnect(x,listener);t.after(()=>channel.close());await entered.promise;
+  await assert.rejects(localConnect(x,listener));assert.notEqual(listener.snapshot().routes[0].state,'idle');
+  assert.equal(listener.snapshot().admittedChannels,1);
+});
+
+function canonicalHandoff(v) {
+  const encode=x=>Array.isArray(x)?'['+x.map(encode).join(',')+']':x&&typeof x==='object'?
+    '{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+encode(x[k])).join(',')+'}':JSON.stringify(x);
+  return encode(v)+'\n';
+}
 
 test('launch authorization cannot restart its transport clock or outlive the retained challenge',async t=>{
   const x=await configuredFixture(t),c=await bookedConsent(x),request={proof:x.proof,challenge:x.challenge};
