@@ -32,6 +32,8 @@ import { peerTLSPair } from './helpers/peer_tls.mjs';
 import { connectBookedPeer, listenBookedPeers, peerRouteId } from '../compute/peer_network.mjs';
 import { PeerDispatchJournal } from '../compute/peer_dispatch.mjs';
 import tlsFixture from './helpers/peer-tls-fixture.json' with {type:'json'};
+import {ProviderApprovals} from '../operator/provider-approvals.mjs';
+import {validateProviderReview} from '../operator/provider-wallet.js';
 
 const h = n => '0x' + n.toString(16).padStart(64, '0');
 const utc = n => new Date(n * 1000).toISOString().replace('.000Z', 'Z');
@@ -306,6 +308,95 @@ async function configuredFixture(t,{contractProvider=false,transportTimeoutMs=60
     notBefore:d.clock(),expiresAt:d.clock()+60,resultKeySHA256:resultKeyCommitment(Buffer.alloc(32,7))};
   return {...d,f,lease,r,key,configuration,configurationSHA256,binding,initialization,policy,attestations,challenge,source,request};
 }
+
+function providerCatalog(x,origin='https://independent.example') {
+  return {schema:'cannabis.provider-catalog.v1',assignments:[{configuration:x.configuration,initialization:x.initialization,
+    proof:x.proof,requesterConsent:x.source.consent.consents[0],origin}]};
+}
+function providerManager(t,x,{retained=false,origin}={}) {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'cannabis-provider-approval-'));
+  const key=launchConsentPayload(x.configuration,x.initialization,x.proof,'provider').value.assignmentSHA256.slice(2);
+  if(retained){fs.mkdirSync(path.join(directory,key));fs.writeFileSync(path.join(directory,key,'approval.json'),JSON.stringify(x.source.consent));}
+  const catalog=providerCatalog(x,origin),manager=new ProviderApprovals(catalog,directory,{clock:x.clock});
+  t.after(async()=>{await manager.close();fs.rmSync(directory,{recursive:true,force:true});});return {manager,directory,key,catalog};
+}
+async function awaitApproval(manager,predicate) {
+  const deadline=Date.now()+10000;
+  while(Date.now()<deadline){const found=manager.snapshot().requests.find(predicate);if(found)return found;await new Promise(r=>setTimeout(r,20));}
+  assert.fail('Provider approval did not reach the expected bounded state');
+}
+
+test('provider console retains only verified launch consent and preserves it across restart',async t=>{
+  const x=await configuredFixture(t),{manager,key,directory,catalog}=providerManager(t,x);
+  const {requestId}=manager.beginLaunch(key);assert.throws(()=>manager.detail(requestId));
+  await awaitApproval(manager,r=>r.id===requestId&&r.state==='awaiting-wallet');
+  const detail=validateProviderReview(manager.detail(requestId));assert.equal(detail.kind,'launch');
+  assert.equal(detail.summary.workerBaseUnits, String(BigInt(detail.summary.grossBaseUnits)*99n/100n));
+  const p=launchConsentPayload(x.configuration,x.initialization,x.proof,'provider');
+  manager.submit(requestId,await peerOptions(x,{},'provider').signApproval(p));
+  assert.throws(()=>manager.submit(requestId,'0x01'));
+  await awaitApproval(manager,r=>r.id===requestId&&r.state==='consent-retained');
+  assert.equal(manager.snapshot().executionAuthorized,false);assert.equal(manager.snapshot().keyReleaseAuthorized,false);
+  assert.ok(!JSON.stringify(manager.snapshot()).includes('signature'));
+  assert.throws(()=>manager.beginLaunch(key));const signed=manager.signed(key);
+  await manager.close();const reopened=new ProviderApprovals(catalog,directory,{clock:x.clock});
+  try{assert.deepEqual(reopened.signed(key),signed);assert.deepEqual(reopened.snapshot().requests,[]);
+    await (await x.escrow.connect(workers[0]).deliver(x.orderId,h(95))).wait();
+    await assert.rejects(readLaunchConsentState(reopened.signed(key),x.initialization,x.proof,{clock:x.clock}));
+  }finally{await reopened.close();}
+  const file=path.join(directory,key,'approval.json');fs.writeFileSync(file,'{"interrupted":');
+  assert.throws(()=>new ProviderApprovals(catalog,directory,{clock:x.clock}));assert.equal(fs.readFileSync(file,'utf8'),'{"interrupted":');
+});
+
+test('provider console checks ERC-1271 at current state and refuses invalid, declined or inactive consent',async t=>{
+  const x=await configuredFixture(t,{contractProvider:true}),{manager,key,directory}=providerManager(t,x);
+  const p=launchConsentPayload(x.configuration,x.initialization,x.proof,'provider');
+  const begin=async()=>{const {requestId}=manager.beginLaunch(key);await awaitApproval(manager,r=>r.id===requestId&&r.state==='awaiting-wallet');return requestId;};
+  const first=await begin();manager.submit(first,await workers[0].signTypedData(p.domain,p.types,p.value));
+  await awaitApproval(manager,r=>r.id===first&&r.state==='failed');assert.equal(fs.existsSync(path.join(directory,key)),false);
+  const declined=await begin();manager.decline(declined);assert.throws(()=>manager.submit(declined,'0x01'));
+  await (await contractWorker.connect(workers[0]).approveDigest(p.digest,true)).wait();
+  const allowed=await begin();manager.submit(allowed,await workers[0].signTypedData(p.domain,p.types,p.value));
+  await awaitApproval(manager,r=>r.id===allowed&&r.state==='consent-retained');
+  await (await contractWorker.connect(workers[0]).approveDigest(p.digest,false)).wait();
+  await assert.rejects(readLaunchConsentState(manager.signed(key),x.initialization,x.proof,{clock:x.clock}));
+  const other=providerManager(t,x);await (await contractWorker.connect(workers[0]).invoke(await x.escrow.getAddress(),x.escrow.interface.encodeFunctionData('deliver',[x.orderId,h(95)]))).wait();
+  const inactive=other.manager.beginLaunch(other.key).requestId;
+  await awaitApproval(other.manager,r=>r.id===inactive&&r.state==='failed');assert.throws(()=>other.manager.detail(inactive));
+});
+
+test('provider console approves the actual TLS channel without consuming its relay capability',async t=>{
+  const x=await configuredFixture(t),pair=await peerTLSPair(t),{manager,key}=providerManager(t,x,{retained:true,origin:pair.origin});
+  let handled=0;
+  const route=manager.peerRoute(key,channel=>{claimPeerChannel(channel,'provider',route.signed,route.initialization,route.proof);handled++;});
+  const pending=Promise.all(['requester','provider'].map(role=>authenticatePeerChannel(pair[role],peerOptions(x,pair,role,
+    role==='provider'?{signApproval:route.signApproval}:{}))));
+  const request=await awaitApproval(manager,r=>r.kind==='peer'&&r.state==='awaiting-wallet');
+  const detail=validateProviderReview(manager.detail(request.id));assert.equal(detail.typedData.message.origin,pair.origin);
+  assert.ok(request.expiresAt-request.createdAt<=60000);
+  const types={...detail.typedData.types};delete types.EIP712Domain;
+  const signature=await workers[x.addresses.indexOf(x.r.provider)].signTypedData(detail.typedData.domain,types,detail.typedData.message);
+  manager.submit(request.id,signature);assert.equal(manager.snapshot().requests[0].state,'submitted');
+  const channels=await pending;t.after(()=>channels.forEach(c=>c.close()));
+  await assert.rejects(route.handle({report:channels[1].report},{}));assert.equal(handled,0);
+  await route.handle(channels[1],{});assert.equal(handled,1);assert.equal(manager.snapshot().requests[0].state,'channel-verified');
+  assert.throws(()=>claimPeerChannel(channels[1],'provider',route.signed,route.initialization,route.proof));
+  await assert.rejects(route.handle(channels[1],{}));
+});
+
+test('provider console preserves peer cancellation and deadlines and rejects changed retained payloads',async t=>{
+  const x=await configuredFixture(t),{manager,key}=providerManager(t,x,{retained:true}),route=manager.peerRoute(key,()=>{});
+  const p=peerChannelPayload(route.signed,route.initialization,route.proof,peerBinding(x),'provider',x.clock());
+  for(const changed of [{...p,signer:x.lease.requester},{...p,value:{...p.value,origin:'https://other.invalid'}},{...p,digest:h(991)}])
+    assert.throws(()=>route.signApproval(changed,{signal:new AbortController().signal,timeoutMs:1000}));
+  const controller=new AbortController(),cancelled=route.signApproval(p,{signal:controller.signal,timeoutMs:1000});
+  const rejection=assert.rejects(cancelled);const request=manager.snapshot().requests.at(-1);controller.abort();await rejection;
+  assert.throws(()=>manager.submit(request.id,'0x01'));assert.equal(manager.snapshot().requests.at(-1).state,'cancelled');
+  const expired=route.signApproval(p,{signal:new AbortController().signal,timeoutMs:50});await assert.rejects(expired);
+  assert.equal(manager.snapshot().requests.at(-1).state,'expired');
+  const closed=route.signApproval(p,{signal:new AbortController().signal,timeoutMs:1000}),closedCheck=assert.rejects(closed);
+  await manager.close();await closedCheck;
+});
 
 test('bilateral launch admission binds canonical funding, exact configuration and challenge',async t=>{
   const x=await configuredFixture(t),c=await bookedConsent(x),request={proof:x.proof,challenge:x.challenge};

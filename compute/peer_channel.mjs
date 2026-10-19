@@ -53,12 +53,16 @@ export function peerChannelPayload(signed,initialization,proof,binding,role,now=
 
 // Consume the live local capability once for the retained launch. A copied report
 // or caller-set boolean cannot substitute for the actual authenticated channel.
-export function claimPeerChannel(channel,localRole,signed,initialization,proof) {
+export function inspectPeerChannel(channel,localRole,signed,initialization,proof) {
   const entry=authenticated.get(channel);check(entry&&!entry.claimed&&entry.role===localRole);
   channel.assertActive();const d=inspectLaunchConsent(signed,initialization,proof,entry.clock()),s=entry.state;
   check(d.configurationSHA256===s.configurationSHA256&&d.assignmentSHA256===s.assignmentSHA256&&
     d.lease.digest===s.leaseDigest&&d.reservation.reservationId===s.bookingId&&d.lease.requester===s.requester&&d.reservation.provider===s.provider);
-  entry.claimed=true;return structuredClone(s.binding);
+  return structuredClone(s.binding);
+}
+export function claimPeerChannel(channel,localRole,signed,initialization,proof) {
+  const binding=inspectPeerChannel(channel,localRole,signed,initialization,proof);
+  authenticated.get(channel).claimed=true;return binding;
 }
 
 function approvals(checked,binding,signatures,now) {
@@ -166,7 +170,8 @@ export async function authenticatePeerChannel(socket,{role,origin,signed,initial
       check(verifyTypedData(requester.domain,requester.types,requester.value,received.signature)===requester.signer);
     }
     const p=payload(d,binding,role,active());
-    const signature=await cancellable(()=>signApproval(structuredClone(p),{signal:wire.signal}),wire.signal);active();
+    const signature=await cancellable(()=>signApproval(structuredClone(p),{signal:wire.signal,
+      timeoutMs:Math.max(1,Math.floor(Math.min(timeoutMs,totalMs)-(performance.now()-began)))}),wire.signal);active();
     check(typeof signature==='string'&&/^0x(?:[0-9a-fA-F]{2}){1,8192}$/.test(signature));
     await wire.writeJSON({protocol,operation:'approval',role,signature});
     if(role==='requester')received=await receive();

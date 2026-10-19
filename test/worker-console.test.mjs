@@ -87,3 +87,21 @@ test('missing storage and changed process tokens never trigger recovery',async t
     'content-type':'application/json','x-cannabis-console':old},body:JSON.stringify({id:'a'.repeat(64)})})).status,403);
   assert.equal(calls,0);
 });
+
+test('provider actions share same-origin controls and never accept a browser-selected signing payload',async t=>{
+  let calls=0;const request=await fixture(t,undefined,{provider:{snapshot:()=>({state:'available'}),
+    detail:requestId=>{calls++;return {requestId};},submit:()=>{calls++;return {state:'checking-signature'};}}});
+  const control=JSON.parse((await request('/api/control')).body);assert.equal(control.providerApprovals,true);assert.equal(control.resultStorage,false);
+  const headers={origin:request.origin,'content-type':'application/json','x-cannabis-console':control.actionToken},requestId='b'.repeat(64);
+  const post=(route,body,h=headers)=>request('/api/provider/'+route,{method:'POST',headers:h,body:JSON.stringify(body)});
+  assert.equal((await post('review',{requestId})).status,200);
+  assert.equal((await post('review',{requestId},{...headers,origin:'https://other.invalid'})).status,403);
+  assert.equal((await post('review',{requestId},{...headers,'x-cannabis-console':'0'.repeat(64)})).status,403);
+  for(const extra of [{payload:{}},{path:'/secret'},{network:{}},{signature:'0x01'}])
+    assert.equal((await post('review',{requestId,...extra})).status,400);
+  assert.equal((await post('submit',{requestId,signature:'0x'+'ab'.repeat(8192)})).status,200);
+  assert.equal((await post('submit',{requestId,signature:'a'.repeat(21000)})).status,400);
+  assert.equal(calls,2);
+  for(const route of ['/api/provider/sign','/api/provider/review?requestId='+requestId,'/provider-approvals.mjs'])assert.equal((await request(route)).status,404);
+  assert.ok(!(await request('/api/status')).body.includes(control.actionToken));
+});

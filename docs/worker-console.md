@@ -1,6 +1,6 @@
 # Your worker console
 
-The Cannabis worker console shows actual CPU activity, memory use and local hardware inventory in a browser window. It is available in the [project source](https://github.com/peter-ch/Cannabis). With an existing result volume selected, it also shows retained attempts and provides encrypted-result recovery and deliberate replacement delivery. It cannot accept customer jobs or earn payments yet. The result controls are under integration in the compute review branch.
+The Cannabis worker console shows actual CPU activity, memory use and local hardware inventory in a browser window. It is available in the [project source](https://github.com/peter-ch/Cannabis). With an existing result volume selected, it also shows retained attempts and provides encrypted-result recovery and deliberate replacement delivery. The compute review branch additionally contains provider-controlled wallet approvals for retained assignments and direct peer connections. It cannot accept customer jobs or earn payments yet. These controls remain under integration; the older published tools do not include them.
 
 ## Open the console
 
@@ -12,7 +12,7 @@ From the project source directory on another platform, run:
 npm run worker:console
 ~~~
 
-Open `http://127.0.0.1:4201/`. Machine observation uses Node's built-in modules. Selecting a result store additionally requires the pinned project dependencies and the supported Linux volume adapter. The older Windows participant kit is a separate release and does not contain this console.
+Open `http://127.0.0.1:4201/`. Machine observation uses Node's built-in modules. Provider signing requires the pinned project dependencies. Selecting a result store additionally requires the supported Linux volume adapter. The older Windows participant kit is a separate release and does not contain this console.
 
 ## Read the observations
 
@@ -75,13 +75,74 @@ approval/recovery material and verified decryption. Unacknowledged complete
 results remain retained; only the existing verified acknowledgement and retention
 policy can permit cleanup outside this console.
 
+## Review provider approvals
+
+The optional provider panel consumes a startup-selected catalog of public retained
+assignments and an existing private approvals directory:
+
+```sh
+node operator/server.mjs --provider-catalog /absolute/provider-catalog.json --provider-approvals /absolute/approvals
+```
+
+The catalog has schema `cannabis.provider-catalog.v1` and an `assignments` array
+(at most 64 entries, 16 MiB total). Each entry contains exactly `configuration`,
+`initialization`, `proof`, `requesterConsent` and the canonical HTTPS peer `origin`.
+These are the reviewed configuration, retained initialization, on-chain market
+proof and already-signed requester launch consent used by the booked peer protocol.
+The catalog contains no content keys or plaintext customer software/data. Choose
+its RPC network and origin locally; neither can be replaced by a browser request.
+The browser cannot add assignments or arbitrary wallet messages.
+
+Choose **Prepare launch approval** for an assignment. The backend checks its
+requester signature, retained commitments and fresh booking/funding observations
+before offering wallet review. Select a wallet explicitly and connect its booked
+provider account. Review the parties, chain and genesis, market/escrow, interval,
+resource and runtime commitments, and gross/worker/service-fee amounts. Expand
+**Inspect the complete wallet message** to see the exact EIP-712 fields.
+Amounts are token base units; the displayed split is exactly 99% worker and 1%
+service fee. Signing does not send a transaction or transfer those amounts.
+
+**Review and sign in wallet** requests only `eth_signTypedData_v4` for that
+provider launch consent or live peer approval. The client checks the account,
+chain and genesis before and after the prompt. There is no automatic network
+switch, personal-signing fallback or wallet-key entry. Wallet discovery uses
+EIP-6963, with an explicit legacy-injected-wallet option where available. A
+contract wallet must expose the booked provider account; the backend verifies
+ERC-1271 at fresh finalized and current hash-bound observations. The GUI does not
+substitute a contract owner's EOA for that account.
+
+After launch signature verification, the complete bilateral consent is written
+once beneath its assignment identifier. Existing or incomplete approval files are
+never overwritten. Preserve the directory and reconcile interrupted writes
+locally. Reopening validates retained consent structure and requester binding;
+every actual launch or peer authentication still rechecks current funding and
+wallet signature validity. Retention alone is not ongoing authorization.
+
+A locally configured booked listener can use `ProviderApprovals.peerRoute(id,
+handle)` with `listenBookedPeers`. That adapter sends the actual TLS callback to
+this panel, retaining its origin, exporter, fresh nonces and remaining handshake
+budget. The requester signature is checked before the provider prompt. A
+submitted peer signature becomes **channel verified** only after the native
+authenticated-channel capability passes the retained assignment check; the
+subsequent execution handler still consumes its one-use capability. This adapter
+does not itself start a listener, launch a guest or supply hardware admission.
+
+There are at most four pending requests and a bounded recent history. Reviews
+expire within 60 seconds; peer requests retain the shorter remaining handshake
+deadline. Decline, expiry, account/network changes, disconnection and console
+shutdown discard pending responses. The wallet may keep its own prompt open;
+dismiss it rather than signing a stale request. Browser closure does not revoke
+an already saved consent, and no pending approval is restored after restart.
+Readiness reports include public assignment addresses and commitments, but never
+signatures, wallet keys or local paths. Review them before sharing.
+
 ## Before a paid worker can start
 
 The Start paid worker control remains disabled in this release. There is no hidden start endpoint or setting that enables paid work. Admission needs a fresh vendor-verified hardware report bound to the approved guest and assignment, a measured isolated launcher, protected storage/devices/networking, cleanup and key retirement, reviewed payment contracts and provider terms, and a real end-to-end acceptance run. See [worker deployment](worker-deployment.md) and [confidential computation](confidential-compute.md).
 
 Ordinary desktop hardware and the website hosting servers are not automatically eligible. A remotely operated confidential worker could later be controlled from a desktop GUI, provided the attestation and key-release path is validated. No plaintext fallback is permitted.
 
-The process listens only on loopback, serves an explicit asset list and refuses foreign hosts/origins. Result actions require same-origin bounded JSON and a process-local control token. The optional result adapter only opens the startup-selected store and uploads retained ciphertext to startup-selected relay origins. It has no job submission, arbitrary command/path, plaintext customer-content, custody or payment interface. Do not publish or reverse-proxy its port.
+The process listens only on loopback, serves an explicit asset list and refuses foreign hosts/origins. Result and approval actions require same-origin bounded JSON and a process-local control token. The optional result adapter only opens the startup-selected store and uploads retained ciphertext to startup-selected relay origins. Provider approvals use only startup-selected assignments. There is no job submission, arbitrary command/path/signing, plaintext customer-content, wallet-key custody or payment interface. Do not publish or reverse-proxy its port.
 
 ## Computing and issuance
 
