@@ -28,7 +28,7 @@ The count measures distinct commitments, not an independently proven number of h
 
 ## Computing services and economic design
 
-The [decentralized market](decentralized-compute.md) coordinates provider offers and bilateral capacity bookings through public contracts. Its shared inventory spans ETH and Cannabis escrows; direct client tools discover offers and inspect finalized reservations without a founder service. No administrator admits providers to the market. Physical capacity, confidential execution and requester-selected verification remain separate requirements, and protected execution still needs integration with these on-chain bookings.
+The [decentralized market](decentralized-compute.md) coordinates provider offers and bilateral capacity bookings through public contracts. Its shared inventory spans ETH and Cannabis escrows; direct client tools discover offers and inspect finalized reservations without a founder service. Requester key delivery and guest funding can independently verify a complete activated booking group, original funding and current canonical state without a capacity database. No administrator admits providers to the market. Physical capacity, reviewed measured images, confidential hardware, requester-selected verification and replacement of the global launch-authority mechanism remain separate requirements.
 
 Cannabis is intended as money for useful computing services. The [compute economy specification](compute-economy.md) defines the provider commitments, capacity reservations, redemption terms and delivery evidence needed for service backing. Fixed token supply and community allocation remain unchanged; paid work transfers existing tokens.
 

@@ -2,11 +2,12 @@
 import { getAddress } from 'ethers';
 import { performance } from 'node:perf_hooks';
 import { verifyLeaseProof } from './lease_proof.mjs';
+import { verifyMarketLeaseProof, readMarketLeaseState } from './market_lease.mjs';
 import { guestInitialization } from './guest_initialization.mjs';
 import { readFinalizedEscrow, readCurrentEscrow, readFundedEscrowAtAnchor } from './finality.mjs';
 
 export class GuestFunding {
-  #lease; #reservation; #network; #clock; #last; #end; #closed = false; #busy = false;
+  #lease; #reservation; #network; #clock; #last; #end; #market; #closed = false; #busy = false;
   constructor(options, initialization, { clock = () => Math.floor(Date.now() / 1000) } = {}) {
     // All configuration except proof is independently approved measured-guest
     // configuration. A host may transport it, but must not choose its pins/RPC.
@@ -14,7 +15,8 @@ export class GuestFunding {
     const keys = ['proof', 'context', 'network', 'provider', 'resourceId', 'serviceSHA256'];
     if (!options || Object.keys(options).sort().join() !== keys.sort().join()) throw Error('Require approved guest funding configuration');
     const assignment = guestInitialization(initialization).assignment, b = assignment.binding;
-    const lease = verifyLeaseProof(options.proof, options.context);
+    this.#market = options.proof?.schema === 'cannabis.market-lease.v1';
+    const lease = this.#market ? verifyMarketLeaseProof(options.proof, options.context) : verifyLeaseProof(options.proof, options.context);
     const reservation = lease.reservations.find(r => r.reservationId === b.reservationId);
     if (options.context.chainId !== b.chainId || lease.digest !== b.leaseDigest || lease.orderId !== b.orderId ||
         lease.escrow !== b.escrow || lease.requester !== assignment.requester || lease.job.id !== assignment.jobId ||
@@ -23,7 +25,8 @@ export class GuestFunding {
         reservation.serviceSHA256 !== options.serviceSHA256) throw Error('Signed lease differs from retained guest assignment or approved resource');
     const network = options.network;
     if (BigInt(network.chainId) !== BigInt(b.chainId) || getAddress(network.escrow) !== b.escrow ||
-        getAddress(network.token) !== getAddress(options.context.token)) throw Error('Guest funding network differs from approved capacity domain');
+        getAddress(network.token) !== getAddress(options.context.token) ||
+        this.#market && getAddress(network.market) !== lease.market) throw Error('Guest funding network differs from approved capacity domain');
     this.#lease = lease; this.#reservation = reservation; this.#network = network; this.#clock = clock;
     const now = clock();
     if (!Number.isSafeInteger(now) || now < 1) throw Error('Invalid guest clock');
@@ -60,6 +63,13 @@ export class GuestFunding {
     this.#busy = true;
     try {
       this.assertWindow();
+      if (this.#market) {
+        const state = await readMarketLeaseState(this.#lease.proof, this.#network, () => this.assertWindow());
+        this.assertWindow();
+        if (state.headBlock.timestamp < this.#reservation.start || state.headBlock.timestamp >= this.#reservation.end)
+          throw Error('Funding head is outside the reserved service interval');
+        return { ...state, schema: 'cannabis.guest-funding.v2', reservationId: this.#reservation.reservationId, interval: this.interval };
+      }
       const network = { ...this.#network, orderId: this.#lease.orderId };
       const original = await readFundedEscrowAtAnchor({ ...network, fundedAnchor: this.#lease.fundedAnchor }, () => this.assertWindow());
       this.#active(original);

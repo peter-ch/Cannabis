@@ -47,9 +47,13 @@ export function readRetainedLaunch(authorities) {
   const bytes=Buffer.alloc(s.size);let offset=0;
   while(offset<bytes.length){const count=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);if(!count)fail();offset+=count;}
   const value=parseLaunchSnapshot(bytes);
+  // The operating entry has no legacy local-ledger fallback. Old configuration
+  // parsing remains only for historical/offline component verification.
+  if(value.signed?.configuration?.schema!=='cannabis.guest-launch-configuration.v2')fail();
   return prepareGuestLaunch(authorities,value.signed,value.initialization,value.request);
 }
 export function publicLaunchAdmission(launch) {
+  if(launch.funding?.proof?.schema!=='cannabis.market-lease.v1')fail();
   const service=nativeServiceCommitment(launch.execution);
   return {schema:'cannabis.guest-launch-admission.v1',profile:launch.execution.profile,
     serviceSHA256:service.serviceSHA256,units:service.units,interval:launch.interval,transport:launch.transport,source:launch.execution.source};
@@ -88,12 +92,15 @@ export function launchConfigurationPayload(authorities,configuration) {
   const a=validateLaunchAuthorities(authorities),c=structuredClone(configuration);
   exact(c,['schema','configurationId','validFrom','validUntil','context','network','provider','resourceId',
     'execution','attestationPolicyTemplate','bootstrap','transport']);
-  if(Buffer.byteLength(canonical(c))>256*1024||c.schema!=='cannabis.guest-launch-configuration.v1'||!bytes32(c.configurationId)||
+  const marketBased=c.schema==='cannabis.guest-launch-configuration.v2';
+  if(Buffer.byteLength(canonical(c))>256*1024||!['cannabis.guest-launch-configuration.v1','cannabis.guest-launch-configuration.v2'].includes(c.schema)||!bytes32(c.configurationId)||
     !integer(c.validFrom,1,Number.MAX_SAFE_INTEGER)||!integer(c.validUntil,c.validFrom+1,c.validFrom+a.maxValiditySeconds))fail();
-  exact(c.context,['chainId','registryId','token']);
-  if(c.context.chainId!==a.chainId||!bytes32(c.context.registryId))fail();getAddress(c.context.token);
+  exact(c.context,['chainId',marketBased?'market':'registryId','token']);
+  if(c.context.chainId!==a.chainId||!marketBased&&!bytes32(c.context.registryId))fail();getAddress(c.context.token);
+  if(marketBased)address(c.context.market);
   const n=c.network;exact(n,['rpc','chainId','token','escrow','genesisHash','escrowCodeHash','tokenCodeHash',
-    'finality','maxFinalizedAgeSeconds','maxHeadAgeSeconds']);
+    'finality','maxFinalizedAgeSeconds','maxHeadAgeSeconds',...(marketBased?['market','marketCodeHash']:[])]);
+  if(marketBased&&(getAddress(n.market)!==getAddress(c.context.market)||!bytes32(n.marketCodeHash)))fail();
   const rpc=new URL(n.rpc);
   if(rpc.username||rpc.password||rpc.search||rpc.hash||rpc.protocol!=='https:'&&!(rpc.protocol==='http:'&&rpc.hostname==='127.0.0.1')||
     n.chainId!==a.chainId||getAddress(n.token)!==getAddress(c.context.token)||n.finality!=='rpc-finalized'||
@@ -128,7 +135,7 @@ export function launchConfigurationPayload(authorities,configuration) {
   // assignment. Everything else, including the image measurement, is signed.
   if(p?.measurements?.initData!==null)fail();
   p.measurements.initData='11'.repeat(p.tee==='snp'?32:48);validateAttestationPolicy(p);
-  const domain={name:'Cannabis guest launch configuration',version:'1',chainId:a.chainId,salt:hash(a)};
+  const domain={name:'Cannabis guest launch configuration',version:marketBased?'2':'1',chainId:a.chainId,salt:hash(a)};
   const value={configurationSHA256:hash(c),validFrom:c.validFrom,validUntil:c.validUntil};
   return {domain,types:launchConfigurationTypes,value,digest:TypedDataEncoder.hash(domain,launchConfigurationTypes,value)};
 }
@@ -148,6 +155,8 @@ export function verifyLaunchConfiguration(authorities,signed,now=Math.floor(Date
 export function prepareGuestLaunch(authorities,signed,initialization,request,{now=Math.floor(Date.now()/1000)}={}) {
   const checked=verifyLaunchConfiguration(authorities,signed,now),c=checked.configuration;
   const retained=guestInitialization(initialization);request=structuredClone(request);exact(request,['proof','challenge']);
+  if(c.schema==='cannabis.guest-launch-configuration.v2'&&request.proof?.schema!=='cannabis.market-lease.v1')fail();
+  if(c.schema==='cannabis.guest-launch-configuration.v1'&&request.proof?.schema!=='cannabis.lease-proof.v1')fail();
   if(Buffer.byteLength(canonical(request))>16*1024*1024||retained.assignment.tee!==c.attestationPolicyTemplate.tee)fail();
   const policy=structuredClone(c.attestationPolicyTemplate);policy.measurements.initData=retained.digest;
   const digest=validateAttestationPolicy(policy),challenge=request.challenge;

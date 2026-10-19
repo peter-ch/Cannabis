@@ -8,7 +8,14 @@ const integer = n => Number.isSafeInteger(n) && n >= 0;
 const plain = value => JSON.parse(JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v));
 const object = tuple => tuple.toObject(true);
 
-async function snapshot(options, inspect, clock) {
+async function snapshot(options, inspect, clock, selection = {}) {
+  const mode = selection.mode ?? 'finalized', anchored = mode === 'anchor';
+  if (!['anchor', 'finalized', 'latest'].includes(mode)) throw Error('Invalid market snapshot selector');
+  const anchors = [selection.anchor, selection.finalizedAnchor, selection.fundingAnchor].filter(Boolean);
+  for (const a of anchors) if (!integer(a.number) || !hash(a.hash) || !integer(a.timestamp)) throw Error('Invalid market anchor');
+  if (anchored && !selection.anchor) throw Error('Require the original market anchor');
+  if (mode === 'latest' && (!Number.isSafeInteger(options.maxHeadAgeSeconds) || options.maxHeadAgeSeconds < 1 || options.maxHeadAgeSeconds > 120))
+    throw Error('Require a bounded market head age');
   const endpoint = new URL(options.rpc);
   if (endpoint.username || endpoint.password || !(endpoint.protocol === 'https:' || endpoint.protocol === 'http:' && endpoint.hostname === '127.0.0.1'))
     throw Error('Require HTTPS RPC or loopback verification RPC');
@@ -22,15 +29,19 @@ async function snapshot(options, inspect, clock) {
   const send = (method, params) => provider.send(method, params);
   try {
     const [network, genesis, block] = await Promise.all([
-      provider.getNetwork(), send('eth_getBlockByNumber', ['0x0', false]), send('eth_getBlockByNumber', ['finalized', false])
+      provider.getNetwork(), send('eth_getBlockByNumber', ['0x0', false]),
+      send('eth_getBlockByNumber', [anchored ? '0x' + selection.anchor.number.toString(16) : mode, false])
     ]);
     const checkAge = () => {
       const age = clock() - Number(BigInt(block.timestamp));
-      if (!Number.isSafeInteger(age) || age < -30 || age > options.maxFinalizedAgeSeconds) throw Error('Finalized market block is stale or in the future');
+      if (!Number.isSafeInteger(age) || age < -30 || !anchored && age > (mode === 'latest' ? options.maxHeadAgeSeconds : options.maxFinalizedAgeSeconds))
+        throw Error('Observed market block is stale or in the future');
     };
     if (network.chainId !== BigInt(options.chainId) || genesis?.hash?.toLowerCase() !== options.genesisHash.toLowerCase() ||
         !hash(block?.hash) || !integer(Number(BigInt(block.number)))) throw Error('Market chain or genesis differs');
     checkAge();
+    if (anchored && (Number(BigInt(block.number)) !== selection.anchor.number || block.hash !== selection.anchor.hash ||
+        Number(BigInt(block.timestamp)) !== selection.anchor.timestamp)) throw Error('Original market anchor changed');
     const tag = { blockHash: block.hash, requireCanonical: true };
     const code = await send('eth_getCode', [address, tag]);
     if (code === '0x' || keccak256(code).toLowerCase() !== options.marketCodeHash.toLowerCase()) throw Error('Market runtime differs from the reviewed release');
@@ -38,14 +49,22 @@ async function snapshot(options, inspect, clock) {
       await send('eth_call', [{ to: address, data: market.encodeFunctionData(name, args) }, tag]));
     const value = await inspect({ call, send, address, block });
     const [canonical, watermark] = await Promise.all([
-      send('eth_getBlockByNumber', [block.number, false]), send('eth_getBlockByNumber', ['finalized', false])
+      send('eth_getBlockByNumber', [block.number, false]), send('eth_getBlockByNumber', [mode === 'latest' ? 'latest' : 'finalized', false])
     ]);
     if (canonical?.hash !== block.hash || !watermark || BigInt(watermark.number) < BigInt(block.number))
       throw Error('Finalized market state changed during inspection');
+    for (const a of anchors) {
+      const [ancestor, finalized] = await Promise.all([
+        send('eth_getBlockByNumber', ['0x' + a.number.toString(16), false]), send('eth_getBlockByNumber', ['finalized', false])
+      ]);
+      if (ancestor?.hash !== a.hash || Number(BigInt(ancestor.timestamp)) !== a.timestamp ||
+          !finalized || BigInt(finalized.number) < BigInt(a.number) || BigInt(block.number) < BigInt(a.number))
+        throw Error('Finalized market anchor changed or finality regressed');
+    }
     checkAge();
     return plain({ schema: 'cannabis.market-snapshot.v1', chainId: network.chainId, market: address,
       marketCodeHash: options.marketCodeHash, genesisHash: options.genesisHash,
-      finalizedBlock: { number: Number(BigInt(block.number)), hash: block.hash, timestamp: Number(BigInt(block.timestamp)) },
+      [mode === 'latest' ? 'headBlock' : 'finalizedBlock']: { number: Number(BigInt(block.number)), hash: block.hash, timestamp: Number(BigInt(block.timestamp)) },
       ...value, executionAuthorized: false, keyReleaseAuthorized: false,
       note: 'RPC-reported finalized state, not a local consensus proof or physical capacity attestation.' });
   } finally { provider.destroy(); }
@@ -84,7 +103,20 @@ export async function readMarketOffers(options, { fromBlock, toBlock }, clock = 
   }, clock);
 }
 
-export async function readMarketBookings(options, { bookingIds }, clock = () => Math.floor(Date.now() / 1000)) {
+export async function readMarketBookings(options, query, clock = () => Math.floor(Date.now() / 1000)) {
+  return bookingsSnapshot(options, query, clock);
+}
+
+export async function readMarketBookingsAtAnchor(options, query, clock = () => Math.floor(Date.now() / 1000)) {
+  return bookingsSnapshot(options, query, clock, { mode: 'anchor', anchor: options.fundedAnchor });
+}
+
+export async function readCurrentMarketBookings(options, query, clock = () => Math.floor(Date.now() / 1000)) {
+  if (!options.finalizedAnchor || !options.fundingAnchor) throw Error('Require finalized market anchors before latest-state inspection');
+  return bookingsSnapshot(options, query, clock, { mode: 'latest', finalizedAnchor: options.finalizedAnchor, fundingAnchor: options.fundingAnchor });
+}
+
+async function bookingsSnapshot(options, { bookingIds }, clock, selection) {
   if (!Array.isArray(bookingIds) || bookingIds.length < 1 || bookingIds.length > 64 ||
       bookingIds.some(id => !hash(id)) || new Set(bookingIds.map(id => id.toLowerCase())).size !== bookingIds.length)
     throw Error('Require 1..64 unique booking digests');
@@ -101,5 +133,5 @@ export async function readMarketBookings(options, { bookingIds }, clock = () => 
           (record.activated || BigInt(record.booking.holdUntil) > BigInt(block.timestamp)) });
     }
     return { bookings };
-  }, clock);
+  }, clock, selection);
 }

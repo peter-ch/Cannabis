@@ -6,13 +6,22 @@ import { fileURLToPath } from 'node:url';
 import { CompactEncrypt, compactDecrypt, importJWK, calculateJwkThumbprint } from 'jose';
 import { TypedDataEncoder, getAddress, verifyTypedData, ZeroAddress } from 'ethers';
 import { inspectLease } from './leases.mjs';
-import { leaseAttestationBinding, trusteeRuntimeData, verifyTrusteeResult } from './attestation.mjs';
+import { leaseAttestationBinding, marketAttestationBinding, trusteeRuntimeData, verifyTrusteeResult } from './attestation.mjs';
+import { verifyMarketLeaseProof, readMarketLeaseState } from './market_lease.mjs';
 import { readCurrentEscrow, readFinalizedEscrow } from './finality.mjs';
 import { resultKeyCommitment } from './result_keys.mjs';
 
 const hash = data => createHash('sha256').update(data).digest('hex');
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 const recipient = value => typeof value === 'string' && /^age1[0-9a-z]{58}$/.test(value);
+function agreement(source, leaseId) {
+  if (source?.schema !== 'cannabis.market-requester.v1') return inspectLease(source, leaseId);
+  exact(source, ['schema', 'context', 'proof']);
+  const lease = verifyMarketLeaseProof(source.proof, source.context);
+  if (lease.digest !== leaseId) throw Error('Requester market group differs from approval');
+  return { ...lease, leaseId: lease.digest, agreement: { request: { job: lease.job } },
+    reservations: lease.reservations.map(r => ({ ...r, id: r.reservationId })) };
+}
 
 // Source paths/executables are trusted local requester configuration, never worker
 // protocol fields. The owner identity is decrypted only in this local child.
@@ -76,11 +85,13 @@ export function keyDeliveryPayload(capacity, attestations, request, now = nowSec
   if(withResult)bytes32(request.resultKeySHA256);
   bytes32(request.releaseId); bytes32(request.leaseId);
   const challenge = attestations.pending(request.nonce), b = challenge.binding;
-  const lease = inspectLease(capacity, request.leaseId);
+  const lease = agreement(capacity, request.leaseId);
   const reservation = lease.reservations.find(r => r.id === b.reservationId);
   if (!reservation) throw Error('Challenge does not reference this funded reservation');
   const run = Object.fromEntries(['runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass'].map(k => [k, b[k]]));
-  const expected = leaseAttestationBinding(capacity, request.leaseId, b.reservationId, run, now);
+  const expected = capacity?.schema === 'cannabis.market-requester.v1'
+    ? marketAttestationBinding(capacity.proof, capacity.context, b.reservationId, run, now)
+    : leaseAttestationBinding(capacity, request.leaseId, b.reservationId, run, now);
   if (canonical(expected) !== canonical(b)) throw Error('Challenge and funded lease differ');
   const c = custody(request.descriptor, lease.agreement.request.job);
   trusteeRuntimeData(challenge, request.channelJwk); // Strict public-key schema; no private key accepted.
@@ -146,13 +157,15 @@ export async function sealJobKeyDelivery(capacity, attestations, signed, token, 
   if (verifyTypedData(payload.domain, payload.types, payload.value, signed.requesterSignature) !== payload.requester) throw Error('Requester key-delivery approval signature mismatch');
   checkWindow(payload, clock());
   if (attestations.db.prepare('SELECT 1 FROM key_deliveries WHERE releaseId=? OR (leaseDigest=? AND taskSHA256=? AND attempt=? AND rank=?)').get(payload.value.releaseId, payload.value.leaseDigest, payload.value.taskSHA256, payload.value.attempt, payload.value.rank)) throw Error('A key delivery already exists for this release or rank attempt');
-  const challenge = attestations.pending(request.nonce), lease = inspectLease(capacity, request.leaseId);
+  const challenge = attestations.pending(request.nonce), lease = agreement(capacity, request.leaseId);
   if (BigInt(network.chainId) !== BigInt(payload.domain.chainId) || getAddress(network.escrow) !== getAddress(payload.domain.verifyingContract)) throw Error('Key-delivery network mismatch');
   const appraisal = await verifyTrusteeResult(token, attestations.policy, challenge, request.channelJwk, clock());
-  const finalized = await readFinalizedEscrow({ ...network, orderId: payload.value.orderId }, clock);
-  activeSnapshot(finalized, lease, network);
-  const head = await readCurrentEscrow({ ...network, orderId: payload.value.orderId, finalizedAnchor: finalized.finalizedBlock }, clock);
-  activeSnapshot(head, lease, network);
+  const marketBased = capacity?.schema === 'cannabis.market-requester.v1';
+  const finalized = marketBased ? await readMarketLeaseState(lease.proof, network, clock)
+    : await readFinalizedEscrow({ ...network, orderId: payload.value.orderId }, clock);
+  if (!marketBased) activeSnapshot(finalized, lease, network);
+  const head = marketBased ? finalized : await readCurrentEscrow({ ...network, orderId: payload.value.orderId, finalizedAnchor: finalized.finalizedBlock }, clock);
+  if (!marketBased) activeSnapshot(head, lease, network);
   if (head.headBlock.number < finalized.finalizedBlock.number || head.headBlock.timestamp >= request.expiresAt) throw Error('Funding head is behind finality or outside the delivery window');
   checkWindow(payload, clock());
   if (clock() >= appraisal.expiresAt) throw Error('Attestation expired before job-key recovery');
@@ -183,14 +196,15 @@ export async function sealJobKeyDelivery(capacity, attestations, signed, token, 
   } finally { cleartext?.fill(0);resultKey?.fill(0); } // Best effort only; strings/crypto internals may retain copies.
   // Reobserve after local key recovery/wrapping; neither a saved lease nor an
   // earlier active snapshot authorizes a later delivery after state changes.
-  const finalHead = await readCurrentEscrow({ ...network, orderId: payload.value.orderId, finalizedAnchor: finalized.finalizedBlock }, clock);
-  activeSnapshot(finalHead, lease, network);
+  const finalHead = marketBased ? await readMarketLeaseState(lease.proof, network, clock)
+    : await readCurrentEscrow({ ...network, orderId: payload.value.orderId, finalizedAnchor: finalized.finalizedBlock }, clock);
+  if (!marketBased) activeSnapshot(finalHead, lease, network);
   if (finalHead.headBlock.number < head.headBlock.number || finalHead.headBlock.timestamp >= request.expiresAt) throw Error('Latest funding view regressed or delivery window ended');
   return attestations.transaction(() => {
     checkWindow(payload, clock());
     if (clock() >= appraisal.expiresAt) throw Error('Attestation expired during key wrapping');
     const current = keyDeliveryPayload(capacity, attestations, request, clock());
-    if (current.digest !== payload.digest || inspectLease(capacity, request.leaseId).digest !== lease.digest) throw Error('Delivery approval or lease changed during wrapping');
+    if (current.digest !== payload.digest || agreement(capacity, request.leaseId).digest !== lease.digest) throw Error('Delivery approval or lease changed during wrapping');
     const record = { schema: 'cannabis.key-delivery.record.v'+payload.domain.version, releaseId: request.releaseId, approvalDigest: payload.digest,
       nonce: request.nonce, issuedAt: clock(), expiresAt: Math.min(request.expiresAt, appraisal.expiresAt),
       envelope, envelopeSHA256: hash(envelope), attestationTokenSHA256: appraisal.tokenSHA256,

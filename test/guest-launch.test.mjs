@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
 import { Wallet, ZeroAddress } from 'ethers';
-import { encodeLaunchJSON, readLaunchJSON, parseLaunchSnapshot, validateLaunchAuthorities, launchConfigurationPayload, verifyLaunchConfiguration, prepareGuestLaunch } from '../compute/guest_launch.mjs';
+import { encodeLaunchJSON, readLaunchJSON, parseLaunchSnapshot, validateLaunchAuthorities, launchConfigurationPayload, verifyLaunchConfiguration, prepareGuestLaunch, publicLaunchAdmission } from '../compute/guest_launch.mjs';
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
 test('retained launch snapshots preserve canonical inputs and reject ambiguous or extra content',()=>{
@@ -69,6 +69,19 @@ test('missing, duplicated, foreign and wrong-root authorizations are refused',as
   for(const change of [{threshold:1},{maxValiditySeconds:7200},{chainId:1},{signers:[f.keys[0].address,Wallet.createRandom().address]}])
     assert.throws(()=>verifyLaunchConfiguration({...f.authorities,...change},signed,1500));
   assert.throws(()=>validateLaunchAuthorities({...f.authorities,signers:[f.keys[0].address,f.keys[0].address]}));
+});
+
+test('market launch version binds the market deployment and rejects legacy production admission',async()=>{
+  const f=fixture(),c=structuredClone(f.configuration);
+  c.schema='cannabis.guest-launch-configuration.v2';c.context={chainId:31337,market:f.keys[0].address,token:ZeroAddress};
+  c.network.market=f.keys[0].address;c.network.marketCodeHash=h(90);
+  const signed=await f.sign(c),payload=launchConfigurationPayload(f.authorities,c);
+  assert.equal(payload.domain.version,'2');assert.equal(verifyLaunchConfiguration(f.authorities,signed,1500).configuration.schema,c.schema);
+  for(const mutate of [v=>v.context.market=f.keys[1].address,v=>v.network.marketCodeHash=h(91),
+    v=>v.schema='cannabis.guest-launch-configuration.v1',v=>v.context.registryId=h(92)]) {
+    const changed=structuredClone(signed);mutate(changed.configuration);assert.throws(()=>verifyLaunchConfiguration(f.authorities,changed,1500));
+  }
+  assert.throws(()=>publicLaunchAdmission({funding:{proof:{schema:'cannabis.lease-proof.v1'}}}));
 });
 
 test('configuration windows, secret-bearing extras and host-selected initialization policy are rejected',async()=>{

@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CapacityLedger } from '../compute/capacity.mjs';
-import { AttestationLedger, leaseAttestationBinding, requestTrusteeResult } from '../compute/attestation.mjs';
+import { AttestationLedger, leaseAttestationBinding, marketAttestationBinding, requestTrusteeResult } from '../compute/attestation.mjs';
 import { keyDeliveryPayload, sealJobKeyDelivery, inspectKeyDelivery, recoverRequesterJobKey } from '../compute/key_delivery.mjs';
 import { createResultKeyCustody, recoverRequesterResultKey } from '../compute/result_keys.mjs';
 
@@ -16,12 +16,19 @@ let capacity, attestations;
 try {
   if (!['challenge', 'appraise', 'prepare', 'seal', 'inspect', 'create-result-key'].includes(action) || !configFile || !inputFile) throw Error('Usage: node scripts/compute-key-delivery.mjs ACTION private-config.json private-input.json');
   const config = read(configFile), input = read(inputFile);
-  if (!fs.existsSync(config.capacityLedger)) throw Error('Existing funded capacity ledger required');
-  capacity = new CapacityLedger(config.capacityLedger, config.context);
+  if (config.marketProofFile) {
+    if (config.capacityLedger) throw Error('Select the market proof without a legacy capacity database');
+    capacity = { schema: 'cannabis.market-requester.v1', context: config.context, proof: read(config.marketProofFile) };
+  } else {
+    if (!fs.existsSync(config.capacityLedger)) throw Error('Existing funded capacity ledger required');
+    capacity = new CapacityLedger(config.capacityLedger, config.context);
+  }
   attestations = new AttestationLedger(config.attestationLedger, read(config.attestationPolicyFile));
   let result;
   if (action === 'create-result-key') result = await createResultKeyCustody(input);
-  else if (action === 'challenge') result = attestations.challenge(leaseAttestationBinding(capacity, input.leaseId, input.reservationId, input.run));
+  else if (action === 'challenge') result = attestations.challenge(config.marketProofFile
+    ? marketAttestationBinding(capacity.proof, config.context, input.reservationId, input.run)
+    : leaseAttestationBinding(capacity, input.leaseId, input.reservationId, input.run));
   else if (action === 'appraise') result = await requestTrusteeResult(attestations, config.trusteeEndpoint, input.nonce, input.channelJwk, input.evidence);
   else if (action === 'prepare') result = keyDeliveryPayload(capacity, attestations, input);
   else if (action === 'inspect') result = inspectKeyDelivery(attestations, input.releaseId);
@@ -36,4 +43,4 @@ try {
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
   console.error(JSON.stringify({ error: error.message })); process.exitCode = 1;
-} finally { attestations?.close(); capacity?.close(); }
+} finally { attestations?.close(); capacity?.close?.(); }

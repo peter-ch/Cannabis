@@ -4,6 +4,7 @@ import { openDurableDatabase } from './sqlite_runtime.mjs';
 import { importJWK, jwtVerify } from 'jose';
 import { getAddress } from 'ethers';
 import { inspectLease } from './leases.mjs';
+import { verifyMarketLeaseProof } from './market_lease.mjs';
 
 export const TRUSTEE_REVISION = '512fed65642015b849f38fb13bfdec7806639987';
 const PROFILE = 'tag:github.com,2024:confidential-containers/Trustee';
@@ -81,6 +82,18 @@ export function leaseAttestationBinding(ledger, leaseId, reservationId, run, now
   const job = record.agreement.request.job;
   const binding = { chainId: ledger.context.chainId, escrow: record.escrow, orderId: record.orderId,
     leaseDigest: record.digest, reservationId, packageSHA256: job.packageSHA256, policySHA256: job.policySHA256, ...run };
+  validateAttestationBinding(binding); return binding;
+}
+
+// The complete group digest commits the market and booking digests; each booking
+// commits its immutable offer/resource, requester, price and settlement terms.
+// No saved observation is a fresh chain check or permission to release keys.
+export function marketAttestationBinding(proof, context, bookingId, run, now = seconds()) {
+  exact(run, ['runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass']);
+  const lease = verifyMarketLeaseProof(proof, context), reservation = lease.reservations.find(r => r.reservationId === bookingId);
+  if (!reservation || !Number.isSafeInteger(now) || reservation.end <= now) throw Error('Unknown or elapsed market booking');
+  const binding = { chainId: context.chainId, escrow: lease.escrow, orderId: lease.orderId,
+    leaseDigest: lease.digest, reservationId: bookingId, packageSHA256: lease.job.packageSHA256, policySHA256: lease.job.policySHA256, ...run };
   validateAttestationBinding(binding); return binding;
 }
 

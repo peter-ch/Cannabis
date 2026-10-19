@@ -38,24 +38,24 @@ The original guest session still enforces requester signatures, its retained ass
 
 ## Fresh funding inside the guest
 
-`exportLeaseProof(ledger, leaseId)` in `compute/lease_proof.mjs` exports the complete signed lease agreement, its signed offers and reservations, and the original funding block reference. The proof contains no customer code, arguments, content keys or decrypted artifacts. The receiver must bound its transport to 16 MiB before parsing. `verifyLeaseProof` independently reconstructs every signature, quote, provider share, settlement commitment and ordered reservation digest. A saved ledger's `funded` flag or JSON snapshot is not accepted as chain evidence.
+`createMarketLeaseProof` in `compute/market_lease.mjs` reads the complete activated [on-chain booking group](decentralized-compute.md#protected-booking-and-key-delivery-binding) and its fully accepted escrow at one finalized canonical block. The portable proof contains public commitments and an anchor, with no customer code, arguments, content keys or decrypted artifacts. It is limited to 1 MiB and 64 bookings; bound transport before parsing too. Offline `verifyMarketLeaseProof` reconstructs commitments, quotes and exact worker shares but does not prove the records exist. Both requester and guest independently reread the chain before keys are used. Historical `exportLeaseProof` utilities remain for isolated legacy checks and are rejected by the retained operating launcher.
 
 The initialized control plane requires this configuration when creating a session:
 
 ```js
 const funding = {
-  proof: signedLeaseProof,
-  context: approvedCapacityDomain, // chainId, registryId, token
+  proof: marketLeaseProof,
+  context: approvedMarketDomain, // chainId, market, token
   network: approvedNetwork,      // authenticated RPC and pinned release hashes
   provider: approvedProvider,
-  resourceId: approvedResourceId,
+  resourceId: approvedResourceKey, // provider-qualified on-chain resource key
   serviceSHA256: approvedServiceCommitment
 };
 ```
 
 The guest retains its own copies. The approved domain, provider, resource, service and RPC/release pins must come from reviewed measured configuration. They cannot be taken from the same host message as the proof. Resource promises still require actual capacity admission and enforcement; checking a signed service commitment does not supply hardware or prove exclusive allocation across separate registries.
 
-`GuestFunding` rereads the original block and checks that fully accepted escrow funding existed before the signed lease expired. It then checks a fresh finalized snapshot and a canonical latest head, including all worker acceptances, exact settlement terms, fee policy, network and runtime-code pins. The original and fresh finalized anchors must remain canonical through the last read. State reads use hash-bound requests with `requireCanonical`, as specified by [EIP-1898](https://eips.ethereum.org/EIPS/eip-1898). The selected RPC is a reviewed trust dependency; these observations are not a consensus light client or a guarantee against later chain changes.
+`GuestFunding` rereads the original block and verifies the activated booking group and fully accepted escrow funding. Activation deadlines are enforced by the immutable market contract; the finalized observation itself may be later than hold expiry. It then checks a fresh finalized snapshot and a canonical latest head, including all worker acceptances, exact settlement terms, fee policy, market/escrow/asset runtime pins and network identity. The original and fresh finalized anchors must remain canonical through the last read. State reads use hash-bound requests with `requireCanonical`, as specified by [EIP-1898](https://eips.ethereum.org/EIPS/eip-1898). The selected RPC is a reviewed trust dependency; these observations are not a consensus light client or a guarantee against later chain changes.
 
 A funded session repeats those reads before and after opening its requester-approved envelope. Cancellation, a changed order, stale observations or an elapsed service interval retire the session without returning a key. The short challenge/key-delivery expiry is separate from the signed service interval. A signing hold may have expired while a genuinely funded reservation remains valid. The session exposes a copy of `serviceInterval`; its preparation timeout is capped by the remaining interval, with a final expiry check before returning success. A retained monotonic deadline prevents refreshing the gate from restarting that interval, and backward wall-clock changes fail. Trustworthy time and resistance to a hostile host pausing or rolling back the entire VM still require the outer protected lifecycle.
 

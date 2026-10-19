@@ -1,6 +1,6 @@
 # Signed capacity offers and reservations
 
-The current architecture requires [shared on-chain reservations](decentralized-compute.md) and direct participation by independent providers. This page describes the older local ledger and its existing guest-proof integration. It is not the authority for the decentralized market. The new market contract and client are implemented for review; migration of the protected execution path is still required.
+The current architecture requires [shared on-chain reservations](decentralized-compute.md) and direct participation by independent providers. This page documents the older local ledger for historical component checks. It is not the authority for the decentralized market. The requester and guest now have a direct on-chain booking proof path; the retained operating launcher requires its version-2 configuration and has no local-ledger fallback. Updated images, decentralized launch consent, hardware admission and paid acceptance remain unfinished.
 
 The capacity module gives the compute economy a concrete offer format, a local reservation ledger and a bridge from temporary holds to funded service leases. Providers sign service terms; requesters and providers both sign reservations and the subsequent lease bundle. The ledger rejects overlapping commitments that exceed either an offer's limit or its admitted resource capacity, including when separate offers refer to the same resource.
 

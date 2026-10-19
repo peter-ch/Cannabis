@@ -1,0 +1,248 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import net from 'node:net';
+import http from 'node:http';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { AbiCoder, ContractFactory, formatUnits, keccak256, ZeroAddress } from 'ethers';
+import { compile } from '../scripts/compile.mjs';
+import { startNode } from '../scripts/lib.mjs';
+import { policy } from '../scripts/compute-plan.mjs';
+import { settlementTerms, termsDigest } from '../scripts/compute-escrow.mjs';
+import { bookingPayload } from '../compute/market.mjs';
+import { createMarketLeaseProof, verifyMarketLeaseProof, readMarketLeaseState } from '../compute/market_lease.mjs';
+import { marketAttestationBinding, AttestationLedger, trusteeRuntimeData } from '../compute/attestation.mjs';
+import { GuestFunding } from '../compute/guest_funding.mjs';
+import { guestInitialization } from '../compute/guest_initialization.mjs';
+import { keyDeliveryPayload, sealJobKeyDelivery } from '../compute/key_delivery.mjs';
+import { sealResultDelivery, openResultDelivery } from '../compute/result_delivery.mjs';
+import { resultKeyCommitment } from '../compute/result_keys.mjs';
+
+const h = n => '0x' + n.toString(16).padStart(64, '0');
+const utc = n => new Date(n * 1000).toISOString().replace('.000Z', 'Z');
+const coder = AbiCoder.defaultAbiCoder();
+function syntheticEAR(key, policy, challenge, channel, now) {
+  const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])])) : value;
+  const runtime = trusteeRuntimeData(challenge, channel), m = policy.measurements;
+  const claims = { iss: policy.issuer, iat: now, exp: now + 120, eat_profile: 'tag:github.com,2024:confidential-containers/Trustee',
+    'ear.verifier-id': { developer: 'https://confidentialcontainers.org', build: policy.verifierBuild }, submods: { cpu0: {
+      'ear.status': 'affirming', 'ear.appraisal-policy-id': policy.appraisalPolicyId,
+      'ear.trustworthiness-vector': { 'instance-identity': 0, configuration: 2, executables: 3, 'file-system': 0, hardware: 2, 'runtime-opaque': 0, 'storage-opaque': 0, 'sourced-data': 0 },
+      'ear.veraison.annotated-evidence': { snp: { measurement: m.launch, policy_debug_allowed: false, policy_migrate_ma: false,
+        reported_tcb_bootloader: 1, reported_tcb_tee: 1, reported_tcb_snp: 1, reported_tcb_microcode: 1 }, init_data: m.initData,
+        init_data_claims: null, runtime_data_claims: runtime,
+        report_data: createHash('sha384').update(JSON.stringify(canonical(runtime))).digest('hex') + '00'.repeat(16) } } } };
+  const body = [{ alg: 'ES256', typ: 'JWT', jwk: key.publicKey.export({ format: 'jwk' }) }, claims].map(v => Buffer.from(JSON.stringify(v)).toString('base64url')).join('.');
+  return body + '.' + sign('sha256', Buffer.from(body), { key: key.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+}
+let node, provider, owner, workers, judge, native, tokenEscrow, market, asset, initial;
+const port = () => new Promise(resolve => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
+before(async () => {
+  const artifacts = compile({ 'MarketLeaseAsset.sol': { content: `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+contract MarketLeaseAsset is ERC20 { constructor() ERC20("Isolated verification", "FIX") { _mint(msg.sender, 1000000 ether); } }
+` } });
+  node = await startNode(await port(), 'market-lease-test-node.log'); provider = node.provider;
+  const accounts = await Promise.all([0, 1, 2, 3].map(i => provider.getSigner(i))); [owner, ...workers] = accounts; judge = workers.pop();
+  const deploy = async (name, args = []) => { const a = artifacts[name], c = await new ContractFactory(a.abi, a.bytecode, owner).deploy(...args); await c.waitForDeployment(); return c; };
+  asset = await deploy('MarketLeaseAsset'); native = await deploy('ComputeEscrow', [ZeroAddress, policy.founderRecipient]);
+  tokenEscrow = await deploy('ComputeEscrow', [await asset.getAddress(), policy.founderRecipient]);
+  market = await deploy('ComputeMarket', [await native.getAddress(), await tokenEscrow.getAddress()]);
+  await (await asset.approve(await tokenEscrow.getAddress(), 100000000n)).wait();
+  initial = await provider.send('evm_snapshot', []);
+});
+after(() => { provider?.destroy(); node?.child.kill(); });
+
+async function setup({ token = false, activate = true } = {}) {
+  await provider.send('evm_revert', [initial]); initial = await provider.send('evm_snapshot', []);
+  let time = (await provider.getBlock('latest')).timestamp;
+  await provider.send('evm_setNextBlockTimestamp', [time + 1]); await provider.send('evm_mine', []); ++time;
+  const clock = () => time, start = time + 1000, end = start + 100, escrow = token ? tokenEscrow : native;
+  const account = await owner.getAddress(), addresses = await Promise.all(workers.map(w => w.getAddress()));
+  const network = { rpc: node.rpc, chainId: 31337, market: await market.getAddress(), marketCodeHash: keccak256(await provider.getCode(await market.getAddress())),
+    token: token ? await asset.getAddress() : ZeroAddress, escrow: await escrow.getAddress(), genesisHash: (await provider.getBlock(0)).hash,
+    escrowCodeHash: keccak256(await provider.getCode(await escrow.getAddress())), tokenCodeHash: token ? keccak256(await provider.getCode(await asset.getAddress())) : null,
+    finality: 'rpc-finalized', maxFinalizedAgeSeconds: 1800, maxHeadAgeSeconds: 120 };
+  const context = { chainId: 31337, market: network.market, token: network.token };
+  const job = { schema: 'cannabis.compute.order.v2', id: 'market-private-job', requester: account, packageSHA256: h(70).slice(2),
+    policySHA256: h(71).slice(2), acceptanceSHA256: h(72).slice(2),
+    payment: { totalBudget: formatUnits(20000n, 18), feeBasisPoints: 100, founderRecipient: policy.founderRecipient } };
+  const settlement = { workers: addresses.map(account => ({ account, shareBps: 5000 })), deliveryManager: addresses[0],
+    adjudicator: await judge.getAddress(), acceptBy: utc(time + 800), deliverBy: utc(end + 60), reviewSeconds: 86400, disputeSeconds: 86400 };
+  const terms = settlementTerms(job, settlement), orderId = await escrow.orderId(account, terms.terms.jobHash);
+  const digest = termsDigest({ chainId: 31337, escrow: network.escrow, token: network.token, founderRecipient: policy.founderRecipient, ...terms });
+  const bookings = [], signatures = [], ids = [];
+  for (let i = 0; i < 2; ++i) {
+    await (await market.connect(workers[i]).publishResource(h(10 + i), h(20 + i), 1)).wait();
+    const resource = await market.resourceKey(addresses[i], h(10 + i));
+    const offer = { resource, escrow: network.escrow, policyHash: '0x' + job.policySHA256, manifestHash: h(30 + i), start, end,
+      expiresAt: time + 900, units: 1, grossPerUnitSecond: 100 };
+    await (await market.connect(workers[i]).publishOffer(h(40 + i), offer)).wait();
+    const offerId = keccak256(coder.encode(['address', 'bytes32'], [addresses[i], h(40 + i)]));
+    const booking = { reservationId: h(50 + i), offerId, requester: account, orderId, termsDigest: digest, start, end, units: 1, gross: '10000', holdUntil: time + 600 };
+    const p = bookingPayload(context, booking); bookings.push(booking); ids.push(p.digest);
+    signatures.push(await workers[i].signTypedData(p.domain, p.types, p.value));
+  }
+  await (await market.reserveBatch(bookings, signatures)).wait();
+  await (await escrow.fund(terms.terms, terms.accounts, terms.shares, { value: token ? 0 : 20000 })).wait();
+  for (const w of workers) await (await escrow.connect(w).accept(orderId)).wait();
+  if (activate) await (await market.activate(ids.sort())).wait();
+  time = (await provider.getBlock('latest')).timestamp;
+  const input = { job, settlement, bookingIds: ids };
+  const proof = activate ? await createMarketLeaseProof(network, input, clock) : null;
+  const run = { runtimeSHA256: h(73).slice(2), taskSHA256: h(74).slice(2), attempt: 1, rank: 0, worldSize: 1, acceleratorClass: 'cpu' };
+  const setTime = async value => { time = value; await provider.send('evm_setNextBlockTimestamp', [time]); await provider.send('evm_mine', []); };
+  return { network, context, input, proof, clock, setTime, start, end, escrow, orderId, ids, run };
+}
+
+function guest(d, proof = d.proof, changes = {}) {
+  const lease = verifyMarketLeaseProof(proof, d.context), r = lease.reservations[0];
+  const binding = marketAttestationBinding(proof, d.context, r.reservationId, d.run, d.clock());
+  const initialization = { schema: 'cannabis.guest-initialization.v1', tee: 'snp', requester: lease.requester, jobId: lease.job.id, binding };
+  const options = { proof, context: d.context, network: d.network, provider: r.provider, resourceId: r.resourceId, serviceSHA256: r.serviceSHA256, ...changes };
+  return { lease, r, initialization, funding: new GuestFunding(options, initialization, { clock: d.clock }) };
+}
+
+test('a complete ETH or token market group independently funds the retained guest without a capacity database', async () => {
+  for (const token of [false, true]) {
+    const d = await setup({ token }); await d.setTime(d.start + 1);
+    const g = guest(d);
+    try {
+      assert.equal(g.lease.providers.length, 2); g.funding.assertService({ serviceSHA256: g.r.serviceSHA256, units: 1 });
+      const state = await g.funding.refresh();
+      assert.equal(state.schema, 'cannabis.guest-funding.v2'); assert.equal(state.leaseDigest, g.lease.digest);
+      assert.equal(state.executionAuthorized, false); assert.equal(state.hardwareVerified, false);
+      assert.equal(state.reservationId, d.ids[0]); assert.ok(state.headBlock.number >= state.finalizedBlock.number);
+    } finally { g.funding.close(); }
+  }
+});
+
+test('unactivated and incomplete groups cannot become requester proofs', async () => {
+  const held = await setup({ activate: false });
+  await assert.rejects(createMarketLeaseProof(held.network, held.input, held.clock), /activated bookings/);
+  const d = await setup();
+  await assert.rejects(createMarketLeaseProof(d.network, { ...d.input, bookingIds: [d.ids[0]] }, d.clock), /Incomplete/);
+});
+
+test('proof commitments reject workload, price, shares, group, network and byte-format substitution', async () => {
+  const d = await setup();
+  for (const mutate of [p => p.job.packageSHA256 = h(90).slice(2), p => p.job.policySHA256 = h(90).slice(2),
+    p => p.job.acceptanceSHA256 = h(90).slice(2), p => p.bookings.reverse(), p => p.bookings.pop(),
+    p => p.bookings[0].booking.gross = '9999', p => p.bookings[0].offer.policyHash = h(99),
+    p => p.bookings[0].booking.start = '0' + p.bookings[0].booking.start, p => p.bookings[0].resource.units = '0',
+    p => p.settlement.workers[0].shareBps = 4999, p => p.chainId = 1, p => p.market = '0x' + '12'.repeat(20),
+    p => p.token = d.network.escrow, p => p.fundedAnchor.timestamp = -1, p => p.bookings[0].secret = 'not-a-field']) {
+    const p = structuredClone(d.proof); mutate(p); assert.throws(() => verifyMarketLeaseProof(p, d.context));
+  }
+});
+
+test('locally consistent invented service/resource/provider data is refused by fresh chain reads', async () => {
+  const d = await setup(); await d.setTime(d.start + 1);
+  for (const mutate of [p => p.bookings[0].resource.serviceHash = h(91), p => p.bookings[0].offer.resource = h(92),
+    p => p.bookings[0].offer.manifestHash = h(93), p => p.bookings.forEach(r => r.resource.units = '2')]) {
+    const p = structuredClone(d.proof); mutate(p);
+    verifyMarketLeaseProof(p, d.context); // Structural consistency is deliberately insufficient.
+    await assert.rejects(readMarketLeaseState(p, d.network, d.clock), /activated bookings differ/);
+  }
+});
+
+test('withdrawn offers preserve admitted bookings, but a delivered order immediately closes the guest', async () => {
+  const d = await setup(); await d.setTime(d.start + 1);
+  const g = guest(d), record = d.proof.bookings[0];
+  const worker = workers.find(w => w.address === record.resource.provider);
+  await (await market.connect(worker).withdrawOffer(record.booking.offerId)).wait();
+  await g.funding.refresh();
+  await (await d.escrow.connect(workers[0]).deliver(d.orderId, h(95))).wait();
+  await assert.rejects(g.funding.refresh(), /fully accepted active/);
+  assert.throws(() => g.funding.assertWindow(), /closed/);
+});
+
+test('guest assignment, approved resource, interval, and deployment pins cannot be replaced', async () => {
+  const d = await setup();
+  for (const changes of [{ provider: await judge.getAddress() }, { resourceId: h(99) }, { serviceSHA256: h(99).slice(2) },
+    { network: { ...d.network, market: d.network.escrow } }]) assert.throws(() => guest(d, d.proof, changes));
+  await assert.rejects(guest(d).funding.refresh(), /not started/);
+  await d.setTime(d.start + 1);
+  for (const changes of [{ marketCodeHash: h(99) }, { escrowCodeHash: h(99) }, { genesisHash: h(99) }, { chainId: 1 }])
+    await assert.rejects(readMarketLeaseState(d.proof, { ...d.network, ...changes }, d.clock));
+  const g = guest(d); await d.setTime(d.end); await assert.rejects(g.funding.refresh(), /expired/);
+});
+
+async function proxy(transform) {
+  const server = http.createServer(async (req, res) => {
+    try {
+      const parts = []; for await (const p of req) parts.push(p); const input = JSON.parse(Buffer.concat(parts));
+      const one = async m => transform(m, await (await fetch(node.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(m) })).json());
+      const result = Array.isArray(input) ? await Promise.all(input.map(one)) : await one(input);
+      res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(result));
+    } catch { res.writeHead(500); res.end(); }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  return { rpc: 'http://127.0.0.1:' + server.address().port, close: async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
+}
+
+test('original activation block substitution, timestamp forgery and unsupported hash reads fail closed', async () => {
+  const d = await setup(); await d.setTime(d.start + 1);
+  for (const mutate of [p => p.fundedAnchor.hash = h(90), p => p.fundedAnchor.timestamp--, p => p.fundedAnchor.number--]) {
+    const p = structuredClone(d.proof); mutate(p); await assert.rejects(readMarketLeaseState(p, d.network, d.clock));
+  }
+  let reads = 0;
+  const p = await proxy((m, r) => {
+    if (['eth_getCode', 'eth_call'].includes(m.method)) {
+      assert.equal(m.params[1].requireCanonical, true); ++reads;
+      return { id: m.id, jsonrpc: '2.0', error: { code: -32602, message: 'Canonical hash reads unavailable' } };
+    } return r;
+  });
+  try { await assert.rejects(readMarketLeaseState(d.proof, { ...d.network, rpc: p.rpc }, d.clock)); assert.ok(reads > 0); }
+  finally { await p.close(); }
+});
+
+test('freshness and latest inactive funding cannot be hidden behind a valid original proof', async () => {
+  const d = await setup(); await d.setTime(d.start + 1);
+  await assert.rejects(readMarketLeaseState(d.proof, d.network, () => d.clock() + 1801), /stale/);
+  const abi = d.escrow.interface;
+  const p = await proxy((m, r) => {
+    if (m.method === 'eth_call' && m.params[0].to.toLowerCase() === d.network.escrow.toLowerCase() &&
+        m.params[0].data.startsWith(abi.getFunction('orders').selector) && m.params[1].blockHash !== d.proof.fundedAnchor.hash) {
+      const decoded = [...abi.decodeFunctionResult('orders', r.result)]; decoded[2] = 3n;
+      return { ...r, result: abi.encodeFunctionResult('orders', decoded) };
+    } return r;
+  });
+  try { await assert.rejects(readMarketLeaseState(d.proof, { ...d.network, rpc: p.rpc }, d.clock), /fully accepted active/); }
+  finally { await p.close(); }
+});
+
+test('requester approval and encrypted result recovery retain the market group without a capacity journal', async () => {
+  const d = await setup(); await d.setTime(d.start + 1);
+  const g = guest(d), key = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const p = { schema: 'cannabis.attestation.trustee-policy.v1', issuer: 'Fixture only', signingJwk: key.publicKey.export({ format: 'jwk' }),
+    verifierBuild: 'synthetic fixture', appraisalPolicyId: 'fixture', maxTokenAgeSeconds: 90, maxTokenLifetimeSeconds: 120, challengeTTLSeconds: 90,
+    tee: 'snp', measurements: { launch: '11'.repeat(48), initData: guestInitialization(g.initialization).digest, minimumTCB: { bootloader: 1, tee: 1, snp: 1, microcode: 1 } } };
+  const attestations = new AttestationLedger(':memory:', p, d.clock);
+  try {
+    const challenge = attestations.challenge(g.initialization.binding), resultKey = Buffer.alloc(32, 7);
+    const source = { schema: 'cannabis.market-requester.v1', context: d.context, proof: d.proof };
+    const descriptor = { schema: 'cannabis.package.v2', id: g.lease.job.id, ciphertextSHA256: g.lease.job.packageSHA256,
+      policySHA256: g.lease.job.policySHA256, recipient: 'age1' + 'a'.repeat(58),
+      keyCustody: { schema: 'cannabis.job-key.custody.v1', format: 'age-v1+json', ciphertextSHA256: h(96).slice(2), ciphertextBytes: 100 } };
+    const request = { releaseId: h(97), leaseId: g.lease.digest, nonce: challenge.nonce, channelJwk: key.publicKey.export({ format: 'jwk' }),
+      descriptor, notBefore: d.clock(), expiresAt: d.clock() + 60, resultKeySHA256: resultKeyCommitment(resultKey) };
+    const payload = keyDeliveryPayload(source, attestations, request, d.clock());
+    assert.equal(payload.value.leaseDigest, g.lease.digest); assert.equal(payload.value.reservationId, g.r.reservationId);
+    assert.equal(payload.keyReleaseAuthorized, false);
+    assert.throws(() => keyDeliveryPayload(source, attestations, { ...request, leaseId: h(99) }, d.clock()), /group differs/);
+    const receipt = { schema: 'cannabis.result.v1', jobId: g.lease.job.id, packageSHA256: g.lease.job.packageSHA256,
+      attempt: 1, rank: 0, worldSize: 1, taskId: 'work', recipient: 'age1' + 'b'.repeat(58), ciphertextSHA256: h(98).slice(2), ciphertextBytes: 100 };
+    const envelope = await sealResultDelivery(receipt, resultKey, payload);
+    assert.equal((await openResultDelivery(envelope, resultKey, payload)).receiptAuthenticated, true);
+    await assert.rejects(openResultDelivery(envelope, resultKey, { ...payload, value: { ...payload.value, leaseDigest: h(99) } }));
+    const signed = { request, requesterSignature: await owner.signTypedData(payload.domain, payload.types, payload.value) };
+    const token = syntheticEAR(key, p, challenge, request.channelJwk, d.clock()); let recoveries = 0;
+    await assert.rejects(sealJobKeyDelivery(source, attestations, signed, token, d.network, () => { ++recoveries; throw Error('Reached owned key callback'); }, { clock: d.clock }), /Reached owned key callback/);
+    assert.equal(recoveries, 1); // The positive chain and synthetic appraisal reach local custody.
+    await (await d.escrow.connect(workers[0]).deliver(d.orderId, h(95))).wait();
+    await assert.rejects(sealJobKeyDelivery(source, attestations, signed, token, d.network, () => { ++recoveries; throw Error('Must not recover'); }, { clock: d.clock }), /fully accepted active/);
+    assert.equal(recoveries, 1); // A later inactive order cannot reach local custody.
+  } finally { attestations.close(); g.funding.close(); }
+});

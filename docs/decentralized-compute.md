@@ -37,7 +37,7 @@ A reservation contains a requester-scoped nonce, offer ID, requester, escrow ord
 2. Record the signed capacity holds on the market contract. Confirm the complete group fits before submitting funding.
 3. Fund the corresponding escrow order using your wallet. Each provider reviews the same terms and records its own acceptance.
 4. Before hold expiry and work start, anyone can activate the complete booking group. The market requires a fully accepted `Active` escrow order, matching requester and settlement digest, covered deadlines, exact total budget and exactly matching per-provider gross shares. Duplicate, partial or mixed-order groups fail. Activation reserves capacity through each booked end time.
-5. The requester and protected guest must independently verify finalized booking and funding state, current assignment and fresh hardware evidence before any key release. This integration is still pending; a market reservation alone cannot authorize execution.
+5. The requester and protected guest independently verify the original activation/funding anchor, fresh finalized bookings and escrow, and current canonical state. The versioned market proof binds the complete booking group to the retained assignment. Fresh hardware evidence and protected execution admission remain separate requirements; a market reservation alone cannot authorize execution.
 6. Return encrypted outputs for requester verification and reconstruction. Settle through the existing [payment escrow](compute-payments.md), retaining the included 1% founder fee and 99% worker payment.
 
 Funding, provider acceptance and booking activation are separate transactions. Allow time for signing and finality. Expired holds cannot be resurrected after another booking takes the capacity. If funding succeeded but activation missed its deadline, the existing escrow cancellation, delivery and dispute rules apply; an already active escrow does not offer an immediate unconditional refund. A production client must make this sequence and its failure recovery explicit.
@@ -53,6 +53,8 @@ node scripts/compute-market.mjs booking-payload context.json booking.json
 node scripts/compute-market.mjs prepare context.json operation.json
 node scripts/compute-market.mjs offers network.json range.json
 node scripts/compute-market.mjs bookings network.json selection.json
+node scripts/compute-market.mjs lease-proof funding-network.json group.json
+node scripts/compute-market.mjs lease-state funding-network.json market-proof.json
 ```
 
 `context.json` contains `chainId` and `market`. A preparation operation contains `from`, `method` and ABI `args`; supported methods are `publishResource`, `publishOffer`, `withdrawOffer`, `reserveBatch` and `activate`. Activation uses strictly ascending unique booking digests. The [public client source](../compute/market.mjs) defines the booking fields. The reviewed contract source and ABI are in the public repository.
@@ -65,6 +67,18 @@ Offer ranges contain `fromBlock` and `toBlock`, at most 256 blocks per request. 
 
 RPC-reported finality is still trust in that RPC, not a locally verified consensus proof. The production client needs an independently validated consensus view or an explicitly reviewed RPC arrangement; a founder RPC cannot be the mandatory trust root. A log scan can be censored by an untrusted endpoint even when returned offers pass state checks. Indexers are discovery aids, never booking authorities.
 
+## Protected booking and key-delivery binding
+
+`group.json` contains the universal encrypted `job`, agreed `settlement` and complete `bookingIds`. The funding network adds the selected `escrow`, `token`, `escrowCodeHash`, `tokenCodeHash` and `maxHeadAgeSeconds` (1–120) to the market reader configuration. Native ETH uses the zero token address and a null token hash. The proof builder reads activated bookings and fully accepted funding at the same canonical finalized block; it never creates bookings or signs transactions.
+
+The portable `cannabis.market-lease.v1` document carries immutable bookings, offers, resource declarations, workload/settlement commitments and the original block anchor. Its group digest commits a distinct versioned domain, chain, market, escrow, order, settlement digest and sorted booking digests. The existing attestation/key-delivery field `leaseDigest` carries this group digest; `reservationId` carries the full on-chain booking digest, not its requester nonce. The approved `resourceId` is the contract's provider-qualified resource key. Service hashes retain their `0x` prefix.
+
+Offline proof validation only checks internal commitments. The requester and guest each reread the original canonical state, fresh finalized state and latest state before key use; requester wrapping also rechecks after local key recovery. Invented records, partial groups, changed deployments, inactive orders, expired intervals and changed anchors fail closed. An offer withdrawal preserves an already activated booking. The original observation may occur after the hold expiry because finality can lag activation; the immutable contract enforces the activation deadline.
+
+Requester key-delivery configuration can use `marketProofFile` and `{ chainId, market, token }` as its context. No `capacityLedger` is opened in that path. Its attestation/replay journal remains local requester state, not shared reservation authority. Key approvals and encrypted result receipts continue to bind the exact group, booking, package, policy, runtime, task, rank and attempt.
+
+The retained operating launcher requires `cannabis.guest-launch-configuration.v2`, including market address/runtime pins, and rejects the old local-ledger proof. Legacy utilities remain for historical component checks. The launch-authority mechanism still needs replacement with requester/provider consent before decentralized production admission. Updated measured images, actual confidential hardware, independent review and genuine paid acceptance remain release requirements.
+
 ## Limits and remaining trust
 
 The contract bounds active or unexpired inventory to 64 bookings per resource and each batch to 64 entries. These are safety bounds, not promised throughput. Gas grows with the number and arrangement of overlapping bookings. A larger planner graph does not imply it fits in one market batch or transaction. The current time-rate quote uses integer base units with rates in multiples of 100, preserving exact fee precision. Other pricing models need reviewed formats.
@@ -73,4 +87,4 @@ On-chain inventory prevents conflicting recorded reservations for the same decla
 
 Blockchain makes agreement and payment state shared; public amounts, wallet activity, booking intervals and commitments remain visible. It does not conceal software running on an ordinary host. Keys must remain under requester control and reach only a correctly attested protected runtime. Attestation trust must be requester-selected or locally verified; a single founder verifier, signing service or software allowlist cannot become mandatory network admission. Hardware manufacturer roots and any chosen external verifier remain explicit trust dependencies.
 
-The existing SQLite capacity module is a legacy local coordination component. Its records do not become decentralized by being copied or renamed. Existing guest lease proofs still use that format. Replacing this guest gate with independently verified on-chain bookings, finishing peer transport and manifest distribution, removing any mandatory launch authority, integrating the visible worker GUI, and independently reviewing the complete system remain launch work. No claim of a fully decentralized operational network is made before those paths work together.
+The existing SQLite capacity module is a legacy local coordination component. Its records do not become decentralized by being copied or renamed. The new requester/guest market path replaces that authority with direct chain verification, while historical helpers retain their original format. Finishing peer transport and manifest distribution, removing any mandatory global launch authority, integrating the visible worker GUI, admitting actual hardware and independently reviewing the complete system remain launch work. No claim of a fully decentralized operational network is made before those paths work together.

@@ -7,14 +7,14 @@ import { execFileSync } from 'node:child_process';
 import { Socket } from 'node:net';
 import { ContractFactory, formatUnits, keccak256, ZeroAddress } from '../../node_modules/ethers/lib.esm/index.js';
 import { localProvider } from '../../scripts/lib.mjs';
-import { CapacityLedger, offerPayload, reservationPayload } from '../../compute/capacity.mjs';
-import { leasePayload, promoteLease } from '../../compute/leases.mjs';
-import { exportLeaseProof } from '../../compute/lease_proof.mjs';
-import { AttestationLedger, leaseAttestationBinding, trusteeRuntimeData } from '../../compute/attestation.mjs';
+import { compile } from '../../scripts/compile.mjs';
+import { bookingPayload } from '../../compute/market.mjs';
+import { createMarketLeaseProof, verifyMarketLeaseProof } from '../../compute/market_lease.mjs';
+import { AttestationLedger, marketAttestationBinding, trusteeRuntimeData } from '../../compute/attestation.mjs';
 import { guestInitialization } from '../../compute/guest_initialization.mjs';
 import { nativeServiceCommitment } from '../../compute/guest_execution.mjs';
 import { keyDeliveryPayload, sealJobKeyDelivery, recoverRequesterJobKey } from '../../compute/key_delivery.mjs';
-import { settlementTerms } from '../../scripts/compute-escrow.mjs';
+import { settlementTerms, termsDigest } from '../../scripts/compute-escrow.mjs';
 import { policy } from '../../scripts/compute-plan.mjs';
 import { createResultKeyCustody, recoverRequesterResultKey } from '../../compute/result_keys.mjs';
 import { ResultInbox } from '../../compute/result_inbox.mjs';
@@ -53,48 +53,53 @@ const wire=new GuestWire(new Socket({fd:input.wireFDs.read,readable:true,writabl
   new Socket({fd:input.wireFDs.write,readable:false,writable:true}),{timeoutMs:100000});
 try {
   const [requester,worker,adjudicator,receiver]=await Promise.all([0,1,2,3].map(i=>provider.getSigner(i)));
-  const artifact=JSON.parse(fs.readFileSync(input.artifact));
+  const artifacts=compile({'KernelMarketFixture.sol':{content:`// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixture", "FIX") {} }
+`}}),artifact=artifacts.ComputeEscrow;
   const escrow=await new ContractFactory(artifact.abi,artifact.bytecode,requester).deploy(ZeroAddress,policy.founderRecipient);
   await escrow.waitForDeployment();
   const address=await escrow.getAddress(),account=await requester.getAddress(),workerAccount=await worker.getAddress();
-  const context={chainId:31337,registryId:h(1),token:ZeroAddress};
-  capacity=new CapacityLedger(':memory:',context);
+  const token=await new ContractFactory(artifacts.KernelMarketAsset.abi,artifacts.KernelMarketAsset.bytecode,requester).deploy();await token.waitForDeployment();
+  const tokenEscrow=await new ContractFactory(artifact.abi,artifact.bytecode,requester).deploy(await token.getAddress(),policy.founderRecipient);await tokenEscrow.waitForDeployment();
+  const market=await new ContractFactory(artifacts.ComputeMarket.abi,artifacts.ComputeMarket.bytecode,requester).deploy(address,await tokenEscrow.getAddress());await market.waitForDeployment();
+  const context={chainId:31337,market:await market.getAddress(),token:ZeroAddress};
   const service=nativeServiceCommitment(input.execution);
   const now=clock(),start=Math.max(now,(await provider.getBlock('latest')).timestamp)+15,end=start+120;
   const gross=12000n;
-  capacity.admitResource({provider:workerAccount,resourceId:h(2),...service});
-  const offer={offerId:h(3),provider:workerAccount,resourceId:h(2),serviceSHA256:service.serviceSHA256,
-    policySHA256:'0x'+input.descriptor.policySHA256,token:ZeroAddress,windowStart:start,windowEnd:end,
-    expiresAt:start,units:1,grossPerUnitSecond:'100',feeBps:100,termsSHA256:h(4)};
-  const op=offerPayload(context,offer);
-  const offerDigest=capacity.addOffer({offer,signature:await worker.signTypedData(op.domain,op.types,op.value)},now).offerDigest;
-  const reservation={reservationId:h(5),offerDigest,requester:account,jobSHA256:'0x'+input.descriptor.ciphertextSHA256,
-    start,end,units:1,grossBaseUnits:gross.toString(),holdUntil:start-1};
-  const rp=reservationPayload(context,reservation);
-  capacity.reserve({reservation,requesterSignature:await requester.signTypedData(rp.domain,rp.types,rp.value),
-    providerSignature:await worker.signTypedData(rp.domain,rp.types,rp.value)},now);
+  await (await market.connect(worker).publishResource(h(2),service.serviceSHA256,service.units)).wait();
+  const resourceId=await market.resourceKey(workerAccount,h(2));
+  const offer={resource:resourceId,escrow:address,policyHash:'0x'+input.descriptor.policySHA256,manifestHash:h(4),
+    start,end,expiresAt:start,units:1,grossPerUnitSecond:'100'};
+  const offered=await (await market.connect(worker).publishOffer(h(3),offer)).wait();
+  const offerId=offered.logs.map(l=>{try{return market.interface.parseLog(l);}catch{return null;}}).find(e=>e?.name==='OfferPublished').args.offerId;
   const job={schema:'cannabis.compute.order.v2',id:input.descriptor.id,requester:account,
     packageSHA256:input.descriptor.ciphertextSHA256,policySHA256:input.descriptor.policySHA256,acceptanceSHA256:h(6).slice(2),
     payment:{totalBudget:formatUnits(gross,18),feeBasisPoints:100,founderRecipient:policy.founderRecipient}};
   const settlement={workers:[{account:workerAccount,shareBps:10000}],deliveryManager:workerAccount,
     adjudicator:await adjudicator.getAddress(),acceptBy:utc(start-1),deliverBy:utc(end+15),reviewSeconds:86400,disputeSeconds:86400};
-  const request={leaseId:h(7),reservationIds:[reservation.reservationId],job,settlement,escrow:address,expiresAt:start-1};
-  const lp=leasePayload(capacity,request,now);
-  const signed={request,requesterSignature:await requester.signTypedData(lp.domain,lp.types,lp.value),
-    providerSignatures:[{provider:workerAccount,signature:await worker.signTypedData(lp.domain,lp.types,lp.value)}]};
   const terms=settlementTerms(job,settlement);
-  await (await escrow.fund(terms.terms,terms.accounts,terms.shares,{value:gross})).wait();
   const orderId=await escrow.orderId(account,terms.terms.jobHash);
+  const digest=termsDigest({chainId:31337,escrow:address,token:ZeroAddress,founderRecipient:policy.founderRecipient,...terms});
+  const reservation={reservationId:h(5),offerId,requester:account,orderId,termsDigest:digest,start,end,units:1,gross:gross.toString(),holdUntil:start-1};
+  const rp=bookingPayload(context,reservation);
+  await (await market.reserveBatch([reservation],[await worker.signTypedData(rp.domain,rp.types,rp.value)])).wait();
+  await (await escrow.fund(terms.terms,terms.accounts,terms.shares,{value:gross})).wait();
   await (await escrow.connect(worker).accept(orderId)).wait();
+  await (await market.activate([rp.digest])).wait();
   const network={rpc:input.rpc,chainId:31337,token:ZeroAddress,escrow:address,
     genesisHash:(await provider.getBlock(0)).hash,escrowCodeHash:keccak256(await provider.getCode(address)),tokenCodeHash:null,
-    finality:'rpc-finalized',maxFinalizedAgeSeconds:1800,maxHeadAgeSeconds:120};
-  const lease=await promoteLease(capacity,signed,network);
+    finality:'rpc-finalized',maxFinalizedAgeSeconds:1800,maxHeadAgeSeconds:120,
+    market:context.market,marketCodeHash:keccak256(await provider.getCode(context.market))};
+  const proof=await createMarketLeaseProof(network,{job,settlement,bookingIds:[rp.digest]});
+  const lease=verifyMarketLeaseProof(proof,context);
+  capacity={schema:'cannabis.market-requester.v1',context,proof};
   // Advance the fixture chain only when actual UTC enters the reserved interval.
   // Production deadlines and clocks are not replaced with synthetic values.
   while(clock()<start)await new Promise(r=>setTimeout(r,100));
   await provider.send('evm_setNextBlockTimestamp',[clock()]);await provider.send('evm_mine',[]);
-  const binding=leaseAttestationBinding(capacity,lease.leaseId,reservation.reservationId,input.run,clock());
+  const binding=marketAttestationBinding(proof,context,rp.digest,input.run,clock());
   const initialization={schema:'cannabis.guest-initialization.v1',tee:'snp',requester:account,jobId:job.id,binding};
   const key=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
   const attestationPolicy={schema:'cannabis.attestation.trustee-policy.v1',issuer:'Owned joint fixture',
@@ -104,14 +109,13 @@ try {
       minimumTCB:{bootloader:1,tee:1,snp:1,microcode:1}}};
   attestations=new AttestationLedger(':memory:',attestationPolicy);
   const challenge=attestations.challenge(binding);
-  const funding={proof:exportLeaseProof(capacity,lease.leaseId),context,network,provider:workerAccount,
-    resourceId:h(2),serviceSHA256:service.serviceSHA256};
+  const funding={proof,context,network,provider:workerAccount,resourceId,serviceSHA256:service.serviceSHA256};
   // Disposable authority for this fixture only. Production reads its public
   // authorities from the measured image, never from the requester/host wire.
   const authorities={schema:'cannabis.guest-launch-authorities.v1',chainId:31337,signers:[account],threshold:1,maxValiditySeconds:3600};
   const template=structuredClone(attestationPolicy);template.measurements.initData=null;
-  const configuration={schema:'cannabis.guest-launch-configuration.v1',configurationId:h(9),validFrom:start-15,validUntil:end+60,
-    context,network,provider:workerAccount,resourceId:h(2),execution:input.execution,attestationPolicyTemplate:template,
+  const configuration={schema:'cannabis.guest-launch-configuration.v2',configurationId:h(9),validFrom:start-15,validUntil:end+60,
+    context,network,provider:workerAccount,resourceId,execution:input.execution,attestationPolicyTemplate:template,
     bootstrap:{agentBinary:'/usr/local/bin/ttrpc-aa',bridgeBinary:'/usr/local/bin/api-server-rest',runtimeDirectory:'/run',port:8006},
     transport:{timeoutMs:90000,maxCiphertextBytes:4*1024*1024}};
   const configPayload=launchConfigurationPayload(authorities,configuration);
@@ -124,7 +128,7 @@ try {
   const resultCustody=await createResultKeyCustody({releaseId:h(8),recipient:input.spec.resultRecipient});
   fs.writeFileSync(input.resultCustody,JSON.stringify(resultCustody),{flag:'wx',mode:0o600});
   const resultSource={python:input.custody.python,age:input.custody.age,identity:input.custody.identity,custody:input.resultCustody};
-  const delivery={releaseId:h(8),leaseId:lease.leaseId,nonce:challenge.nonce,channelJwk:evidence.channelJwk,
+  const delivery={releaseId:h(8),leaseId:lease.digest,nonce:challenge.nonce,channelJwk:evidence.channelJwk,
     descriptor:input.descriptor,notBefore:clock(),expiresAt:clock()+60,resultKeySHA256:resultCustody.resultKeySHA256};
   const payload=keyDeliveryPayload(capacity,attestations,delivery,clock());
   const approval={request:delivery,requesterSignature:await requester.signTypedData(payload.domain,payload.types,payload.value)};
@@ -187,7 +191,7 @@ try {
   assert.equal(await escrow.workerDue(orderId,workerAccount),0n);
   assert.equal(await escrow.totalLiability(),120n);
   process.stdout.write(JSON.stringify({schema:'cannabis.funded-native-fixture.v1',
-    checks:{signedNativeCapacity:true,freshFundedAdmission:true,guardedNativeExecution:true,requesterReconstruction:true,
+    checks:{signedNativeCapacity:true,onChainMarketBooking:true,noCapacityDatabase:true,freshFundedAdmission:true,guardedNativeExecution:true,requesterReconstruction:true,
       exactFeeAndWorkerSettlement:true,workerWithdrawal:true,sessionReplayRefused:true,encryptedReceiptAuthenticated:true,
       requesterProcessRestartRecovery:true,duplicateReceiptIdempotent:true,approvedWorkloadReconstruction:true,
       separateGuestProcess:true,encryptedStreamingHandoff:true,requesterStorageAcknowledgement:true,
@@ -196,4 +200,4 @@ try {
     grossBaseUnits:'12000',workerBaseUnits:'11880',founderFeeBaseUnits:'120',chainId:31337,
     realPaidJob:false,hardwareValidated:false,customerKeysUsed:false}));
 } catch(error) {process.stderr.write('Owned funded native fixture failed: '+error.stack+'\n');process.exitCode=1;}
-finally {wire.fail();wire.close();inbox?.close();attestations?.close();capacity?.close();provider.destroy();}
+finally {wire.fail();wire.close();inbox?.close();attestations?.close();provider.destroy();}
