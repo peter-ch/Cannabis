@@ -42,7 +42,7 @@ before(async()=>{
   registrar=await new ContractFactory(artifacts.CommunityRegistrar.abi,artifacts.CommunityRegistrar.bytecode,owner).deploy(...ceremonyConfiguration(policy).constructorArguments);
   await registrar.waitForDeployment();assert.equal(await registrar.getAddress(),registrarAddress);
   const opening=policy.submissionsCloseAt+86400;
-  token=await new ContractFactory(artifacts.Cannabis.abi,artifacts.Cannabis.bytecode,owner).deploy(from,opening,end24Months(opening),await dependency.semaphore.getAddress(),registrarAddress);
+  token=await new ContractFactory(artifacts.Cannabis.abi,artifacts.Cannabis.bytecode,owner).deploy(from,opening,end24Months(opening),await dependency.semaphore.getAddress(),registrarAddress,1);
   await token.waitForDeployment();assert.equal(await token.enrollment(),enrollmentAddress);
   enrollment=new Contract(enrollmentAddress,artifacts.CannabisEnrollment.abi,owner);
   await authorize(policy);snapshot=await provider.send('evm_snapshot',[]);
@@ -117,6 +117,18 @@ test('enrolled fixture identities produce a real Semaphore claim, with one alloc
   const recipient=await (await provider.getSigner(11)).getAddress();
   const proof=await generateProof(localIdentity(10000),new Group(r.commitments.map(BigInt)),BigInt(recipient),await token.claimScope());
   await reverts(token.claim(recipient,proof));await time(Number(await token.claimsStartAt()));await (await token.claim(recipient,proof)).wait();
+  assert.equal(await token.balanceOf(recipient),420n*10n**18n);await reverts(token.claim(recipient,proof));
+});
+test('first-round capacity may be one and a witnessed singleton claims without a recruitment threshold',async()=>{
+  const small={...policy,venues:[{...policy.venues[0],capacity:1}]};
+  assert.equal(normalizeCeremonyPolicy(small).venues[0].capacity,1);
+  assert.equal(prepareVenueRoster(small,small.venues[0].id,[member(10000)]).commitments.length,1);
+  assert.throws(()=>normalizeCeremonyPolicy({...small,venues:[{...small.venues[0],capacity:0}]}));
+  await reset();await time(policy.endsAt+1);await (await submit(policy,policy.venues[0].id,[roster[0]])).wait();
+  assert.equal(await enrollment.enrolledCount(),1n);
+  const recipient=await (await provider.getSigner(11)).getAddress(),group=new Group([BigInt(roster[0].commitment)]);
+  const proof=await generateProof(localIdentity(10000),group,BigInt(recipient),await token.claimScope());
+  await time(Number(await token.claimsStartAt()));await (await token.claim(recipient,proof)).wait();
   assert.equal(await token.balanceOf(recipient),420n*10n**18n);await reverts(token.claim(recipient,proof));
 });
 test('policy rejects role/key reuse, inadequate quorums, malformed schedules and repeated records',()=>{

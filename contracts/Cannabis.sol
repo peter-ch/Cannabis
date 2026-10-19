@@ -73,7 +73,7 @@ contract FounderVesting {
     }
 }
 
-/// @notice Fixed-cap, anonymous membership claims. The reviewed Cannabis ceremony verifies distinct people.
+/// @notice Fixed-cap membership claims. Privacy depends on the real group; ceremonies verify distinct people.
 /// @dev No proof-of-work. Underlying network provides consensus. Independent review remains required.
 contract Cannabis is ERC20 {
     uint256 public constant CAP = 420_000_000 ether;
@@ -81,8 +81,9 @@ contract Cannabis is ERC20 {
     uint256 public constant COMMUNITY_ALLOCATION = CAP - FOUNDER_ALLOCATION;
     uint256 public constant CLAIM_AMOUNT = 420 ether;
     uint256 public constant MAX_CLAIMANTS = COMMUNITY_ALLOCATION / CLAIM_AMOUNT;
-    uint256 public constant MIN_ANONYMITY_SET = 128;
     uint64 public immutable claimsStartAt;
+    address public immutable claimPolicyAuthority;
+    uint32 public minimumClaimMembers;
     ICannabisSemaphore public immutable semaphore;
     CannabisEnrollment public immutable enrollment;
     uint256 public immutable groupId;
@@ -95,24 +96,41 @@ contract Cannabis is ERC20 {
     error InvalidConfiguration();
     error ClaimsNotOpen();
     error InvalidProof();
-    error AnonymitySetTooSmall();
+    error InsufficientEnrolledMembers(uint256 actual, uint256 required);
+    error UnauthorizedClaimPolicy();
+    error InvalidClaimMinimum();
     error MembershipRootChanged();
     error AlreadyClaimed();
     error CommunityExhausted();
     event Claimed(address indexed recipient, uint256 indexed nullifier, uint256 amount);
+    event MinimumClaimMembersIncreased(uint32 previousMinimum, uint32 newMinimum);
 
-    constructor(address founder, uint64 start, uint64 vestingEnd, address semaphoreAddress, address registrar)
+    constructor(address founder, uint64 start, uint64 vestingEnd, address semaphoreAddress, address registrar, uint32 initialMinimumClaimMembers)
         ERC20("Cannabis", "CANNABIS")
     {
         if (founder == address(0) || start <= block.timestamp || vestingEnd <= start ||
-            semaphoreAddress.code.length == 0 || registrar == address(0)) revert InvalidConfiguration();
+            semaphoreAddress.code.length == 0 || registrar == address(0) ||
+            initialMinimumClaimMembers == 0 || initialMinimumClaimMembers > MAX_CLAIMANTS) revert InvalidConfiguration();
         claimsStartAt = start;
+        claimPolicyAuthority = founder;
+        minimumClaimMembers = initialMinimumClaimMembers;
         semaphore = ICannabisSemaphore(semaphoreAddress);
         enrollment = new CannabisEnrollment(semaphoreAddress, registrar);
         groupId = enrollment.groupId();
         claimScope = uint256(keccak256(abi.encode("Cannabis community claim v1", block.chainid, address(this))));
         founderVesting = new FounderVesting(founder, start, vestingEnd, FOUNDER_ALLOCATION);
         _mint(address(founderVesting), FOUNDER_ALLOCATION);
+    }
+
+    /// @notice The founder may raise the minimum only as verified enrollment grows.
+    /// @dev Append-only membership and this upper bound prevent an increase from blocking eligible members.
+    function increaseMinimumClaimMembers(uint32 newMinimum) external {
+        if (msg.sender != claimPolicyAuthority) revert UnauthorizedClaimPolicy();
+        if (newMinimum <= minimumClaimMembers || newMinimum > enrollment.enrolledCount() ||
+            newMinimum > MAX_CLAIMANTS) revert InvalidClaimMinimum();
+        uint32 previous = minimumClaimMembers;
+        minimumClaimMembers = newMinimum;
+        emit MinimumClaimMembersIncreased(previous, newMinimum);
     }
 
     /// @notice A relayer may pay gas; the proof always binds the public receiving address.
@@ -122,7 +140,8 @@ contract Cannabis is ERC20 {
         if (recipient == address(0) || proof.message != uint256(uint160(recipient)) || proof.scope != claimScope) revert InvalidProof();
         if (nullifierClaimed[proof.nullifier] || walletClaimed[recipient]) revert AlreadyClaimed();
         if (communityIssued + CLAIM_AMOUNT > COMMUNITY_ALLOCATION) revert CommunityExhausted();
-        if (enrollment.enrolledCount() < MIN_ANONYMITY_SET) revert AnonymitySetTooSmall();
+        uint256 enrolled = enrollment.enrolledCount();
+        if (enrolled < minimumClaimMembers) revert InsufficientEnrolledMembers(enrolled, minimumClaimMembers);
         if (proof.merkleTreeRoot != semaphore.getMerkleTreeRoot(groupId)) revert MembershipRootChanged();
         if (!semaphore.verifyProof(groupId, proof)) revert InvalidProof();
         nullifierClaimed[proof.nullifier] = true;

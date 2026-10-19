@@ -16,6 +16,7 @@
     "verify:claim": "node scripts/claim.mjs",
     "verify:status": "node scripts/status.mjs",
     "prepare:claim": "node scripts/prepare-claim.mjs",
+    "prepare:claim-threshold": "node scripts/prepare-claim-threshold.mjs",
     "compute:plan": "node scripts/compute-plan.mjs",
     "compute:escrow": "node scripts/compute-escrow.mjs",
     "build:site": "node scripts/build-site.mjs",

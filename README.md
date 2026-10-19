@@ -10,7 +10,7 @@ Cannabis is a production cryptocurrency project built around efficient community
 
 The contracts define a fixed supply cap and one-time verified-person community claims with a common public opening. Read the [allocation, vesting and service terms](docs/tokenomics.md) before participating.
 
-There is **no proof-of-work**. The selected architecture uses Ethereum proof-of-stake settlement through an EVM network. Semaphore zero-knowledge proofs conceal which enrolled identity made a claim, while the recipient wallet and transaction remain public. Enrollment is append-only; claims require at least 128 commitments. Cannabis-run synchronized in-person verification must establish one commitment per distinct person; no external identity provider is required.
+There is **no proof-of-work**. The selected architecture uses Ethereum proof-of-stake settlement through an EVM network. Semaphore zero-knowledge proofs omit the claiming identity from the proof, while the recipient wallet and transaction remain public. Enrollment is append-only; the initial claim minimum is configurable and defaults to one genuinely verified member, with claims available after the common opening. The founder can raise the minimum only up to the already enrolled count, preserving existing eligibility. There is no recruitment quota for deployment. A singleton group cannot hide who claimed; small groups provide limited privacy. Cannabis-run synchronized in-person verification must establish one commitment per distinct person; no external identity provider is required.
 
 **Put compute to work.** The general-purpose client packages arbitrary software through extensible runtime adapters, compares node quotes, plans task graphs and coordinated groups, and reconstructs encrypted output shards on the requester. Python, VM checkpoints and distributed model training are examples of the broader format. Target hardware includes NVIDIA/CUDA, AMD/ROCm, CPU and other accelerators. Job quotes disclose the included service fee and total before payment; see the [service terms](docs/tokenomics.md). Work stays off-chain and does not mint tokens or decide consensus. See the [universal client](docs/universal-compute.md), [useful-compute design](docs/useful-compute.md) and [escrow payment rules](docs/compute-payments.md). The protected worker service and mainnet payments still require integration and review.
 
@@ -37,7 +37,7 @@ The [worker console](docs/worker-console.md) shows actual local machine activity
 npm test
 ~~~
 
-The suite checks real zero-knowledge proofs, replay and recipient-substitution attacks, enrollment permissions, anonymity thresholds, fixed supply and founder vesting on isolated ephemeral chains. Compute integration checks also require Python 3.12+ and age 1.3.2 with age-keygen; put them on PATH or set `CANNABIS_PYTHON` and `CANNABIS_AGE` to their executable paths. CI installs and verifies these tools. Production releases require independent security and privacy review.
+The suite checks real zero-knowledge proofs, replay and recipient-substitution attacks, enrollment permissions, first-member claims, configurable thresholds, bounded owner increases and current-root checks, fixed supply and founder vesting on isolated ephemeral chains. Compute integration checks also require Python 3.12+ and age 1.3.2 with age-keygen; put them on PATH or set `CANNABIS_PYTHON` and `CANNABIS_AGE` to their executable paths. CI installs and verifies these tools. Production releases require independent security and privacy review.
 
 ## Project material
 

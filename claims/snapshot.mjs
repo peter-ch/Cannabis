@@ -8,6 +8,7 @@ const ABI = new Interface([
   'function enrollment() view returns (address)', 'function semaphore() view returns (address)',
   'function groupId() view returns (uint256)', 'function claimScope() view returns (uint256)',
   'function enrolledCount() view returns (uint256)',
+  'function minimumClaimMembers() view returns (uint32)',
   'function getGroupAdmin(uint256) view returns (address)',
   'function getMerkleTreeRoot(uint256) view returns (uint256)',
   'function getMerkleTreeSize(uint256) view returns (uint256)',
@@ -107,14 +108,16 @@ export async function downloadMembershipSnapshot(options) {
     const pages = Math.ceil((anchor.number - release.fromBlock + 1) / config.pageSize);
     if (pages > config.maxPages) throw Error('Membership range exceeds page budget');
     await checkCode(anchor);
-    const [enrollmentAddress, semaphoreAddress, groupId, scope, enrolledCount, enrollmentSemaphore, enrollmentGroup] = await Promise.all([
+    const [enrollmentAddress, semaphoreAddress, groupId, scope, enrolledCount, enrollmentSemaphore, enrollmentGroup, minimumClaimMembers] = await Promise.all([
       call(release.token, 'enrollment', [], anchor), call(release.token, 'semaphore', [], anchor),
       call(release.token, 'groupId', [], anchor), call(release.token, 'claimScope', [], anchor),
       call(release.enrollment, 'enrolledCount', [], anchor), call(release.enrollment, 'semaphore', [], anchor),
-      call(release.enrollment, 'groupId', [], anchor)
+      call(release.enrollment, 'groupId', [], anchor), call(release.token, 'minimumClaimMembers', [], anchor)
     ]);
     if (enrollmentAddress !== release.enrollment || semaphoreAddress !== release.semaphore || enrollmentSemaphore !== release.semaphore || enrollmentGroup !== groupId || scope.toString() !== claimScope(release.chainId, release.token)) throw Error('Deployment relationships or claim scope do not match');
-    if (enrolledCount < 128n || enrolledCount > 990000n) throw Error('Finalized group must contain 128 to 990000 commitments');
+    if (enrolledCount < 1n || enrolledCount > 990000n) throw Error('Finalized group must contain 1 to 990000 commitments');
+    if (minimumClaimMembers < 1n || minimumClaimMembers > 990000n) throw Error('Invalid on-chain claim minimum');
+    if (enrolledCount < minimumClaimMembers) throw Error(`Claim minimum is ${minimumClaimMembers}; only ${enrolledCount} members are finalized`);
     const [root, size, admin] = await Promise.all([
       call(release.semaphore, 'getMerkleTreeRoot', [groupId], anchor),
       call(release.semaphore, 'getMerkleTreeSize', [groupId], anchor), call(release.semaphore, 'getGroupAdmin', [groupId], anchor)
@@ -159,17 +162,18 @@ export async function downloadMembershipSnapshot(options) {
     const now = Math.floor(Date.now()/1000);
     if (head.number < anchor.number || head.timestamp < now-config.maxHeadAgeSeconds || head.timestamp > now+60) throw Error('Current head is stale or inconsistent');
     await checkCode(head);
-    const [currentRoot, currentCount, currentSize, currentAdmin] = await Promise.all([
+    const [currentRoot, currentCount, currentSize, currentAdmin, currentMinimum] = await Promise.all([
       call(release.semaphore, 'getMerkleTreeRoot', [groupId], head), call(release.enrollment, 'enrolledCount', [], head),
-      call(release.semaphore, 'getMerkleTreeSize', [groupId], head), call(release.semaphore, 'getGroupAdmin', [groupId], head)
+      call(release.semaphore, 'getMerkleTreeSize', [groupId], head), call(release.semaphore, 'getGroupAdmin', [groupId], head), call(release.token, 'minimumClaimMembers', [], head)
     ]);
     if (currentRoot !== root || currentCount !== enrolledCount || currentSize !== size || currentAdmin !== admin) throw Error('Membership changed; wait for enrollment finality and download again');
+    if (currentMinimum !== minimumClaimMembers) throw Error('Claim minimum changed; wait for finality and download again');
     const currentHead = block(await rpc.call('eth_getBlockByNumber', [toQuantity(head.number), false]));
     if (currentHead.number !== head.number || currentHead.hash !== head.hash) throw Error('Head changed during verification');
     await checkChain(); withinDeadline();
     return { schema: 'cannabis.membership-download.v1',
       snapshot: { schema: 'cannabis.membership-snapshot.v1', chainId: release.chainId, token: release.token, root: root.toString(), commitments },
-      context: { chainId: release.chainId, token: release.token, root: root.toString(), memberCount: commitments.length },
+      context: { chainId: release.chainId, token: release.token, root: root.toString(), memberCount: commitments.length, minimumClaimMembers: Number(minimumClaimMembers) },
       evidence: { release, anchor: { ...anchor, tag: 'finalized' }, checkedHead: head, groupId: groupId.toString(), pages, eventCount,
         checkedAt: new Date().toISOString(), rpcTrust: 'Selected RPC chain view; no independent consensus or state-proof verification', consistencyChecked: true }, sent: false };
   } finally { rpc.close(); }

@@ -35,7 +35,7 @@ Share the official project link yourself. Here is a suggested invitation:
 
 > I'm helping get Cannabis ready: community claims, no proof-of-work, and an ambition to pay for useful private computing. If you're interested, read the project and use its Windows guide to prepare your own identity and backup. Enrollment isn't open yet. Keep your keys and backup passphrase to yourself.
 
-Friends complete their own setup and verification. Do not collect their secret files or passwords. A few invited friends do not satisfy the contract's initial group requirement of 128 independently verified people.
+Friends complete their own setup and verification. Do not collect their secret files or passwords. The initial minimum defaults to one verified member and may be configured differently for a release. Claim tools check the current on-chain minimum and public opening; later founder increases are bounded by already enrolled membership. A singleton group cannot hide who claimed, and small groups limit privacy; participants can choose to wait for more real members.
 
 Operator workflow checks use isolated local fixtures and are reported separately from actual participants or paid work. They are not community members, customers, trades or a source of public activity counts.
 

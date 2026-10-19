@@ -12,7 +12,7 @@ These are the published parameters of the current contract implementation. Mainn
 | Founder vesting | Locked at creation; released linearly over 24 calendar months from the common public opening |
 | Community claim | 420 Cannabis once per eligible verified person |
 | Maximum claimants | 990,000 |
-| Initial claim group | At least 128 independently verified people |
+| Claim eligibility | Configurable minimum, default 1 verified member, after the common opening; later increases cannot exceed already enrolled membership |
 
 There is no proof-of-work issuance. The founder allocation is separate from compute-service fees. Eligibility, duplicate prevention and the common opening are described in the [community claim rules](community-claims.md). The contract implementation has no administrator function to increase the supply cap.
 
@@ -27,3 +27,5 @@ Read the [payment rules](compute-payments.md) for acceptance windows, automatic 
 ## Release information
 
 The canonical contract addresses, chain, code hashes, enrollment controller and opening time will be published with the reviewed release. Independent security/privacy review and protected worker validation remain outstanding. This page describes project parameters and does not claim that an independent review or public launch has occurred.
+
+The initial claim minimum is configurable and defaults to **1 verified member**. The founder wallet can later increase it only up to the number already enrolled. Increases are recorded on-chain, cannot be reversed, cannot block an already eligible group and do not revoke completed claims. The complete current membership root is always required; increasing the numeric minimum does not itself enlarge the anonymity set. See [owner preparation and limits](community-claims.md#configurable-claim-minimum).
