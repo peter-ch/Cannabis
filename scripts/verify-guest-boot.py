@@ -81,7 +81,7 @@ def main():
     guardian_cases = {'normalFinish', 'cancelTree', 'busyFinishRefused', 'ownerSIGKILL', 'stoppedOwnerDeadline',
                       'leakedSocketOwnerDeath', 'ownerExitWithoutFinalizer', 'guardianFailureRefusedAndCleaned',
                       'independentDeadline', 'lateFinishRefused', 'stoppedGuardianCancelBounded',
-                      'naturalTailDrain', 'lingeringTailRefused'}
+                      'naturalTailDrain', 'lingeringTailRefused', 'stoppedOwnerSharedDeadline', 'sequentialSharedDeadline'}
     if (guardian.get('schema') != 'cannabis.guest-guardian-check.v1' or guardian.get('kernel') != report['kernelRelease']
             or guardian.get('customerCodeExecuted') is not False or guardian.get('hardwareValidated') is not False
             or guardian.get('checks') != {name: True for name in guardian_cases}):
@@ -94,7 +94,8 @@ def main():
         raise ValueError('Guest runtime isolation checks did not pass')
     native = result.get('nativeChecks', {})
     native_cases = {'success', 'tampered', 'metadata', 'group', 'dependency', 'missing-output', 'symlink-output',
-                    'decode-quota', 'encode-quota', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel'}
+                    'decode-quota', 'encode-quota', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel',
+                    'expired-plan', 'native-shared-deadline', 'encoder-shared-deadline', 'publication-deadline'}
     if (native.get('schema') != 'cannabis.guest-native-check.v1' or native.get('kernel') != report['kernelRelease']
             or native.get('checks') != {name: True for name in native_cases}
             or any(native.get(k) is not False for k in ['customerCodeExecuted', 'hardwareValidated', 'realPaidJob'])

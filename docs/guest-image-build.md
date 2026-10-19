@@ -252,6 +252,24 @@ path/type/mode/content inventory produced by `tree_digest`, not the digest of a
 downloaded archive. The measured launcher must select and approve this plan
 before releasing a key. Caller-supplied matching values are not admission.
 
+The plan requires one retained `ExecutionDeadline` from
+`compute/guest_deadline.py`. Convert the independently authenticated, currently
+active service interval with `ExecutionDeadline.from_service_interval(start, end)`
+once, before preparing the plan or releasing its key. Pass that same object as
+the plan's `deadline` argument. Decoding, runtime startup, execution, result
+encryption and publication consume its remaining time. Each stage's own limit
+can shorten that time; it cannot restart or extend the reservation. Helpers and
+runtime guardians receive the absolute deadline before accepting work, so a
+stopped supervisor does not let their process trees continue indefinitely.
+
+The plan checks expiry after each stage and after checked cleanup. It also checks
+around every ciphertext write; a supervisor resumed after expiry removes its
+new result and returns no successful receipt. This does not remove ciphertext
+or retire control-plane memory while that supervisor remains stopped. The
+outer lifecycle must enforce guest disposal and key retirement. Converting UTC
+to a monotonic deadline requires trustworthy guest time; it does not prevent a
+host from pausing or rolling back the entire VM.
+
 The private package must match the retained runtime, resource limits, package,
 task, attempt, rank and return recipient. The plan permits one execution. It
 supports a single CPU rank with an absolute argument vector and private
@@ -288,7 +306,9 @@ The real-kernel owned check runs encrypted input through the native program and
 reconstructs encrypted output and logs with a separate requester key. It also
 exercises ciphertext tampering, mismatched resource metadata, unsupported groups
 and dependencies, missing/symlink outputs, decode/encode staging exhaustion,
-helper expiry, cancellation, owner death and a stopped owner:
+helper expiry, cancellation, owner death and a stopped owner. Shared-deadline
+cases verify refusal before plan creation, expiry during actual native execution
+and result encryption, and owner suspension during ciphertext publication:
 
 ```sh
 sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-native.py

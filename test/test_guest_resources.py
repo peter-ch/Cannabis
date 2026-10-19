@@ -4,12 +4,41 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from compute.guest_resources import JobResourceGroup, ResourceLimits, join_current_process
+from compute.guest_deadline import ExecutionDeadline, bounded_stage_deadline
 
 
 class ResourceBoundaryTests(unittest.TestCase):
+    def test_service_interval_is_active_bounded_and_immutable(self):
+        with patch('compute.guest_deadline.time.time', return_value=1000), patch('compute.guest_deadline.time.monotonic', return_value=10):
+            for start, end in [(True, 1100), (900, float('inf')), (900, 1000), (1001, 1100),
+                               (1000, 1000), (1, 90 * 86400 + 2), (0, 1100)]:
+                with self.subTest(start=start, end=end), self.assertRaises((ValueError, RuntimeError)):
+                    ExecutionDeadline.from_service_interval(start, end)
+            deadline = ExecutionDeadline.from_service_interval(900, 1100)
+            with self.assertRaises(dataclasses.FrozenInstanceError):
+                deadline.monotonic_end = 999
+        # Later stages use the remaining reservation, even after a wall-clock
+        # change. A shorter per-stage limit still applies.
+        with patch('compute.guest_deadline.time.time', return_value=500), patch('compute.guest_deadline.time.monotonic', return_value=70):
+            self.assertEqual(bounded_stage_deadline(100, deadline), 110)
+            self.assertEqual(bounded_stage_deadline(5, deadline), 75)
+
+    def test_expired_or_invalid_deadline_cannot_touch_resource_paths(self):
+        limits = ResourceLimits(1000, 64 * 1024**2, 64, 30)
+        with patch('compute.guest_deadline.time.monotonic', return_value=100):
+            for value in [True, None, '100', float('nan'), float('inf'), -1, 100 + 90 * 86400 + 1]:
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    ExecutionDeadline(value)
+            for deadline in [ExecutionDeadline(100), {}, 200]:
+                with self.subTest(deadline=deadline), patch('compute.guest_resources._directory') as directory:
+                    with self.assertRaises((ValueError, RuntimeError)):
+                        JobResourceGroup('/never-created', limits, deadline=deadline)
+                    directory.assert_not_called()
+
     def test_rejects_ambiguous_and_unbounded_limits(self):
         valid = dict(cpu_millis=1000, memory_bytes=64 * 1024**2, processes=128, wall_seconds=30)
         for name in valid:

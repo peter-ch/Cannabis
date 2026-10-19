@@ -154,12 +154,12 @@ class GuardedResources:
     the guest. This does not protect against simultaneous supervisor/guardian
     death, guest-kernel failure or a privileged attacker inside the guest.
     """
-    def __init__(self, parent, limits, *, startup_seconds=5):
+    def __init__(self, parent, limits, *, startup_seconds=5, deadline=None):
         if type(startup_seconds) not in [int, float] or not 0.1 <= startup_seconds <= 30:
             raise ValueError('Require a bounded guardian startup')
         if sys.platform != 'linux' or not hasattr(os, 'pidfd_open'):
             raise RuntimeError('Require Linux process handles')
-        self._group = JobResourceGroup(parent, limits)
+        self._group = JobResourceGroup(parent, limits, deadline=deadline)
         self._process = self._channel = self._pidfd = None
         self._result = None
         self._broken = False

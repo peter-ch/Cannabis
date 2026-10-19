@@ -14,6 +14,7 @@ import sys
 import uuid
 
 from .guest_guardian import GuardedResources
+from .guest_deadline import ExecutionDeadline
 from .guest_resources import ResourceLimits, ResourceCleanupError, join_current_process
 from .guest_sandbox import ScratchLimits, _call, _directory, _libc, enter_private_mount_namespace
 
@@ -55,7 +56,7 @@ class ProtectedStaging:
         self.close()
 
 
-def run_guarded_helper(parent, limits, request, *, cancelled=None):
+def run_guarded_helper(parent, limits, request, *, cancelled=None, deadline=None):
     """Anonymous bounded pipes; no private arguments, key file or helper logs.
 
     The child joins its verified group before reading any request byte. Its
@@ -64,6 +65,10 @@ def run_guarded_helper(parent, limits, request, *, cancelled=None):
     """
     if not isinstance(limits, ResourceLimits):
         raise ValueError('Require explicit helper CPU, memory, process and time limits')
+    if deadline is not None:
+        if not isinstance(deadline, ExecutionDeadline):
+            raise ValueError('Require a retained helper service deadline')
+        deadline.check(cancelled)
     raw = bytearray(json.dumps(request, separators=(',', ':'), ensure_ascii=True, allow_nan=False).encode())
     response = bytearray()
     child = guard = None
@@ -73,7 +78,7 @@ def run_guarded_helper(parent, limits, request, *, cancelled=None):
             raise ValueError('Protected helper request exceeds its bound')
         if cancelled is not None and cancelled.is_set():
             raise ValueError('Protected helper cancelled')
-        guard = GuardedResources(parent, limits)
+        guard = GuardedResources(parent, limits, deadline=deadline)
         script = Path(__file__).resolve().parents[1] / 'scripts/compute-guest-helper.py'
         # Only public resource numbers and an opaque kernel group path are in
         # argv. The script has a closed operation table, never an arbitrary exec.
@@ -119,6 +124,8 @@ def run_guarded_helper(parent, limits, request, *, cancelled=None):
                 result = json.loads(response)
                 if not isinstance(result, dict):
                     raise ValueError('Invalid protected helper response')
+                if deadline is not None:
+                    deadline.check(cancelled)
                 return result
     except Exception:
         # Never carry a decoder exception, output path or customer value into

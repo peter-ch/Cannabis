@@ -23,6 +23,7 @@ import time
 import uuid
 
 from .guest_guardian import GuardedResources
+from .guest_deadline import ExecutionDeadline
 from .guest_resources import ResourceLimits, ResourceCleanupError, join_current_process
 
 BWRAP = '/usr/bin/bwrap'
@@ -260,9 +261,13 @@ class NativeSandbox:
     logs. Never print those plaintext files or pass them outside the protected VM.
     A non-success result is not accepted useful work. This is not a TEE verifier.
     """
-    def __init__(self, parent, rootfs, inputs, expected_root, limits, scratch, *, workspace='/'):
+    def __init__(self, parent, rootfs, inputs, expected_root, limits, scratch, *, workspace='/', deadline=None):
         if not isinstance(limits, ResourceLimits) or not isinstance(scratch, ScratchLimits):
             raise ValueError('Require validated resource and storage limits')
+        if deadline is not None:
+            if not isinstance(deadline, ExecutionDeadline):
+                raise ValueError('Require a retained sandbox service deadline')
+            deadline.check()
         if not isinstance(expected_root, str) or len(expected_root) != 64 or any(c not in '0123456789abcdef' for c in expected_root):
             raise ValueError('Require the retained approved runtime digest')
         if tree_digest(rootfs) != expected_root:
@@ -286,7 +291,7 @@ class NativeSandbox:
             raise ValueError('Sandbox handoff ancestors must permit directory traversal')
         enter_private_mount_namespace()
         try:
-            self._guard = GuardedResources(parent, limits, startup_seconds=10)
+            self._guard = GuardedResources(parent, limits, startup_seconds=10, deadline=deadline)
             self._path = Path(workspace) / ('cannabis-sandbox-' + uuid.uuid4().hex)
             self._path.mkdir(mode=0o700)
             options = f'size={scratch.bytes},nr_inodes={scratch.inodes},mode=0711,noswap'.encode()

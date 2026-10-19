@@ -13,6 +13,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from compute.guest_guardian import GuardedResources
+from compute.guest_deadline import ExecutionDeadline
 from compute.guest_resources import ResourceLimits, join_current_process
 
 SCRIPT = str(Path(__file__).resolve())
@@ -75,7 +76,8 @@ def trailing(group, limits, seconds):
 def actor(parent, mode):
     # Include slow-emulator startup in the reserved wall budget. The stopped
     # owner's deadline must still expire before the owned worker's safety exit.
-    guard = GuardedResources(parent, ResourceLimits(1000, 64 * 1024**2, 16, 15 if mode == 'stopped' else 30), startup_seconds=10)
+    shared = ExecutionDeadline(time.monotonic() + 15) if mode == 'shared-stopped' else None
+    guard = GuardedResources(parent, ResourceLimits(1000, 64 * 1024**2, 16, 15 if mode == 'stopped' else 30), startup_seconds=10, deadline=shared)
     # Deliberately retain the owner's socket in an owned workload. pidfd death
     # must still terminate it; EOF-only monitoring would miss this case.
     extra = [str(guard._channel.fileno())] if mode == 'leaked' else []
@@ -142,12 +144,12 @@ def run(parent):
             finally:
                 os.close(handle)
                 finish(work)
-    for mode in ['killed', 'stopped', 'leaked', 'exit']:
+    for mode in ['killed', 'stopped', 'shared-stopped', 'leaked', 'exit']:
         owner = spawn(['actor', str(parent), mode])
         state = line(owner)
         handles = [os.pidfd_open(state[k]) for k in ['worker', 'detached', 'guardian']]
         try:
-            if mode == 'stopped':
+            if mode in ['stopped', 'shared-stopped']:
                 os.kill(owner.pid, signal.SIGSTOP)
             elif mode == 'exit':
                 os.kill(owner.pid, signal.SIGUSR1)
@@ -158,7 +160,8 @@ def run(parent):
             for handle in handles:
                 ended(handle)
             assert not Path(state['group']).exists()
-            cases[{'killed': 'ownerSIGKILL', 'stopped': 'stoppedOwnerDeadline', 'leaked': 'leakedSocketOwnerDeath', 'exit': 'ownerExitWithoutFinalizer'}[mode]] = True
+            cases[{'killed': 'ownerSIGKILL', 'stopped': 'stoppedOwnerDeadline', 'shared-stopped': 'stoppedOwnerSharedDeadline',
+                   'leaked': 'leakedSocketOwnerDeath', 'exit': 'ownerExitWithoutFinalizer'}[mode]] = True
         finally:
             # SIGKILL also handles a stopped owner, without resuming execution.
             finish(owner)
@@ -223,6 +226,35 @@ def run(parent):
         result = guard.wait(action='finish')
         assert result['reason'] == 'deadline' and result['removed']
         cases['lateFinishRefused'] = True
+    # Two real phases share one deadline. The second stage's own 60-second
+    # allowance cannot restart the remaining reservation after the first exits.
+    started = time.monotonic()
+    shared = ExecutionDeadline(started + 15)
+    stage_limits = ResourceLimits(1000, 64 * 1024**2, 16, 60)
+    with GuardedResources(parent, stage_limits, deadline=shared) as guard:
+        work = spawn(['trailing', str(guard.path), json.dumps(asdict(stage_limits)), '0.5'])
+        state = line(work); handle = os.pidfd_open(state['child'])
+        try:
+            assert work.wait(timeout=5) == 0
+            signal.pidfd_send_signal(handle, signal.SIGUSR1)
+            assert guard.finish_after_exit()['reason'] == 'finished'
+            ended(handle)
+        finally:
+            os.close(handle); finish(work)
+    with GuardedResources(parent, stage_limits, deadline=shared) as guard:
+        work = spawn(['worker', str(guard.path), json.dumps(asdict(stage_limits))])
+        state = line(work)
+        handles = [os.pidfd_open(state[k]) for k in ['worker', 'detached']]
+        try:
+            assert guard.wait()['reason'] == 'deadline'
+            assert shared.monotonic_end <= time.monotonic() < shared.monotonic_end + 10
+            for handle in handles:
+                ended(handle)
+            cases['sequentialSharedDeadline'] = True
+        finally:
+            for handle in handles:
+                os.close(handle)
+            finish(work)
     return cases
 
 

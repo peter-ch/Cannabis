@@ -4,6 +4,7 @@ The enclosing measured launcher must admit the assignment, runtime and hardware
 before supplying a key. This component never establishes funding or attestation.
 """
 from dataclasses import asdict, dataclass, field
+from contextlib import contextmanager
 import copy
 import hashlib
 import os
@@ -11,11 +12,27 @@ from pathlib import Path
 
 from .client import canonical, safe_name
 from .guest_helpers import ProtectedStaging, run_guarded_helper
+from .guest_deadline import ExecutionDeadline
 from .guest_resources import ResourceLimits
 from .guest_sandbox import NativeSandbox, ScratchLimits, tree_digest, _directory
 from .job_keys import RecoveredJobKey
 
 NATIVE_ADAPTER = 'native-linux-x86_64-v1'
+
+
+@contextmanager
+def _publication_scope(destination, deadline, cancelled):
+    # Enter before staging so this observes its checked cleanup too. Destination
+    # is a fresh path in the protected control plane, inaccessible to workloads.
+    owned = [False]
+    try:
+        deadline.check(cancelled)
+        yield owned
+        deadline.check(cancelled)
+    except BaseException:
+        if owned[0]:
+            destination.unlink()
+        raise
 
 
 @dataclass(frozen=True)
@@ -33,7 +50,11 @@ class NativeTaskPlan:
     adapter, not a download/archive digest. A different adapter defines its own
     semantics. The caller must independently approve these retained values.
     """
-    def __init__(self, rootfs, runtime, resources, *, process_limit, scratch_inodes):
+    def __init__(self, rootfs, runtime, resources, *, process_limit, scratch_inodes, deadline):
+        if not isinstance(deadline, ExecutionDeadline):
+            raise ValueError('Require the retained signed-service deadline before key release')
+        deadline.check()
+        self._deadline = deadline
         runtime, resources = copy.deepcopy(runtime), copy.deepcopy(resources)
         if (not isinstance(runtime, dict) or set(runtime) - {'adapter', 'digestSHA256', 'architecture', 'os', 'features'}
                 or runtime.get('adapter') != NATIVE_ADAPTER or runtime.get('architecture') != 'x86_64'
@@ -48,6 +69,7 @@ class NativeTaskPlan:
         self._root = Path(rootfs)
         if tree_digest(self._root) != runtime.get('digestSHA256'):
             raise ValueError('Runtime tree differs from the approved inventory')
+        deadline.check()
         self._runtime, self._resources, self._used = runtime, resources, False
 
     def run(self, parent, ciphertext, key, binding, destination, *, age, helper_limits, staging_limits, max_input_bytes, cancelled=None):
@@ -61,6 +83,7 @@ class NativeTaskPlan:
         if self._used or not isinstance(key, RecoveredJobKey):
             raise ValueError('Require an unused retained plan and guest-opened key')
         self._used = True
+        self._deadline.check(cancelled)
         if (binding.get('runtimeSHA256') != self._runtime['digestSHA256'] or binding.get('worldSize') != 1
                 or binding.get('rank') != 0 or binding.get('acceleratorClass') != 'cpu'):
             raise ValueError('Delivered assignment differs from the retained runtime')
@@ -70,18 +93,20 @@ class NativeTaskPlan:
             raise ValueError('Require a bounded approved input size')
         if tree_digest(self._root) != self._runtime['digestSHA256']:
             raise ValueError('Approved runtime changed before decoding')
+        self._deadline.check(cancelled)
         destination = Path(destination)
         fd = _directory(destination.parent, memory=False)
         os.close(fd)
         if os.path.lexists(destination):
             raise FileExistsError('Encrypted result destination already exists')
-        with ProtectedStaging(staging_limits) as staging:
+        with _publication_scope(destination, self._deadline, cancelled) as publication, ProtectedStaging(staging_limits) as staging:
             job = asdict(key)
             job['identity'] = key.identity.decode('ascii')
             decoded = run_guarded_helper(parent, helper_limits, {'operation': 'decode', 'source': str(ciphertext),
                 'job': job, 'binding': binding, 'destination': str(staging.path / 'inputs'), 'age': age,
-                'maxBytes': max_input_bytes}, cancelled=cancelled)
+                'maxBytes': max_input_bytes}, cancelled=cancelled, deadline=self._deadline)
             job.clear()
+            self._deadline.check(cancelled)
             spec, decoded_report = decoded['workload'], decoded['report']
             task = spec['tasks'][decoded_report['taskIndex']]
             if canonical(task['runtime']) != canonical(self._runtime) or canonical(task['resources']) != canonical(self._resources):
@@ -97,10 +122,11 @@ class NativeTaskPlan:
             if len(set(log_names)) != len(log_names) or any(name not in task['outputs'] for name in log_names):
                 raise ValueError('Returned logs must have distinct declared encrypted output paths')
             with NativeSandbox(parent, self._root, staging.path / 'inputs', self._runtime['digestSHA256'],
-                    self._limits, self._scratch) as sandbox:
+                    self._limits, self._scratch, deadline=self._deadline) as sandbox:
                 executed = sandbox.run(launch['argv'], environment=launch.get('environment'), cancelled=cancelled)
                 if not executed['success']:
                     raise RuntimeError('Native task failed; no result accepted')
+                self._deadline.check(cancelled)
                 for stream in ('stdout', 'stderr'):
                     if stream in launch:
                         target = sandbox.output_directory / launch[stream]
@@ -118,29 +144,32 @@ class NativeTaskPlan:
                     'taskId': task['id'], 'packageSHA256': binding['packageSHA256'],
                     'root': str(sandbox.output_directory), 'recipient': key.result_recipient,
                     'destination': str(staging.path / 'result.age'), 'attempt': binding['attempt'], 'rank': 0,
-                    'age': age}, cancelled=cancelled)
-            if cancelled is not None and cancelled.is_set():
-                raise RuntimeError('Native task cancelled before encrypted publication')
+                    'age': age}, cancelled=cancelled, deadline=self._deadline)
+            self._deadline.check(cancelled)
             # No plaintext or private receipt is written outside the protected
             # scopes. Reserve only this invocation's ciphertext destination.
             created = False
             try:
                 with destination.open('xb') as out:
                     created = True
+                    publication[0] = True
                     os.chmod(destination, 0o600)
                     digest, count = hashlib.sha256(), 0
                     with (staging.path / 'result.age').open('rb') as incoming:
                         for chunk in iter(lambda: incoming.read(262144), b''):
+                            self._deadline.check(cancelled)
                             count += len(chunk)
                             if count > staging_limits.bytes or (cancelled is not None and cancelled.is_set()):
                                 raise RuntimeError('Encrypted publication cancelled or exceeds budget')
                             digest.update(chunk)
                             out.write(chunk)
+                            self._deadline.check(cancelled)
                     if count != receipt['ciphertextBytes'] or digest.hexdigest() != receipt['ciphertextSHA256']:
                         raise ValueError('Encrypted result changed during publication')
             except BaseException:
                 if created:
                     destination.unlink()
+                    publication[0] = False
                 raise
         return NativeTaskResult({'schema': 'cannabis.guest-native-result.v1', 'executionCompleted': True,
             'resultEncrypted': True, 'runtimeCleanupVerified': True, 'hardwareAdmissionEstablished': False,

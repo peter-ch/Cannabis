@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from compute.client import pack_workload, task_binding_sha256, assemble_results
 from compute.guest_helpers import run_guarded_helper, ProtectedStaging
 from compute.guest_native import NativeTaskPlan, NATIVE_ADAPTER
+from compute.guest_deadline import ExecutionDeadline
 from compute.guest_resources import ResourceLimits
 from compute.guest_sandbox import ScratchLimits, tree_digest
 from compute.job_keys import RecoveredJobKey, _new_identity
@@ -44,6 +45,8 @@ def actor(parent, base, mode):
         program = "import os; os.symlink('/etc/passwd','/output/result.txt')"
     if mode == 'encode-quota':
         program = "open('/output/result.txt','wb').write(b'x'*(1024**2))"
+    if mode == 'native-shared-deadline':
+        program = "import time; open('/output/result.txt','w').write('owned runtime started'); time.sleep(120)"
     if mode == 'decode-quota':
         # Both plaintext and ciphertext fit individually, but their concurrent
         # authenticated staging cannot exceed the shared 1 MiB filesystem.
@@ -51,6 +54,8 @@ def actor(parent, base, mode):
     (source / 'program.py').write_text(program)
     runtime = {'adapter': NATIVE_ADAPTER, 'architecture': 'x86_64', 'os': 'linux', 'digestSHA256': tree_digest(base / 'root')}
     resources = {'cpus': 1, 'memoryMiB': 128, 'scratchMiB': 8, 'wallSeconds': 30, 'nodes': 1}
+    if mode == 'native-shared-deadline':
+        resources['wallSeconds'] = 120
     owner_secret, owner_public = _new_identity(AGE)
     job_secret, job_public = _new_identity(AGE)
     spec = {'schema': 'cannabis.workload.v1', 'id': 'owned-native-check', 'policySHA256': '12'*32,
@@ -79,7 +84,10 @@ def actor(parent, base, mode):
         retained['nodes'] = 2
     destination = own / 'result.age'
     try:
-        plan = NativeTaskPlan(base / 'root', runtime, retained, process_limit=32, scratch_inodes=512)
+        seconds = {'native-shared-deadline': 40, 'encoder-shared-deadline': 60, 'publication-deadline': 45}.get(mode, 120)
+        deadline = (ExecutionDeadline(time.monotonic() - 1) if mode == 'expired-plan' else
+                    ExecutionDeadline.from_service_interval(int(time.time()) - 1, int(time.time()) + seconds))
+        plan = NativeTaskPlan(base / 'root', runtime, retained, process_limit=32, scratch_inodes=512, deadline=deadline)
         if mode == 'tampered':
             with (own / 'input.age').open('r+b') as stream:
                 stream.seek(-1, 2); byte = stream.read(1); stream.seek(-1, 2); stream.write(bytes([byte[0] ^ 1]))
@@ -97,13 +105,46 @@ def actor(parent, base, mode):
             age, wall = str(fake / 'age'), 15
         else:
             age, wall = AGE, 30
+        if mode == 'encoder-shared-deadline':
+            fake = own / 'tools'; fake.mkdir()
+            shutil.copyfile(Path(AGE).with_name('age-keygen'), fake / 'age-keygen')
+            (fake / 'age-keygen').chmod(0o755)
+            (fake / 'age').write_text('#!/usr/bin/python3\nimport os,sys,time\n'
+                + 'if "-r" in sys.argv:\n'
+                + ' open(' + repr(str(own / 'encoder-started')) + ',"w").write("owned encoder")\n'
+                + ' time.sleep(120)\n'
+                + 'os.execv(' + repr(AGE) + ',[' + repr(AGE) + ']+sys.argv[1:])\n')
+            (fake / 'age').chmod(0o755)
+            age, wall = str(fake / 'age'), 120
+        if mode == 'publication-deadline':
+            # Inject actual owner suspension after the real ciphertext write.
+            # No production hook is added, and no private data enters the marker.
+            original_open = Path.open
+            class PausedOutput:
+                def __init__(self, stream): self.stream = stream
+                def __enter__(self): return self
+                def __exit__(self, *args): return self.stream.__exit__(*args)
+                def write(self, data):
+                    count = self.stream.write(data); self.stream.flush()
+                    (own / 'publication-started').write_text(str(deadline.monotonic_end))
+                    os.kill(os.getpid(), signal.SIGSTOP)
+                    return count
+            def controlled_open(path, *args, **kwargs):
+                stream = original_open(path, *args, **kwargs)
+                return PausedOutput(stream) if path == destination and args and args[0] == 'xb' else stream
+            Path.open = controlled_open
         class Cancellation:
             def is_set(self):
+                if mode == 'native-shared-deadline':
+                    for entry in set(Path('/').glob('cannabis-sandbox-*')) - before_mountpoints:
+                        if (entry / 'output/result.txt').exists():
+                            (own / 'native-started').write_text('owned runtime')
+                    return False
                 return (own / 'started').exists()
         result = plan.run(parent, own / 'input.age', key, binding, destination, age=age,
             helper_limits=ResourceLimits(1000, 256*1024**2, 64, wall),
             staging_limits=ScratchLimits((1 if mode in ['decode-quota', 'encode-quota'] else 16)*1024**2, 1024),
-            max_input_bytes=1024**2, cancelled=Cancellation() if mode == 'helper-cancel' else None)
+            max_input_bytes=1024**2, cancelled=Cancellation() if mode in ['helper-cancel', 'native-shared-deadline'] else None)
         assert mode == 'success', 'Expected refusal: ' + mode
         assert not result.report['paymentAccepted'] and not result.report['hardwareAdmissionEstablished']
         assert job_secret.strip() not in destination.read_bytes() and b'OWNED ENCRYPTED INPUT' not in destination.read_bytes()
@@ -123,9 +164,14 @@ def actor(parent, base, mode):
         if mode == 'success':
             raise
         assert not destination.exists(), 'Rejected job published a result'
+        if mode in ['expired-plan', 'native-shared-deadline', 'encoder-shared-deadline', 'publication-deadline']:
+            assert deadline.monotonic_end <= time.monotonic() < deadline.monotonic_end + 10, 'Common deadline did not bound completion'
     assert not list(parent.glob('job-*')), 'Resource group survived completion'
     if mode in ['helper-deadline', 'helper-owner-stop', 'helper-cancel']:
         assert (own / 'started').exists(), 'The helper lifetime refusal was not exercised'
+    for name, marker in [('native-shared-deadline', 'native-started'), ('encoder-shared-deadline', 'encoder-started'), ('publication-deadline', 'publication-started')]:
+        if mode == name:
+            assert (own / marker).exists(), 'The intended deadline stage was not exercised'
     after_mountpoints = set(Path('/').glob('cannabis-staging-*')) | set(Path('/').glob('cannabis-sandbox-*'))
     assert after_mountpoints == before_mountpoints, 'This job left a mount point'
     print(json.dumps({'passed': True, 'mode': mode}), flush=True)
@@ -146,11 +192,26 @@ def main():
         (parent / 'cgroup.subtree_control').write_text('+cpu +memory +pids')
         sandbox_fixture.fixture(base / 'root')
         for mode in ['success', 'tampered', 'metadata', 'group', 'dependency', 'missing-output', 'symlink-output',
-                'decode-quota', 'encode-quota', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel']:
+                'decode-quota', 'encode-quota', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel',
+                'expired-plan', 'native-shared-deadline', 'encoder-shared-deadline', 'publication-deadline']:
             print('Owned encrypted execution check: ' + mode, file=sys.stderr, flush=True)
             proc = subprocess.Popen([sys.executable, '-I', '-B', SCRIPT, 'actor', str(parent), str(base), mode],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
             try:
+                if mode == 'publication-deadline':
+                    marker = base / mode / 'publication-started'
+                    expiry = time.monotonic() + 90
+                    while not marker.exists():
+                        if proc.poll() is not None or time.monotonic() >= expiry:
+                            if proc.poll() is None: proc.kill()
+                            _, error = proc.communicate(timeout=5)
+                            raise AssertionError('Publication stage did not start: ' + error[-8192:].decode())
+                        time.sleep(0.02)
+                    _, status = os.waitpid(proc.pid, os.WUNTRACED)
+                    assert os.WIFSTOPPED(status) and os.WSTOPSIG(status) == signal.SIGSTOP
+                    assert (base / mode / 'result.age').stat().st_size > 0
+                    time.sleep(max(0, float(marker.read_text()) - time.monotonic()) + 0.1)
+                    os.kill(proc.pid, signal.SIGCONT)
                 if mode in ['helper-owner-death', 'helper-owner-stop']:
                     expiry = time.monotonic() + 30
                     while not (base / mode / 'started').exists():

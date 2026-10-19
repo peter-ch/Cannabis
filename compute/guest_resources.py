@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 import time
 import uuid
+from .guest_deadline import bounded_stage_deadline
 
 
 class ResourceCleanupError(RuntimeError):
@@ -156,7 +157,7 @@ class JobResourceGroup:
     The parent is a preconfigured empty domain with cpu/memory/pids enabled.
     Creation never changes ancestor limits or moves unrelated processes.
     """
-    def __init__(self, parent, limits):
+    def __init__(self, parent, limits, *, deadline=None):
         if not isinstance(limits, ResourceLimits):
             raise ValueError('Require validated resource limits')
         self.limits = limits
@@ -166,7 +167,7 @@ class JobResourceGroup:
         self._report = None
         self._name = 'job-' + uuid.uuid4().hex
         self.path = Path(parent) / self._name
-        self.deadline = time.monotonic() + limits.wall_seconds
+        self.deadline = bounded_stage_deadline(limits.wall_seconds, deadline)
         self._parent = _directory(parent)
         try:
             if _read(self._parent, 'cgroup.type') != 'domain' or _read(self._parent, 'cgroup.procs'):

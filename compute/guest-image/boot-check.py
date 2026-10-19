@@ -108,7 +108,7 @@ def main():
             raise RuntimeError('Runtime isolation acceptance failed')
         sandbox_checks = json.loads(sandbox.stdout)
         phase('encrypted_native_execution')
-        native = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-native.py'], capture_output=True, timeout=360)
+        native = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-native.py'], capture_output=True, timeout=540)
         if native.returncode:
             print('CANNABIS_NATIVE_FAILURE ' + native.stderr.decode(errors='replace')[-8192:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Encrypted native execution acceptance failed')
