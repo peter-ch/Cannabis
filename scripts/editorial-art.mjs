@@ -15,7 +15,7 @@ const descriptions = {
 const assignments = {
   'technical-paper':'knowledge-prism', 'windows-setup':'creation-atelier', 'community-claims':'community-garden', 'energy':'alpine-light',
   'privacy-security':'privacy-sanctuary', 'useful-compute':'compute-engine', 'compute-economy':'payment-current',
-  'universal-compute':'network-constellation', 'compute-payments':'payment-current', 'website-orders':'creation-atelier',
+  'universal-compute':'network-constellation', 'decentralized-compute':'network-constellation', 'compute-payments':'payment-current', 'website-orders':'creation-atelier',
   'microjobs':'tidal-garden', 'capacity-commitments':'network-constellation', 'claim-identity':'privacy-sanctuary',
   'person-verification':'community-garden', 'membership-snapshot':'forest-lattice', 'confidential-compute':'privacy-sanctuary',
   'job-key-custody':'moonlit-geode', 'trustee-attestation':'moonlit-geode', 'key-delivery':'forest-lattice',

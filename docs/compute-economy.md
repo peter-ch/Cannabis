@@ -2,6 +2,8 @@
 
 Cannabis is being built as money for useful computing: requesters buy services, providers earn for accepted delivery, and the founder receives a disclosed 1% service fee. The objective is a market sustained by useful jobs and dependable capacity. No proof-of-work competition is involved.
 
+The [decentralized market](decentralized-compute.md) puts shared offers and capacity reservations on the chain, alongside permissionless escrow settlement. Independent providers and requesters must be able to participate without a required founder website, account, scheduler or database. The contract and direct client tools are implemented for review; full worker integration and live operation remain pending.
+
 ## What compute backing must mean
 
 The intended service backing is **a contractual right to redeem a specified amount of Cannabis for a defined computing service from an identified provider, within published availability and validity limits**. This requires capacity that can actually be delivered, reservation controls, enforceable terms and a remedy when delivery fails.
@@ -13,7 +15,7 @@ The token's existing supply and allocation remain unchanged: a 420 million cap, 
 ## From capacity to a completed purchase
 
 1. **Publish an offer.** A provider signs a versioned offer with its identity, eligible execution measurements, runtime and accelerator requirements, capacity units, service window, full price in Cannabis, expiry, acceptance criteria and failure remedy. Publish only necessary scheduling metadata.
-2. **Reserve capacity.** The requester selects a compatible offer. A reservation binds the offer, time window, resource quantities, workload commitment and requester. An authoritative reservation record prevents the same capacity being sold twice. A planner's proposed placement is not a confirmed reservation.
+2. **Reserve capacity.** The requester selects a compatible offer. A reservation binds the offer, time window, resource quantities, workload commitment and requester. The shared market contract rejects overlapping bookings beyond a declared resource's capacity within that market. Physical inventory and commitments outside the market still require reconciliation. A planner's proposed placement is not a confirmed reservation.
 3. **Fund the agreed work.** Escrow locks the budget and discloses worker shares, the included founder fee, delivery and review windows, and dispute terms. Capacity commitments need enforceable provider responsibility; escrow of requester funds alone does not prove or guarantee provider capacity.
 4. **Deliver privately.** Keys are released only to approved attested environments. Workers return encrypted outputs. The requester verifies, decrypts and reconstructs them, then checks the agreed acceptance criteria. A signed hash proves a commitment to bytes, not computational correctness.
 5. **Settle and measure.** Accepted work earns payment. Failed work follows the agreed refund and dispute rules. Publish privacy-preserving aggregate evidence of availability, reservations, accepted delivery, lateness and remedies.

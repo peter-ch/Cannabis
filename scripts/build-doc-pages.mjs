@@ -18,6 +18,7 @@ export const guideGroups = [
   ['compute', 'Useful computing', 'From a software task to an accepted result.', [
     ['useful-compute', 'Put compute to work', 'Explore the service, compatible hardware and useful workloads.'],
     ['compute-economy', 'The computing economy', 'How payments, service commitments and real delivery connect.'],
+    ['decentralized-compute', 'The decentralized market', 'Independent providers, shared on-chain capacity and direct wallet settlement.'],
     ['universal-compute', 'Package a workload', 'Runtime adapters, task graphs and requester-side result assembly.'],
     ['compute-payments', 'Job payments', 'Budgets, acceptance, review windows, disputes and refunds.'],
     ['website-orders', 'Website orders', 'Guest recovery, optional accounts, payment readiness and local result decryption.'],

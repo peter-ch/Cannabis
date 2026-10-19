@@ -54,6 +54,8 @@ export async function prepare(options) {
       'Independent security and privacy review completed', 'Reviewed recurring Cannabis ceremonies, independent venue/registry quorums, durable cross-round human uniqueness and same-identity recovery',
       'At least 128 independently verified members; admission batching policy published', 'Semaphore deployment, verifier version and code hash verified on selected chain',
       'Applicable launch requirements addressed',
+      'Reviewed decentralized compute market and both escrow deployments; direct participation without a required founder service',
+      'Protected execution verifies on-chain capacity and funding; genuine paid acceptance and exact 99/1 settlement completed',
       'Current fees reviewed and funded by owner', 'Owner reviews and signs using their wallet']
   };
   const out = path.resolve(options.out);

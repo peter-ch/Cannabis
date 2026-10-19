@@ -28,6 +28,8 @@ The count measures distinct commitments, not an independently proven number of h
 
 ## Computing services and economic design
 
+The [decentralized market](decentralized-compute.md) coordinates provider offers and bilateral capacity bookings through public contracts. Its shared inventory spans ETH and Cannabis escrows; direct client tools discover offers and inspect finalized reservations without a founder service. No administrator admits providers to the market. Physical capacity, confidential execution and requester-selected verification remain separate requirements, and protected execution still needs integration with these on-chain bookings.
+
 Cannabis is intended as money for useful computing services. The [compute economy specification](compute-economy.md) defines the provider commitments, capacity reservations, redemption terms and delivery evidence needed for service backing. Fixed token supply and community allocation remain unchanged; paid work transfers existing tokens.
 
 The [universal client](universal-compute.md) packages arbitrary software through runtime adapters, plans dependency graphs and coordinated groups, and decrypts/reconstructs outputs on the requester. Worker execution requires a validated confidential path. The [payment escrow](compute-payments.md) holds agreed budgets, records worker shares and applies the 1% founder fee to accepted payments. Its review timeout and dispute rules are part of each job's terms. Mainnet settlement, capacity redemption and protected workers still require integration and independent review.

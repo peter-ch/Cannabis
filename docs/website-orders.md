@@ -2,6 +2,8 @@
 
 Open [Your work](../work.html) to prepare a budget, recover an order or decrypt result archives on your device. Registration is optional. The order service currently saves **preparations**; it does not accept deposits, queue execution or advertise available provider capacity. Payment opens only after reviewed live settlement and confidential worker admission.
 
+The [decentralized market](decentralized-compute.md) provides direct contract tools for discovery, reservations and settlement without this preparation service. Website accounts and hosted storage are optional conveniences and cannot approve workers or decide shared capacity. Connecting the browser ordering flow to independently verified market bookings remains unfinished.
+
 ## Guest ordering
 
 Choose Cannabis or ETH and an exact maximum budget. You may attach a `cannabis.compute.order.v2` manifest from the [compute client](compute-payments.md). Only the opaque job identifier, requester address and encrypted package, policy and acceptance commitments are sent. Private workload instructions, code, inputs and content keys stay on your device.

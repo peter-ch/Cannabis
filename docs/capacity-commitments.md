@@ -1,5 +1,7 @@
 # Signed capacity offers and reservations
 
+The current architecture requires [shared on-chain reservations](decentralized-compute.md) and direct participation by independent providers. This page describes the older local ledger and its existing guest-proof integration. It is not the authority for the decentralized market. The new market contract and client are implemented for review; migration of the protected execution path is still required.
+
 The capacity module gives the compute economy a concrete offer format, a local reservation ledger and a bridge from temporary holds to funded service leases. Providers sign service terms; requesters and providers both sign reservations and the subsequent lease bundle. The ledger rejects overlapping commitments that exceed either an offer's limit or its admitted resource capacity, including when separate offers refer to the same resource.
 
 This is a component of the [compute-backed service design](compute-economy.md). It does not claim physical capacity exists, create token redemption rights by itself, authorize work, or move funds.
@@ -16,7 +18,7 @@ A reservation binds the offer digest, requester, encrypted package SHA-256, inte
 
 The local operator admits an immutable resource identity, service definition and capacity limit. Multiple offers from the same provider/resource consume the same pool. A SQLite immediate transaction checks all intersecting reservations and inserts the new hold atomically. Touching intervals do not overlap. Used reservation IDs cannot be replayed. Separate local connections share the same reservation state.
 
-Admission is trusted and needs real hardware inventory, attestation and reconciliation before operation. A provider could otherwise register one machine under multiple identities or commit it elsewhere. The local ledger does not prevent that, does not synchronize independent registries and is not decentralized consensus. Never copy a writable database between machines as a coordination mechanism. Run one authoritative ledger for a resource, with a reviewed replication/recovery design before production.
+Admission is trusted and needs real hardware inventory, attestation and reconciliation before operation. A provider could otherwise register one machine under multiple identities or commit it elsewhere. The local ledger does not prevent that, does not synchronize independent registries and is not decentralized consensus. Never copy a writable database between machines as a coordination mechanism. This implementation can coordinate one local test installation, but production shared reservations must use the reviewed market contract; any local database is only a cache or operator implementation detail.
 
 ## From a hold to a funded lease
 
