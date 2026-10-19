@@ -110,6 +110,11 @@ The image builder's optional `--launch-authorities PATH` embeds a reviewed publi
 authority set. No production authority set is supplied by default. Merely embedding
 keys does not establish their owners' independence, an audit or hardware admission.
 The ordinary acceptance image still runs checks and powers off without job intake.
+The separate `--operating` image uses a fixed
+[PID-1 supervisor and public prefix](guest-image-build.md#one-use-operating-boot).
+It creates the bounded outer/job-parent groups and supervises one launcher/VM
+lifetime. Its public readiness and staging responses never authorize keys or
+replace the signed configuration, funded assignment or hardware appraisal.
 
 The external configuration is authorized with EIP-712 **Cannabis guest launch
 configuration** signatures. Its digest covers the exact capacity domain, funding
@@ -157,11 +162,12 @@ entire VM and its key-bearing processes, including failures during cleanup.
 
 The requester still verifies the signed Trustee appraisal, including vendor evidence, approved boot measurements, initialization digest, fresh challenge and channel key. The startup API does not independently validate a hardware report or authorize workload execution.
 
-The outer process now creates the authenticated `GuestJobScope`; it still assumes
-the reviewed protected guest filesystem/runtime layout already exists. The complete
-measured boot must create that layout, stage bounded encrypted workloads,
-authenticate network transport, reserve whole-VM overhead and enforce
-VM disposal/key retirement. Runtime isolation, result transport and local receipt
+The outer process creates the authenticated `GuestJobScope`. The separate measured
+operating entry initializes the budgeted layout and fixed outer/job-parent groups,
+stages bounded public configuration and independently supervises VM retirement.
+An admitted successful operating job, authenticated network transport, actual
+provider capacity and reviewed VM/key lifecycle still require completion.
+Runtime isolation, result transport and local receipt
 recovery are connected components; they do not establish the complete operating
 worker. Do not expose the raw bridge through a host proxy. Passing a matching job
 binding is not a substitute for enforcing the actual runtime.

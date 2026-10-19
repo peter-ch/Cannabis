@@ -74,13 +74,13 @@ class VmBudget:
         return {**self.job.controls(),'cgroup.max.depth':'2',
                 'cgroup.max.descendants':str(self.job.children+1)}
 
-    def verify_job_parent(self,fd):
+    def verify_job_parent(self,fd,*,empty=True):
         if (_read(fd,'cgroup.type')!='domain' or _read(fd,'cgroup.procs')
                 or not {'cpu','memory','pids'}<=set(_read(fd,'cgroup.subtree_control').split())
                 or any(_read(fd,k)!=v for k,v in self.job_parent_controls().items())
                 or 'memory.zswap.max' in os.listdir(fd) and _read(fd,'memory.zswap.max')!='0'
-                or any(stat.S_ISDIR(os.stat(p,dir_fd=fd,follow_symlinks=False).st_mode) for p in os.listdir(fd))):
-            raise ValueError('Require the empty, bounded VM job parent')
+                or empty and any(stat.S_ISDIR(os.stat(p,dir_fd=fd,follow_symlinks=False).st_mode) for p in os.listdir(fd))):
+            raise ValueError('VM job parent differs from its required controls or empty state')
 
     def mount_options(self,name):
         _,mode,noexec=MOUNTS[name]

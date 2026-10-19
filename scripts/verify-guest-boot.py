@@ -30,7 +30,8 @@ def main():
     if not qemu:
         raise ValueError('Install qemu-system-x86_64')
     report = json.loads((image / 'build.json').read_text())
-    if report['schema'] != 'cannabis.guest-image-build.v1' or report['executionAuthorized'] is not False:
+    if (report['schema'] != 'cannabis.guest-image-build.v1' or report['executionAuthorized'] is not False
+            or report.get('operatingEntryConfigured') is not False):
         raise ValueError('Require the component acceptance image')
     budget=VmBudget(report['vmBudget']['profile'])
     reference=budget.value['referenceVM']
@@ -90,6 +91,18 @@ def main():
         raise ValueError('Measured VM budget acceptance did not pass')
     if result.get('configuredEntryClosed') is not True or result.get('outerLauncherClosed') is not True:
         raise ValueError('Fixed configured entry did not refuse the unprepared boot')
+    supervision=result.get('supervisionChecks',{})
+    supervision_cases={'retirementOutsidePID1Refused','boundedPrefixAndStreamBoundary','oversizedPrefixRefused',
+        'truncatedPrefixRefused','intakeDeadline','intakeWatchdogLoss','existingGroupPreserved',
+        'boundedLauncherAndRetirement','failedLauncherRetired','detachedTailRefusedAndRetired',
+        'stoppedLauncherDeadline','changedControlsRefused','outerOOMAndSeparateJobRetired',
+        'watchdogLossRetiresLauncher','transportLossRetiresLauncher','PID1NamespacePoweroff',
+        'watchdogRetiresHungPID1','ownerLifelineLossRetiresNamespace','watchdogFailureRetiresNamespace'}
+    if (supervision.get('schema')!='cannabis.guest-boot-supervision-check.v1'
+            or supervision.get('kernel')!=report['kernelRelease']
+            or supervision.get('checks')!={name:True for name in supervision_cases}
+            or any(supervision.get(k) is not False for k in ['realVMRetirementChecked','hardwareValidated','customerKeysUsed','realPaidJob'])):
+        raise ValueError('VM supervision acceptance checks did not pass')
     runtime = result.get('runtimeChecks', {})
     runtime_cases = {'embeddedInventoryMatches', 'changedContentsRefused', 'unsafePermissionsRefused',
         'hardlinksRefused', 'symlinkDestinationRefused', 'occupiedDestinationRefused', 'ordinaryStorageRefused',

@@ -28,7 +28,7 @@ jobs:
       - name: Execute owned microjob fixtures and verify exact settlement
         run: npm run exercise:microjobs
       - name: Check guest image tooling syntax
-        run: python -m py_compile scripts/build-guest-image.py scripts/verify-guest-boot.py scripts/build-guest-firmware.py scripts/measure-guest-snp.py compute/guest-image/boot-check.py
+        run: python -m py_compile scripts/build-guest-image.py scripts/verify-guest-boot.py scripts/verify-operating-boot.py scripts/build-guest-firmware.py scripts/measure-guest-snp.py compute/guest-image/boot-check.py
       - name: Verify measurement input snapshots
         run: python -m unittest discover -s test -p 'test_guest_measure.py' -v
       - name: Verify guest resource configuration refusals
@@ -106,6 +106,7 @@ jobs:
             sudo sysctl -qw kernel.apparmor_restrict_unprivileged_userns=0
           fi
           sudo python3 -I -B scripts/check-guest-sandbox.py
+          sudo /usr/bin/python3 -I -B scripts/check-guest-boot.py --busybox /tmp/cannabis-runtime-image/bin/busybox
           sudo /usr/bin/python3 -I -B scripts/check-guest-runtime.py --image-root /tmp/cannabis-runtime-image
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-native.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-execution.py

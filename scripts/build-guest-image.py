@@ -83,7 +83,10 @@ def main():
     parser.add_argument('--cache', type=Path, required=True)
     parser.add_argument('--guest-services', type=Path, required=True)
     parser.add_argument('--launch-authorities', type=Path, help='Optional reviewed public configuration-authority file; no signing keys')
+    parser.add_argument('--operating', action='store_true', help='Use the distinct one-use operating PID-1 entry; requires public launch authorities')
     args = parser.parse_args()
+    if args.operating and not args.launch_authorities:
+        raise ValueError('Operating entry requires explicit public launch authorities')
     if sys.platform != 'linux' or os.uname().machine != 'x86_64':
         raise ValueError('Use Linux x86_64 with Python 3.12+, dpkg-deb and depmod')
     from compute.guest_vm import VmBudget
@@ -167,15 +170,16 @@ def main():
     for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'check-guest-guardian.py', 'compute-guest-guardian.py', 'check-guest-sandbox.py', 'compute-guest-sandbox.py', 'check-guest-native.py', 'compute-guest-helper.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs', 'compute-guest-control.py', 'check-guest-job.py', 'compute-guest-native-pipe.py', 'check-guest-execution.py', 'compute-guest-admission.py', 'compute-guest-session.mjs']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     copy_text(ROOT / 'scripts/check-guest-python.py', project / 'scripts/check-guest-python.py')
-    for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py','check-guest-runtime.py','check-guest-ciphertext.py','compute-guest-vm.py','check-guest-vm.py']:
+    for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py','check-guest-runtime.py','check-guest-ciphertext.py','compute-guest-vm.py','check-guest-vm.py','compute-guest-boot.py','check-guest-boot.py']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in lock['guestServices']:
         shutil.copyfile(services / name, tree / 'usr/local/bin' / name)
         (tree / 'usr/local/bin' / name).chmod(0o755)
     copy_text(INPUTS / 'early-init', tree / 'init')
     (tree / 'init').chmod(0o755)
-    copy_text(INPUTS / 'init', project / 'guest-init')
+    copy_text(INPUTS / ('init-operating' if args.operating else 'init'), project / 'guest-init')
     (project / 'guest-init').chmod(0o755)
+    copy_text(INPUTS / 'prepare-init', project / 'prepare-init')
     copy_text(INPUTS / 'boot-check.py', project / 'boot-check.py')
     (tree / 'etc/passwd').write_text('root:x:0:0:root:/root:/usr/sbin/nologin\ncannabis:x:1000:1000:workload:/run/workload:/usr/sbin/nologin\n')
     (tree / 'etc/group').write_text('root:x:0:\ncannabis:x:1000:\n')
@@ -212,13 +216,15 @@ def main():
                    else 4096 if p.is_symlink() else 0 for p in payload)
     if root_pages>vm_budget.root.bytes or len(payload)+1>vm_budget.root.inodes:
         raise ValueError('Image cannot fit its measured root byte/inode ceilings')
-    cmdline = 'console=ttyS0 panic=-1 quiet loglevel=3 init=/init'
+    cmdline = 'console=null panic=-1 quiet loglevel=0 init=/init' if args.operating else 'console=ttyS0 panic=-1 quiet loglevel=3 init=/init'
     (out / 'cmdline').write_text(cmdline + '\n')
     write_initramfs(tree, out / 'initramfs.cpio.gz', lock['sourceDateEpoch'])
     if (out/'initramfs.cpio.gz').stat().st_size>vm_budget.value['bootArchiveBytes']:
         raise ValueError('Compressed archive exceeds the measured boot allowance')
     report = {'schema':'cannabis.guest-image-build.v1', 'kernelRelease':lock['kernelRelease'], 'inputsSHA256':digest(INPUTS / 'inputs.json'), 'builderSHA256':digest(Path(__file__)), 'embeddedFiles':len(manifest), 'outputs':{name:{'sha256':digest(out/name), 'bytes':(out/name).stat().st_size} for name in ['vmlinuz', 'initramfs.cpio.gz', 'cmdline']}, 'bootPurpose':'component acceptance; powers off without workload intake', 'hardwareValidated':False, 'executionAuthorized':False, 'independentReproduction':False}
     report['pythonBytecode'] = bytecode
+    report['operatingEntryConfigured']=args.operating
+    if args.operating:report['bootPurpose']='one-use operating PID-1 entry; protected execution still requires independent admission'
     report['nativeRuntime'] = runtime
     report['runtimeRecipeSHA256'] = digest(recipe)
     report['vmBudget']={'profile':vm_budget.value,'minimumMemoryBytes':vm_budget.minimum_memory,

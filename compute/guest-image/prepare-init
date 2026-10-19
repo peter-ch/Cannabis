@@ -1,0 +1,37 @@
+#!/bin/busybox sh
+# No shell, host filesystem, network interface, workload or key intake at boot.
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export HOME=/run
+export PYTHONDONTWRITEBYTECODE=1
+export CANNABIS_AGE=/usr/local/bin/age
+umask 077
+ulimit -c 0
+fail() {
+    echo 'CANNABIS_BOOT_CHECK infrastructure_failure'
+    /bin/busybox poweroff -f
+    while :; do /bin/busybox sleep 60; done
+}
+/bin/busybox mount -t devtmpfs -o nosuid devtmpfs /dev || fail
+/bin/busybox mount -t proc -o nosuid,nodev,noexec proc /proc || fail
+/bin/busybox mount -t sysfs -o nosuid,nodev,noexec sysfs /sys || fail
+/bin/busybox mount -t cgroup2 -o nosuid,nodev,noexec cgroup2 /sys/fs/cgroup || fail
+# Only the disposable guest hierarchy is configured here; never the host's.
+echo '+cpu +memory +pids' > /sys/fs/cgroup/cgroup.subtree_control || fail
+CANNABIS_RUN_OPTIONS=$(/usr/bin/python3 -I -B /opt/cannabis/scripts/compute-guest-vm.py run) || fail
+CANNABIS_TMP_OPTIONS=$(/usr/bin/python3 -I -B /opt/cannabis/scripts/compute-guest-vm.py tmp) || fail
+CANNABIS_SHM_OPTIONS=$(/usr/bin/python3 -I -B /opt/cannabis/scripts/compute-guest-vm.py shm) || fail
+/bin/busybox mount -t tmpfs -o "$CANNABIS_RUN_OPTIONS" tmpfs /run || fail
+/bin/busybox mount -t tmpfs -o "$CANNABIS_TMP_OPTIONS" tmpfs /tmp || fail
+/bin/busybox mkdir -p /dev/shm
+/bin/busybox mount -t tmpfs -o "$CANNABIS_SHM_OPTIONS" tmpfs /dev/shm || fail
+echo 0 > /proc/sys/kernel/sysrq
+echo 2 > /proc/sys/kernel/kptr_restrict
+echo 1 > /proc/sys/kernel/dmesg_restrict
+echo 0 > /proc/sys/fs/suid_dumpable
+# Modules come only from the embedded pinned kernel package. Missing hardware
+# is expected during local boot verification; no module can create a TEE.
+/usr/sbin/modprobe sev-guest >/dev/null 2>&1 || :
+/usr/sbin/modprobe tdx-guest >/dev/null 2>&1 || :
+/usr/sbin/modprobe virtio_console >/dev/null 2>&1 || :
+echo 1 > /proc/sys/kernel/modules_disabled
+/bin/busybox ip link set lo up || fail

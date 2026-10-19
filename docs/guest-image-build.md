@@ -1,6 +1,6 @@
 # Assembling and checking the guest boot image
 
-`scripts/build-guest-image.py` assembles a Linux kernel and complete in-memory boot filesystem containing the [pinned guest evidence services](guest-service-build.md), Node, Python, age and the Cannabis control-plane modules. The current entry point checks those components and powers off. It has no customer-job intake, operating worker endpoint or confidential-hardware authorization.
+`scripts/build-guest-image.py` assembles a Linux kernel and complete in-memory boot filesystem containing the [pinned guest evidence services](guest-service-build.md), Node, Python, age and the Cannabis control-plane modules. Its default entry checks components and powers off. A separate measured operating entry stages public launch configuration and supervises the fixed launcher for one VM lifetime. Neither image supplies confidential-hardware authorization or a live worker service by itself.
 
 This image is a step toward the measured worker described in [worker deployment](worker-deployment.md). It is not a mainnet service release. Assignment initialization, kernel resource enforcement and native runtime isolation are integrated into its component checks. The complete admitted workload launcher, protected transport, outer VM/key lifecycle, hardware acceptance and independent review remain required.
 
@@ -32,7 +32,8 @@ self-reference. The [fixed session entry](guest-initialization.md#fixed-session-
 requires this embedded authority file, a signed configuration and the exact funded
 assignment. Current component builds omit production authorities. Adding an
 authority file changes the image hash and requires a fresh build, boot check and
-hardware reference; it does not enable customer intake in the boot initializer.
+hardware reference. Authority embedding alone does not enable intake; the separate
+`--operating` build option selects the operating entry described below.
 
 The output contains `vmlinuz`, `initramfs.cpio.gz`, `cmdline`, `build.json`, the unpacked `rootfs/` and private build-tool staging. The initramfs uses a deterministic `newc` archive with fixed ownership, timestamps, ordering and gzip metadata. Compare the final kernel, initramfs and command-line file hashes across builds. The command-line file's terminating newline is removed when passing its contents to QEMU.
 
@@ -107,7 +108,7 @@ four vCPUs and 4 GiB of RAM. It attaches no NIC, disk, shared filesystem, monito
 QMP or debugger. Before the full boot, two separate guests must refuse insufficient
 RAM or CPUs and power off before the second root copy. Each negative boot has a
 two-minute deadline. The full boot retains its thirty-minute deadline for the
-expanded 115-case suite; individual component, workload and cleanup deadlines
+expanded 134-case suite; individual component, workload and cleanup deadlines
 remain separate. Failure or timeout does not count as success. Keep the serial
 logs and verification JSON private. Bounded phase names distinguish slow or
 stalled checks without customer content.
@@ -129,6 +130,97 @@ write backpressure, a stopped control process, guardian death before or during
 relay startup, or a lingering descendant. Failed cleanup channels must still
 release retained control-group descriptors. These are owned lifecycle checks. The boot initializer still powers
 off; it does not activate the operating launcher or accept customer jobs.
+
+## One-use operating boot
+
+The separate operating image requires an explicit public authority set:
+
+```sh
+python3 scripts/build-guest-image.py \
+  --guest-services /work/cannabis-agent-build/guest-agent-artifacts-first \
+  --cache /work/cannabis-image-downloads \
+  --launch-authorities /private/reviewed-launch-authorities.json \
+  --operating --output /work/cannabis-operating-first
+```
+
+Repeat the same inputs into a second fresh directory and compare all artifact
+hashes. This image has a different initializer, command line and measurement from
+the component image. `operatingEntryConfigured: true` records its purpose;
+`executionAuthorized` and `hardwareValidated` remain false. Building it does not
+approve authority owners, release signatures, hardware or customer execution.
+
+`compute-guest-boot.py` requires privileged PID 1 and accepts no command-line
+override. It checks the measured layout, starts a separate key-free shutdown
+watchdog and opens exactly one nonterminal virtio port named
+`org.cannabis.control`. The host supplies an untrusted byte stream on this port.
+There is no disk intake, shell service or plaintext customer-work fallback.
+
+The public prefix is deliberately separate from the later encrypted protocol:
+
+1. The guest emits the fixed bytes `CANNABIS-READY` followed by byte `0x01`.
+2. The peer sends `CANNABIS-BOOT` plus `0x01`, then three unsigned 32-bit big-endian
+   lengths and the corresponding canonical public JSON bytes: configuration
+   (at most 256 KiB), initialization (64 KiB), and request (16 MiB).
+3. Intake has one 30-second deadline, reads in bounded chunks and writes fresh
+   root-owned files under the measured unswappable `/run` mount. It leaves the
+   subsequent stream bytes unread. `compute.guest_boot.encode_public_launch`
+   constructs this prefix for a trusted host-side coordinator.
+4. The guest creates the bounded outer leaf and separate empty job parent, then
+   emits `CANNABIS-STAGED` plus `0x01`. Both public messages indicate boot/setup
+   progress only. Neither authenticates hardware, approves configuration, releases
+   a key, accepts a result or authorizes payment.
+5. A fixed small BusyBox bootstrap joins the outer leaf before executing the
+   Python launcher. Its initial/shared pages belong to the VM overhead allowance;
+   launcher initialization and later allocations occur inside the leaf. The
+   existing signature, funded-assignment, runtime and attestation gates still run
+   before customer-key release. No bootstrap command or supervisor path comes
+   from the prefix.
+
+PID 1 and its watchdog stay outside the outer and job groups. The supervisor
+watches the exact launcher and watchdog, rejects changed limits and premature
+transport loss, and requires successful exit with empty groups. Cleanup stops
+and reaps a possibly not-yet-enrolled bootstrap before removing groups; it empties
+outer creators before killing the separate job tree. Failed cleanup is terminal.
+The watchdog independently watches owner loss and one immutable VM expiry.
+Completion, error, expiry or lost supervision ends the entire VM; it is never
+reused for a second job. The PID-1 entry also reaps orphaned descendants.
+
+The operating command line pins `console=null` to suppress host-visible kernel
+output, including error paths that could otherwise print customer process names.
+Its initializer enables immediate panic retirement on any group OOM and disables
+crash dumps and further module loading. Customer logs remain inside the existing
+encrypted result path. These choices follow Linux's
+[console parameters](https://docs.kernel.org/admin-guide/kernel-parameters.html),
+[OOM policy](https://docs.kernel.org/admin-guide/sysctl/vm.html#panic-on-oom) and
+[reboot interface](https://man7.org/linux/man-pages/man2/reboot.2.html).
+
+Nineteen owned kernel cases exercise prefix bounds and deadlines, initial
+containment, changed controls, detached descendants, stopped/failed launchers,
+outer OOM with work left in the separate job tree, transport/watchdog loss and
+retirement of isolated PID namespaces. Namespace retirement is not physical-VM
+or hardware acceptance. The separate ordinary-VM refusal check is:
+
+```sh
+python3 scripts/verify-operating-boot.py \
+  --image /work/cannabis-operating-first \
+  --output /work/cannabis-operating-refusals
+```
+
+It sends only invalid owned public requests. It requires public staging followed
+by refusal, malformed/oversized prefix refusal, bounded stalled intake, and
+shutdown when the port is absent. The kernel console must remain silent. A local
+QMP connection observes the
+[guest shutdown event](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html#event-SHUTDOWN);
+host termination, reset or panic does not substitute for the expected power-off.
+QMP issues no VM-control or memory-read command. No NIC, shared filesystem,
+customer key, authorized job or real payment participates in these checks.
+
+These paths still require actual confidential hardware, reviewed production
+authorities, an integrated successful operating job, authenticated network and
+browser delivery, trustworthy time and rollback protection, and independently
+reviewed VM/key lifecycle. Guest power-off cannot prove destruction of a hostile
+host's prior snapshots or physical erasure. The bounded CPU profile does not
+replace universal adapters, coordinated groups or protected accelerator support.
 
 Twelve ciphertext-storage cases check the dedicated `noswap` tmpfs, actual byte
 and inode exhaustion, changed quota refusal, input hash/size/permission/link
@@ -172,14 +264,15 @@ Jobs use a separate empty bounded parent at `/sys/fs/cgroup/cannabis-jobs`; the
 root cgroup contains PID 1 and cannot be used as the empty allocation parent.
 Admission retains this parent's identity, verifies its aggregate CPU/memory/PID,
 depth and descendant limits, and requires it empty before allocation and after
-retirement. The operating boot must create both this parent and the outer leaf.
+retirement. The operating entry creates both this parent and the outer leaf.
 
 Nine actual-VM cases cover capacity/layout, a reduced CPU affinity mask, a changed
 mount quota in a private namespace, contained and uncontained launchers, changed
 outer or job-parent limits, an oversized job and checked nested-group retirement. The default image
-still runs these checks and powers off. Operating PID-1 supervision, the actual
-outer launch/guardian setup, trustworthy time, physical provider admission and
-whole-VM disposal remain required. Kernel headroom is a budget allowance, not an
+still runs these checks and powers off. The separate operating entry supplies
+PID-1 supervision and outer/job-parent setup; a complete admitted operating job,
+trustworthy time, physical provider admission and reviewed whole-VM/key lifecycle
+remain required. Kernel headroom is a budget allowance, not an
 enforced hard bound on every kernel allocation. Guest-visible capacity and mount
 ceilings do not establish a provider commitment or confidential hardware.
 An outer-group OOM can kill the launcher and its inherited guardians together.
