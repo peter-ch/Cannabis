@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { Wallet, TypedDataEncoder } from 'ethers';
-import { generateIdentity, identityToRecipient } from 'age-encryption';
+import { Encrypter, generateIdentity, identityToRecipient } from 'age-encryption';
 import { deliveryTypesV2 } from '../compute/key_delivery.mjs';
 import { resultKeyCommitment } from '../compute/result_keys.mjs';
 import { sealResultDelivery } from '../compute/result_delivery.mjs';
@@ -44,6 +44,29 @@ async function fixture(t,limits) {
   }
   return {directory,file,wallet,context,recipient,connect,close,record};
 }
+
+test('browser export includes only current authenticated encrypted receipts and rejects retired or replaced attempts',async t=>{
+  const f=await fixture(t),db=f.connect(),r=await f.record();
+  db.activate(r.journal,{resultRecipient:f.recipient});
+  assert.throws(()=>db.exportBrowser([r.digest],()=>({})),/stored encrypted receipt/);
+  await db.receive(r.digest,r.envelope,r.load);
+  const binding={releaseId:r.expectedApproval.value.releaseId,recipient:f.recipient,resultKeySHA256:r.expectedApproval.value.resultKeySHA256};
+  const encrypter=new Encrypter();encrypter.addRecipient(f.recipient);
+  const clear=Buffer.from(JSON.stringify({schema:'cannabis.result-key.v1',...binding,key:r.key.toString('base64url')}));
+  let ciphertext;try{ciphertext=Buffer.from(await encrypter.encrypt(clear));}finally{clear.fill(0);}
+  const custody={schema:'cannabis.result-key.custody.v1',...binding,ciphertext:ciphertext.toString('base64url'),ciphertextSHA256:createHash('sha256').update(ciphertext).digest('hex')};
+  assert.throws(()=>db.exportBrowser([r.digest],()=>({...custody,plaintextKey:r.key.toString('base64url')})),/custody/);
+  const exported=db.exportBrowser([r.digest],binding=>{assert.equal(binding.releaseId,r.expectedApproval.value.releaseId);return custody;});
+  assert.equal(exported.schema,'cannabis.browser-recovery.v1');assert.deepEqual(exported.context,f.context);
+  assert.deepEqual(exported.entries[0],{approval:r.expectedApproval,recipient:f.recipient,custody,envelope:r.envelope});
+  for(const privateValue of ['private-task-name','private-result.txt',r.key.toString('base64url'),f.wallet.privateKey])assert.equal(JSON.stringify(exported).includes(privateValue),false);
+  assert.throws(()=>db.exportBrowser([r.digest,r.digest],()=>custody),/unique/);
+  let ran=false;assert.throws(()=>db.exportBrowser([r.digest],async()=>{ran=true;}),/bounded/);assert.equal(ran,false);
+  const next=await f.record(2);db.activate(next.journal,{resultRecipient:f.recipient,previousApprovalDigest:r.digest});
+  assert.throws(()=>db.exportBrowser([r.digest],()=>custody),/superseded/);
+  await db.receive(next.digest,next.envelope,next.load);db.retire(next.digest);
+  assert.throws(()=>db.exportBrowser([next.digest],()=>custody),/retired/);
+});
 
 test('requester inbox survives restart, keeps only encrypted receipts and treats repeat delivery as recovery',async t=>{
   const f=await fixture(t),r=await f.record();let db=f.connect();

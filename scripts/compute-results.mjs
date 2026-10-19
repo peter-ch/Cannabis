@@ -14,7 +14,7 @@ function read(file,limit=8*1024*1024) {
 }
 let inbox;
 try {
-  if(!['activate','receive','recover','inspect','retire','assemble'].includes(action)||!configFile||!inputFile)throw Error('Require ACTION config.json input.json');
+  if(!['activate','receive','recover','inspect','retire','assemble','export-browser'].includes(action)||!configFile||!inputFile)throw Error('Require ACTION config.json input.json');
   const config=read(configFile),input=read(inputFile);
   inbox=new ResultInbox(config.inbox,config.context,config.limits);
   const load=expected=>{
@@ -31,6 +31,11 @@ try {
   } else if(action==='recover')result=await inbox.recover(input.approvalDigest,load);
   else if(action==='inspect')result=inbox.inspect(input.approvalDigest);
   else if(action==='retire')result=inbox.retire(input.approvalDigest);
+  else if(action==='export-browser')result=inbox.exportBrowser(input.approvalDigests,expected=>{
+    const source=config.resultKeySources?.[expected.releaseId];
+    if(!source?.custody)throw Error('Missing requester result-key custody');
+    return read(source.custody,32768);
+  });
   else {
     if(!Array.isArray(input.results)||!input.results.length||input.results.length>4096||!config.reconstruction||
       !path.isAbsolute(config.reconstruction.python)||!path.isAbsolute(config.reconstruction.age))throw Error('Require local reconstruction configuration and results');

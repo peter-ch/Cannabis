@@ -169,6 +169,7 @@ node scripts/compute-results.mjs assemble ../private/results-config.json ../priv
 | `receive` | `approvalDigest`, `envelopeFile`; that file contains exactly `approvalDigest` and `resultEnvelope` |
 | `recover`, `inspect`, `retire` | `approvalDigest` |
 | `assemble` | `manifest` (original private workload), `packageSHA256` (without `0x`), `results` containing `{approvalDigest, file}` for each encrypted archive, and a new `destination` |
+| `export-browser` | `approvalDigests` containing up to 128 current approvals with stored authenticated encrypted receipts; writes the public/encrypted recovery JSON to stdout |
 
 Each command can run in a fresh process. `recover` authenticates the saved receipt
 using local key custody and prints metadata, never the private receipt or result
@@ -179,8 +180,31 @@ The trusted helper verifies and reconstructs files without executing customer co
 Reconstruction still requires separate application quality acceptance and reviewed
 requester-controlled settlement; this CLI neither signs nor approves payment.
 
-The command-line path is separate from the current website result form. Browser
-integration, operational encrypted delivery and acknowledgement, protected hardware
+For browser recovery, export only the current receipts you intend to reconstruct:
+
+```sh
+node scripts/compute-results.mjs export-browser ../private/results-config.json ../private/browser-selection.json > ../private/browser-recovery.json
+```
+
+`browser-selection.json` contains `{"approvalDigests":["APPROVED_DIGEST"]}`. The
+requester configuration supplies each release's encrypted `custody` file. Export
+does not open an identity key or sign anything. It reads current selections and
+stored encrypted receipts under the inbox transaction, verifies the encrypted
+custody bindings, and emits a bounded `cannabis.browser-recovery.v1` file. Keep it
+private: public approval and timing metadata can link activity even though the
+receipt and result secret remain encrypted. It is a snapshot of this requester
+database, not a promise that an attempt remains current on another device.
+
+The [website result panel](website-orders.md#decrypt-and-reconstruct-results)
+requires an explicit review before importing these selections. It verifies the
+signed approval and encrypted receipt, checks original workload bindings and
+reconstructs locally. Its IndexedDB history prevents older or retired attempts
+being reused on that browser and serializes concurrent-tab changes against result
+publication/download. Browser and desktop selections are not synchronized; export
+again after changing attempts. Plaintext identity secrets and result contents are
+never stored in the browser cache or uploaded by this flow.
+
+Operational encrypted delivery and acknowledgement, protected hardware
 and live settlement remain required before paid intake can open. Local tests use
 disposable custody, an isolated chain and synthetic attestation; they do not count
 as paid jobs or establish confidentiality from a real worker operator.

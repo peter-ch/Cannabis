@@ -36,18 +36,40 @@ A reviewed integration must bind the source and destination chains/assets, appro
 
 ## Decrypt and reconstruct results
 
-The result panel works locally even without an account or live order service. Select the **original private workload**, its encrypted package SHA-256, result receipts and corresponding `.age` files, and the requester's age identity file. Never enter a wallet seed or wallet private key. Windows DPAPI identity vaults remain in the desktop client; the browser accepts a plain age result identity file already controlled by the requester.
+The result panel works locally even without an account or live order service. First export the current authenticated receipts and encrypted result-key backups from your [requester inbox](key-delivery.md#requester-receipt-recovery-and-approved-attempts) with `export-browser`. Open that requester-held recovery file, review its job, requester address, chain, escrow and attempts, and select **Use these approved attempts**. The export includes public signed approvals and encrypted custody/receipts; it contains no identity secret or decrypted output. Use your own latest export, never a worker-provided selection file.
+
+Then select the **original private workload**, its encrypted package SHA-256, corresponding `.age` archives, and the requester's age identity file. Never enter a wallet seed or wallet private key. Windows DPAPI identity vaults remain in the desktop client; the browser accepts a plain age result identity file already controlled by the requester.
 
 The viewer uses [age-encryption](https://github.com/FiloSottile/typage), bundled with the site. It checks the encrypted file digest and size before decryption, authenticates the complete age stream, and verifies archive hashes, job/package/task/rank/recipient bindings, output inventory and assembly destinations. It rejects extra members, unsafe paths, duplicate or overlapping destinations and incomplete required results. No archive code is executed or rendered as HTML. Only files that pass these archive checks receive download links. Keep the original private terms and reviewed result commitments: hashes in an arbitrary supplied receipt alone do not prove who performed the work or whether the result is correct.
 
-This browser flow does not yet authenticate the version-2 encrypted receipt against
-the requester-approved execution or retain the active-attempt selection. An age
-recipient is public, so age encryption alone does not establish the sender. Use
-the [requester recovery client](key-delivery.md) for that receipt and attempt
-verification. Integrating the same checks into the browser remains required before
-it can serve as the verified retrieval path for paid jobs.
+The browser verifies the requester EIP-712 signature, domain and complete version-2
+approval, recovers the per-release receipt key from its age-encrypted backup, and
+authenticates the private JWE receipt against that approval. It binds the receipt
+to the original package, policy, task index, runtime, recipient, rank and attempt
+before reconstructing outputs. Plaintext receipts alone are not accepted by the
+website. These checks establish the supplied records' cryptographic bindings;
+they do not independently attest the worker, prove output quality or approve payment.
 
-The browser supports result sets up to 64 MiB and 128 receipts. Larger sets use the streaming desktop client. **Clear decrypted results** removes download links and file inputs; closing the page releases its memory references. Downloaded plaintext remains on your device. Browser decryption is subject to the security of the delivered website and your browser; use a reviewed local client for stronger separation from the web host.
+Selected attempts, encrypted receipts and encrypted result-key backups are retained
+in IndexedDB on this browser origin. Identity secrets, original workload contents
+and plaintext results are not persisted. Replacements require a higher signed
+attempt with unchanged workload bindings; retired or superseded attempts cannot be
+reselected. The browser checks the selection again after decryption and inside a
+transaction when showing results or starting a download. A change in another tab
+invalidates an older download. Conflicting receipts are refused once that approval's
+results have been authenticated and checked. An unverified damaged import can be
+replaced with the correct export without abandoning the signed attempt.
+
+Browser storage is a local cache of your explicit selections, not a synchronized
+global inbox. A desktop or another device can select a newer attempt without this
+browser knowing. Re-export the current desktop state before relying on it. Clearing
+or eviction of browser data removes its history; a new browser cannot determine
+whether an old export was superseded elsewhere. Keep the requester database and
+encrypted backups. Importing a recovery file never silently selects its attempts.
+The local cache supports 16 jobs, 128 selected results per job and an 8 MiB recovery
+export per job; larger workloads use the streaming requester client.
+
+The browser supports result sets up to 64 MiB and 128 archives. Larger sets use the streaming desktop client. **Clear decrypted results** removes download links and private file inputs, including an in-progress opening; it preserves the encrypted recovery cache. **Retire selected attempts** removes the selected encrypted records while retaining the local history needed to refuse replay. It does not cancel remote execution or revoke previously disclosed keys. Downloaded plaintext remains on your device. Browser decryption is subject to the security of the delivered website and your browser; use a reviewed local client for stronger separation from the web host.
 
 The result viewer currently opens requester-supplied encrypted files. Authenticated worker delivery, hosted ciphertext retrieval, live quotes, wallet checkout and payment-state reconciliation still require integration with the admitted worker service. A local file verification does not create a hosted delivery or approve a payment.
 

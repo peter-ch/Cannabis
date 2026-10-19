@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { TypedDataEncoder, getAddress, verifyTypedData, ZeroAddress } from 'ethers';
 import { deliveryTypesV2 } from './key_delivery.mjs';
 import { openResultDelivery } from './result_delivery.mjs';
+import { inspectResultKeyCustody } from './result_keys.mjs';
 
 const hash=v=>createHash('sha256').update(v).digest('hex');
 const bytes32=v=>typeof v==='string'&&/^0x[0-9a-f]{64}$/.test(v)&&!/^0x0+$/.test(v);
@@ -107,6 +108,26 @@ export class ResultInbox {
     });
   }
   inspect(digest){return publicState(this.#row(digest,false));}
+  // Requester-held recovery snapshot only. The browser must explicitly select
+  // its attempts; export does not authorize execution, acceptance or payment.
+  exportBrowser(digests,loadCustody) {
+    if(!Array.isArray(digests)||!digests.length||digests.length>128||new Set(digests).size!==digests.length||
+      typeof loadCustody!=='function'||Object.prototype.toString.call(loadCustody)==='[object AsyncFunction]')fail('Require bounded unique browser recovery selections');
+    return this.#transaction(()=>{
+      const entries=digests.map(digest=>{
+        const row=this.#row(digest),approval=JSON.parse(row.approval);
+        if(!row.envelope||hash(row.envelope)!==row.envelope_hash)fail('Browser recovery requires a stored encrypted receipt');
+        const binding={releaseId:approval.value.releaseId,recipient:row.recipient,resultKeySHA256:approval.value.resultKeySHA256};
+        const custody=loadCustody(binding);
+        if(custody&&typeof custody.then==='function')fail('Custody export must be synchronous');
+        inspectResultKeyCustody(custody,binding);
+        return {approval,recipient:row.recipient,custody,envelope:row.envelope};
+      });
+      const result={schema:'cannabis.browser-recovery.v1',context:{...this.#context},entries};
+      if(Buffer.byteLength(JSON.stringify(result))>8*1024*1024)fail('Browser recovery exceeds 8 MiB; use the streaming client');
+      return result;
+    });
+  }
   retire(digest) {
     return this.#transaction(()=>{
       const row=this.#row(digest);
