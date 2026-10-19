@@ -27,23 +27,41 @@ const descriptions = {
   'creation-atelier': 'Faceted emerald leaves and quartz connectors on an artisan workbench'
 };
 const assignments = {
-  'technical-paper':'knowledge-prism', 'windows-setup':'night-builder', 'community-claims':'shared-ideas', 'energy':'alpine-light',
-  'privacy-security':'privacy-sanctuary', 'useful-compute':'researcher', 'compute-economy':'morning-founder',
-  'universal-compute':'craft-designer', 'compute-payments':'payment-current', 'website-orders':'business-creator',
-  'microjobs':'hiphop-maker', 'capacity-commitments':'workshop-engineer', 'claim-identity':'rainy-creative',
-  'person-verification':'shared-ideas', 'membership-snapshot':'forest-lattice', 'confidential-compute':'privacy-sanctuary',
+  'technical-paper':'knowledge-prism', 'windows-setup':'creation-atelier', 'community-claims':'community-garden', 'energy':'alpine-light',
+  'privacy-security':'privacy-sanctuary', 'useful-compute':'compute-engine', 'compute-economy':'payment-current',
+  'universal-compute':'network-constellation', 'compute-payments':'payment-current', 'website-orders':'creation-atelier',
+  'microjobs':'tidal-garden', 'capacity-commitments':'network-constellation', 'claim-identity':'privacy-sanctuary',
+  'person-verification':'community-garden', 'membership-snapshot':'forest-lattice', 'confidential-compute':'privacy-sanctuary',
   'job-key-custody':'moonlit-geode', 'trustee-attestation':'moonlit-geode', 'key-delivery':'forest-lattice',
-  'worker-deployment':'evening-provider', 'worker-console':'evening-provider', 'guest-attestation':'crystal-purity', 'guest-initialization':'night-builder',
-  'guest-workload':'researcher', 'guest-service-build':'night-builder', 'guest-image-build':'crystal-facets',
+  'worker-deployment':'compute-engine', 'worker-console':'compute-engine', 'guest-attestation':'crystal-purity', 'guest-initialization':'creation-atelier',
+  'guest-workload':'network-constellation', 'guest-service-build':'compute-engine', 'guest-image-build':'crystal-facets',
   'guest-firmware':'crystal-monolith', 'tokenomics':'payment-current', 'mainnet-release':'launch-horizon',
-  'dependency-verification':'workshop-engineer', 'deployment-fees':'payment-current', 'launch-plan':'alpine-light',
+  'dependency-verification':'forest-lattice', 'deployment-fees':'payment-current', 'launch-plan':'alpine-light',
   'launch-review':'knowledge-prism', 'risks':'moonlit-geode', 'README':'compute-engine'
+};
+const peopleAssignments = {
+  "windows-setup": "night-builder",
+  "community-claims": "shared-ideas",
+  "useful-compute": "researcher",
+  "compute-economy": "morning-founder",
+  "universal-compute": "craft-designer",
+  "website-orders": "business-creator",
+  "microjobs": "hiphop-maker",
+  "capacity-commitments": "workshop-engineer",
+  "claim-identity": "rainy-creative",
+  "person-verification": "shared-ideas",
+  "worker-deployment": "evening-provider",
+  "worker-console": "evening-provider",
+  "guest-initialization": "night-builder",
+  "guest-workload": "researcher",
+  "guest-service-build": "night-builder",
+  "dependency-verification": "workshop-engineer"
 };
 export function artName(topic) { return assignments[topic.split('/').pop().replace(/\.md$/, '')] ?? 'knowledge-prism'; }
 export function companionArt(topic, group) {
-  if (Object.hasOwn(people, artName(topic))) return '';
   const scenes = { start: 'morning-founder', compute: 'craft-designer', identity: 'shared-ideas', protected: 'night-builder', release: 'workshop-engineer' };
-  return editorialArt(scenes[group] ?? 'researcher', 'editorial-art guide-companion');
+  const topicName = topic.split('/').pop().replace(/\.md$/, '');
+  return editorialArt(peopleAssignments[topicName] ?? scenes[group] ?? 'researcher', 'editorial-art guide-companion');
 }
 export function editorialArt(name, className = 'editorial-art', loading = 'lazy') {
   const human = Object.hasOwn(people, name), modern = human || Object.hasOwn(descriptions, name);
