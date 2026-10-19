@@ -13,7 +13,8 @@ import { approvedBrowserFixture } from './fixtures/approved-browser.mjs';
 import { recoverResultKey } from '../compute/result_keys.mjs';
 import { ResultInbox } from '../compute/result_inbox.mjs';
 import { GuestWire,sendEncryptedResult,resultStoredPayload } from '../compute/result_transport.mjs';
-import { bridgeEncryptedResult } from '../operator/result-bridge.mjs';
+import { ResultSpool } from '../operator/result-spool.mjs';
+import { bridgeEncryptedResult,uploadRetainedResult } from '../operator/result-bridge.mjs';
 import { receiveHostedResult } from '../requester/hosted-result.mjs';
 import { openApprovedResults } from '../web/work-approvals.js';
 import { createHash } from 'node:crypto';
@@ -23,6 +24,8 @@ async function fixture(t) {
   const root=fs.realpathSync(os.tmpdir()),dir=fs.mkdtempSync(path.join(root,'cannabis-hosted-handoff-'));
   const f=await approvedBrowserFixture({repetitions:6000}),entry=f.bundle.entries[0],expected=entry.approval,bytes=Buffer.from(f.encrypted[0]);
   const spoolDirectory=path.join(dir,'operator');fs.mkdirSync(spoolDirectory);
+  const spool=new ResultSpool(spoolDirectory,{create:true});
+  const reservation=spool.reserve({expected,maxCiphertextBytes:1024*1024,serviceEnd:Math.floor(Date.now()/1000)+60});spool.dispatch(reservation);
   const ciphertext=path.join(dir,'owned-guest.age'),destination=path.join(dir,'requester.age');fs.writeFileSync(ciphertext,bytes);
   const result={ciphertext,resultEnvelope:entry.envelope},inbox=new ResultInbox(path.join(dir,'inbox.sqlite'),f.bundle.context);
   inbox.activate({schema:'cannabis.key-delivery.record.v2',keyWrapped:true,approvalDigest:expected.digest,
@@ -41,7 +44,7 @@ async function fixture(t) {
   };
   const [guest,bridgeGuest]=pair(),[bridgeRequester,requester]=pair();
   const fetchImpl=(url,options)=>{requests.push({url,headers:options.headers,method:options.method});return fetch(url,options);};
-  const bridgeOptions={expected,access:upload,origin,spoolDirectory,maxCiphertextBytes:1024*1024,timeoutMs:5000,fetchImpl,wait:async()=>{}};
+  const bridgeOptions={expected,access:upload,origin,reservation,maxCiphertextBytes:1024*1024,timeoutMs:5000,fetchImpl,wait:async()=>{}};
   const requesterOptions={inbox,approvalDigest:expected.digest,loadResultKey:binding=>recoverResultKey(entry.custody,f.identity,binding),
     destination,maxCiphertextBytes:1024*1024,signStored:payload=>f.owner.signTypedData(payload.domain,payload.types,payload.value),
     access:read,origin,timeoutMs:5000,fetchImpl,wait:async()=>{}};
@@ -51,15 +54,15 @@ async function fixture(t) {
     receiveHostedResult(requester,{...requesterOptions,...requesterChanges})]);
   t.after(async()=>{
     for(const wire of wires){wire.fail();wire.close();}for(const stream of streams)stream.destroy();
-    server.closeAllConnections();await new Promise(r=>server.close(r));inbox.close();
+    server.closeAllConnections();await new Promise(r=>server.close(r));inbox.close();spool.close();
     assert.equal(path.dirname(fs.realpathSync(dir)),root);fs.rmSync(dir,{recursive:true,force:true});
   });
-  return {...f,dir,bytes,result,expected,spoolDirectory,destination,inbox,server,relay,grant,upload,read,
+  return {...f,dir,bytes,result,expected,spoolDirectory,spool,reservation,destination,inbox,server,relay,grant,upload,read,
     guest,bridgeGuest,bridgeRequester,requester,bridgeOptions,requesterOptions,run,requests,captures};
 }
 function failed(results) {assert.equal(results.length,3);for(const r of results)assert.equal(r.status,'rejected');}
 function retained(f) {
-  const dirs=fs.readdirSync(f.spoolDirectory);assert.equal(dirs.length,1);
+  const dirs=fs.readdirSync(f.spoolDirectory).filter(n=>fs.lstatSync(path.join(f.spoolDirectory,n)).isDirectory());assert.equal(dirs.length,1);
   const dir=path.join(f.spoolDirectory,dirs[0]);assert.deepEqual(fs.readdirSync(dir).sort(),['result.age','source.json']);
   assert.deepEqual(fs.readFileSync(path.join(dir,'result.age')),f.bytes);return dir;
 }
@@ -159,7 +162,7 @@ test('cancelling while owner signing is pending finishes promptly and cannot for
   await new Promise(r=>setImmediate(r));assert.equal(forwarded,0);retained(f);
 });
 
-test('incomplete guest streams expire, remove only their partial spool and never contact storage',async t=>{
+test('incomplete guest streams expire, retain charged uncertain output and never contact remote storage',async t=>{
   const f=await fixture(t),sentinel=path.join(f.spoolDirectory,'keep.txt');fs.writeFileSync(sentinel,'retained operator file');
   const running=Promise.allSettled([
     bridgeEncryptedResult(f.bridgeGuest,f.bridgeRequester,{...f.bridgeOptions,timeoutMs:150}),
@@ -168,7 +171,7 @@ test('incomplete guest streams expire, remove only their partial spool and never
     resultEnvelope:f.result.resultEnvelope,ciphertextBytes:f.bytes.length});
   await f.guest.writeChunk(f.bytes.subarray(0,CHUNK));
   const results=await running;assert.ok(results.every(r=>r.status==='rejected'));
-  assert.deepEqual(fs.readdirSync(f.spoolDirectory),['keep.txt']);assert.equal(fs.readFileSync(sentinel,'utf8'),'retained operator file');
+  assert.equal(f.spool.status(f.reservation.id).state,'receiving');assert.equal(f.spool.usage().records,1);assert.equal(fs.readFileSync(sentinel,'utf8'),'retained operator file');
   assert.equal(f.requests.length,0);assert.equal(fs.existsSync(f.destination),false);
 });
 
@@ -202,8 +205,9 @@ test('separate operator process bridges only public approval and encrypted artif
   const f=await fixture(t),listener=net.createServer();let child,socket,guest,requester,timer;
   await new Promise(r=>listener.listen(0,'127.0.0.1',r));
   const configFile=path.join(f.dir,'operator-config.json'),report=path.join(f.dir,'operator-report.json');
-  const {fetchImpl,wait,...bridge}=f.bridgeOptions;
-  const config=JSON.stringify({bridge,requesterPort:listener.address().port,report});
+  const {fetchImpl,wait,reservation,...bridge}=f.bridgeOptions;
+  const childSpool=path.join(f.dir,'child-spool');fs.mkdirSync(childSpool);
+  const config=JSON.stringify({bridge,spoolDirectory:childSpool,requesterPort:listener.address().port,report});
   for(const secret of [f.identity,f.owner.privateKey,f.read.token])assert.ok(!config.includes(secret));
   fs.writeFileSync(configFile,config,{flag:'wx',mode:0o600});
   let exited;
@@ -220,7 +224,7 @@ test('separate operator process bridges only public approval and encrypted artif
     const [code]=await exited;assert.equal(code,0,errors);assert.equal(errors,'');
     assert.equal(sent.requesterAcknowledgedStorage,true);assert.equal(received.storageAcknowledged,true);
     assert.equal(JSON.parse(fs.readFileSync(report)).requesterStorageSignatureVerified,true);
-    assert.deepEqual(fs.readFileSync(f.destination),f.bytes);retained(f);
+    assert.deepEqual(fs.readFileSync(f.destination),f.bytes);retained({...f,spoolDirectory:childSpool});
   } finally {
     clearTimeout(timer);guest?.fail();guest?.close();requester?.fail();requester?.close();socket?.destroy();
     if(child&&child.exitCode===null&&child.signalCode===null){child.kill();await exited;}
@@ -231,17 +235,50 @@ test('separate operator process bridges only public approval and encrypted artif
 test('a metadata-write failure preserves the complete encrypted spool for local recovery',async t=>{
   const f=await fixture(t),open=fs.openSync;let injected=false;
   fs.openSync=(file,...args)=>{
-    if(typeof file==='string'&&file.startsWith(f.spoolDirectory+path.sep)&&path.basename(file)==='source.json') {
+    if(typeof file==='string'&&file.startsWith(f.spoolDirectory+path.sep)&&path.basename(file)==='source.json.tmp') {
       injected=true;throw Object.assign(Error('Owned metadata storage fault'),{code:'ENOSPC'});
     }
     return open(file,...args);
   };
   let results;try{results=await f.run();}finally{fs.openSync=open;}
   failed(results);assert.equal(injected,true);
-  const directories=fs.readdirSync(f.spoolDirectory);assert.equal(directories.length,1);
+  const directories=fs.readdirSync(f.spoolDirectory).filter(n=>fs.lstatSync(path.join(f.spoolDirectory,n)).isDirectory());assert.equal(directories.length,1);
   const saved=path.join(f.spoolDirectory,directories[0]);assert.deepEqual(fs.readFileSync(path.join(saved,'result.age')),f.bytes);
   assert.equal(results[1].reason.recoveryDirectory,saved);assert.equal(JSON.stringify(results[1].reason).includes(saved),false);
   assert.equal(f.requests.length,0);assert.equal(fs.existsSync(f.destination),false);
+  assert.equal(f.spool.status(f.reservation.id).state,'sealed');
+  const reopened=new ResultSpool(f.spoolDirectory);
+  try{
+    const recovered=reopened.recover(f.reservation.id);assert.equal(recovered.source.resultEnvelope,f.result.resultEnvelope);
+    assert.deepEqual(fs.readFileSync(recovered.source.ciphertext),f.bytes);assert.equal(reopened.status(f.reservation.id).state,'complete');
+  }finally{reopened.close();}
+});
+
+test('expired delivery can use an explicitly replaced relay with identical retained ciphertext and receipt',async t=>{
+  const f=await fixture(t);
+  failed(await f.run({}, {signStored:async()=>'0x'+'11'.repeat(65)}));
+  assert.equal(f.spool.status(f.reservation.id).state,'complete');const saved=retained(f);
+  let requests=0;
+  await assert.rejects(uploadRetainedResult({spool:f.spool,id:f.reservation.id,access:{...f.upload,expiresAt:Date.now()-1},
+    origin:f.bridgeOptions.origin,fetchImpl:()=>{requests++;throw Error('Expired route must not be contacted');}}));assert.equal(requests,0);
+  const free=net.createServer();await new Promise(r=>free.listen(0,'127.0.0.1',r));const port=free.address().port;await new Promise(r=>free.close(r));
+  const origin='http://127.0.0.1:'+port,{server,relay}=createWorkServer({file:':memory:',resultFile:':memory:',origin});
+  await new Promise(r=>server.listen(port,'127.0.0.1',r));
+  try{
+    const {uploadToken,readToken,...grant}=relay.reserve({approvalDigest:f.expected.digest,maxCiphertextBytes:f.bytes.length,expiresAt:Date.now()+60000});
+    const access={...grant,origin,role:'upload',token:uploadToken};assert.notEqual(uploadToken,readToken);
+    const report=await uploadRetainedResult({spool:f.spool,id:f.reservation.id,access,origin,timeoutMs:5000});
+    assert.equal(report.requesterAcknowledgedStorage,false);assert.equal(report.paymentAuthorized,false);
+    assert.equal(report.sourceFile,path.join(saved,'source.json'));
+    const headers={Authorization:'Bearer '+readToken},base=origin+'/api/work/results/'+grant.id;
+    const manifestResponse=await fetch(base+'/manifest',{headers});assert.equal(manifestResponse.status,200);
+    const manifest=await manifestResponse.json();assert.equal(manifest.resultEnvelope,f.result.resultEnvelope);
+    const chunks=[];for(let i=0;i<Math.ceil(f.bytes.length/CHUNK);i++){
+      const response=await fetch(base+'/chunks/'+i,{headers});assert.equal(response.status,200);chunks.push(Buffer.from(await response.arrayBuffer()));
+    }
+    assert.deepEqual(Buffer.concat(chunks),f.bytes);assert.equal(f.spool.status(f.reservation.id).state,'complete');
+    assert.deepEqual(fs.readFileSync(path.join(saved,'result.age')),f.bytes);
+  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
 
 test('cancelling an actual partially delivered HTTP chunk closes its socket and discards only the incomplete requester file',async t=>{

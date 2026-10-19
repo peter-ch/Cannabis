@@ -196,11 +196,12 @@ def main():
             assert report['bookedTLSPeerAuthenticated'] and report['peerListenerDisposed']
             assert report['peerAssignmentSHA256']==report['peerRouteId']
             assert report['durableDispatchRetained'] and report['restartedDispatchRefused']
+            assert report['localSpoolReservationRetained']
             assert not report['guestCompletionObserved'] and not report['paymentAuthorized'] and not report['hardwareValidated']
             assert Path(report['sourceFile']).is_file() and Path(report['directory']).parent==spool
             result['checks'].update(separateSessionOperator=True,hostedSignatureForwarded=True,completeEncryptedSpoolRetained=True,
                                    bookedTLSProviderAuthenticated=True,bookedAssignmentRouted=True,peerListenerDisposed=True,
-                                   durableDispatchRetained=True,restartedDispatchRefused=True)
+                                     durableDispatchRetained=True,restartedDispatchRefused=True,localSpoolReservationRetained=True)
         assert not list(parent.glob('job-*'))
         assert owner_secret.strip() not in raw
         result['wholeTreeCleanup']=True

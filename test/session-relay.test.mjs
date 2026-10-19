@@ -17,6 +17,7 @@ import { sealResultDelivery } from '../compute/result_delivery.mjs';
 import { ResultInbox } from '../compute/result_inbox.mjs';
 import { GuestWire,serveGuestSession,sendGuestExecution,receiveGuestEvidence } from '../compute/result_transport.mjs';
 import { sendEncryptedInput,receiveEncryptedInput } from '../compute/input_transport.mjs';
+import { ResultSpool,RESULT_SPOOL_OVERHEAD } from '../operator/result-spool.mjs';
 import { relayConfiguredSession } from '../operator/session-relay.mjs';
 import { receiveSessionResultAccess } from '../requester/session-access.mjs';
 import { receiveHostedResult } from '../requester/hosted-result.mjs';
@@ -93,7 +94,8 @@ async function fixture(t,version='2') {
     const {uploadToken,readToken,...common}=relay.reserve({approvalDigest,maxCiphertextBytes,expiresAt:Date.now()+60000});
     return {upload:{...common,origin,role:'upload',token:uploadToken},read:{...common,origin,role:'read',token:readToken}};
   };
-  const options={launch,origin,spoolDirectory,reserveResult,wait:async()=>{}};
+  const spool=new ResultSpool(spoolDirectory,{create:true});
+  const options={launch,origin,spool,reserveResult,wait:async()=>{}};
   const requesterRun=async({changeRecord=r=>r,changeAccess=a=>a}={})=>{
     try {
       await sendEncryptedInput(requester,{source:input,packageSHA256,maxCiphertextBytes:1024*1024});
@@ -106,10 +108,10 @@ async function fixture(t,version='2') {
   const run=(operator={},client={})=>Promise.allSettled([guestRun(),relayConfiguredSession(operatorGuest,operatorRequester,{...options,...operator}),requesterRun(client)]);
   t.after(async()=>{
     for(const wire of wires){wire.fail();wire.close();}for(const stream of streams)stream.destroy();
-    server.closeAllConnections();await new Promise(r=>server.close(r));inbox.close();
+    server.closeAllConnections();await new Promise(r=>server.close(r));inbox.close();spool.close();
     assert.equal(path.dirname(fs.realpathSync(dir)),root);fs.rmSync(dir,{recursive:true,force:true});
   });
-  return {...f,dir,input,guestInput,destination,spoolDirectory,guest,requester,operatorGuest,operatorRequester,options,run,reserveResult,captured,
+  return {...f,dir,input,guestInput,destination,spoolDirectory,spool,guest,requester,operatorGuest,operatorRequester,options,run,reserveResult,captured,
     get executions(){return executions;},get reservations(){return reservations;}};
 }
 const failed=r=>{for(const item of r)assert.equal(item.status,'rejected');};
@@ -174,6 +176,7 @@ test('cancellation during reservation prevents a late callback from forwarding e
   await Promise.race([entered.promise,running.then(()=>{throw Error('Session ended before reservation');})]);
   controller.abort();failed(await running);response.resolve({late:true});await new Promise(r=>setImmediate(r));
   assert.equal(f.executions,0);assert.equal(accessMessages,0);
+  assert.equal(f.spool.usage().records,0,'Cancelled unused local capacity must be released');
 });
 
 test('requester rejects altered access and the operator waits for matching readiness before execution',async t=>{
@@ -195,4 +198,31 @@ test('mismatched requester readiness cannot forward the sealed execution command
   f.requester.writeJSON=async v=>{const value=structuredClone(v);
     if(value.operation==='result-access-ready')value.relayId='00000000-0000-4000-8000-000000000000';return write(value);};
   failed(await f.run());assert.equal(f.reservations,1);assert.equal(f.executions,0);
+  assert.equal(f.spool.usage().records,0);
+});
+
+test('aggregate local exhaustion prevents remote reservation and sealed execution forwarding',async t=>{
+  const f=await fixture(t),directory=path.join(f.dir,'full-spool');fs.mkdirSync(directory);
+  const spool=new ResultSpool(directory,{create:true,maxBytes:1024*1024+RESULT_SPOOL_OVERHEAD});
+  try{
+    spool.reserve({expected:f.bundle.entries[0].approval,maxCiphertextBytes:1024*1024,serviceEnd:f.options.launch.interval.end});
+    failed(await f.run({spool}));assert.equal(f.reservations,0);assert.equal(f.executions,0);assert.equal(spool.usage().records,1);
+  }finally{spool.close();}
+});
+
+test('durable local dispatch precedes command forwarding and an uncertain write cannot free capacity',async t=>{
+  const f=await fixture(t),write=f.operatorGuest.writeJSON.bind(f.operatorGuest);let id;
+  f.operatorGuest.writeJSON=async command=>{
+    if(command.operation==='execute'){
+      // Inspect a separate connection while the forwarding operation is paused.
+      const other=new ResultSpool(f.spoolDirectory);
+      try{
+        assert.equal(other.usage().records,1);
+        id=other.list()[0].id;
+        assert.equal(other.status(id).state,'dispatched');
+      }finally{other.close();}
+      throw Error('Owned uncertain command write');
+    }return write(command);
+  };
+  failed(await f.run());assert.equal(f.executions,0);assert.equal(f.spool.status(id).state,'dispatched');assert.equal(f.spool.usage().records,1);
 });

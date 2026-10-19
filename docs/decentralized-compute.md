@@ -115,7 +115,7 @@ Success proves that the retrieved public bytes match the provider's on-chain
 commitment at the observed state. It does not guarantee a booking, authenticate a
 live peer's wallet or admit physical hardware. Advertised contact origins are not
 automatically contacted by manifest retrieval. Authenticated session transport,
-aggregate relay storage and end-to-end independent operation remain release work.
+physical storage enforcement and end-to-end independent operation remain release work.
 
 ## Direct peer channel authentication
 
@@ -205,7 +205,8 @@ unwritable journal refuses handler handoff. Cleanup only removes expired metadat
 never customer ciphertext. Backward local time fails closed against its persisted
 clock high-water mark; this does not supply a trusted hardware clock. Failed
 authentication may retry within the listener's in-memory attempt limit. Aggregate
-local ciphertext reservations and recovery/retention policy remain separate work.
+local ciphertext reservations now precede execution forwarding, as described below;
+physical storage enforcement and protected lifecycle reconciliation remain release work.
 
 `connectBookedPeer` validates the selected certificate/hostname, sends the fixed
 preface and performs booked-party authentication. TCP/TLS setup, selection,
@@ -219,8 +220,54 @@ retained prepared launch and sealed guest channel. Closing the listener stops
 intake and destroys connections. Its bounded shutdown report distinguishes closed
 sockets from handlers still pending cleanup; such a report cannot claim that a
 worker, VM or customer keys have been retired. Resource/VM guardians and checked
-cleanup remain required. The visible signing workflow, aggregate encrypted
-storage and durable independent operation remain release requirements.
+cleanup remain required. The visible signing workflow, physical storage limits
+and durable independent operation remain release requirements.
+
+## Local encrypted result reservations and recovery
+
+The operator session requires a persistent `ResultSpool`. Before forwarding a
+sealed execution command it reserves the maximum encrypted output, two copies of
+the bounded encrypted receipt (journal and recovery file), and metadata allowance.
+The selected HTTP delivery relay has a separate reservation. Exhaustion of either
+reservation prevents execution forwarding; a late remote response cannot revive
+a cancelled session. The local ledger commits the uncertain execution state before
+the command write, including when that write fails without a known outcome.
+
+SQLite transactions enforce aggregate byte and record limits across processes
+sharing the same intact store. Creation is explicit and requires an empty private
+directory. Reopening a missing ledger or changing its saved limits fails closed.
+Retain the directory, SQLite database and WAL together. This is an ordinary-host
+logical allowance, not physical disk preallocation, a filesystem quota, TEE
+admission, protection against operator rollback, or a reservation across different
+operator machines. Filesystem limits and capacity monitoring remain required.
+
+The ledger distinguishes unused reservations, uncertain dispatch, partial output,
+sealed output, complete output and requester-acknowledged storage. Cancellation or
+expiry can release unused space. Uncertain dispatch and partial output stay
+charged: timeout alone does not prove that a protected guest stopped. Checked
+guest-termination reconciliation for reclaiming those records is unfinished.
+Transfers write bounded chunks; a durable end-frame hash and encrypted receipt
+allow restart recovery to verify the complete archive and reconstruct interrupted
+metadata publication without content keys or another execution.
+
+`ResultSpool.list()` and `status(id)` expose local recovery state. `recover(id)`
+checks the archive and immutable metadata. `uploadRetainedResult` sends that same
+retained ciphertext and receipt to an explicitly selected replacement relay using
+its upload capability; the requester needs the separate read capability and its
+own approval/recovery material. Retries are bounded by the configured retention
+window and each relay's expiry. Neither a successful upload nor route replacement
+is requester storage acknowledgement, output acceptance or payment approval.
+
+Complete unacknowledged results remain charged even after retries expire, preserving
+the sole recoverable copy and refusing new work when capacity is exhausted. Only a
+verified requester storage signature starts the deletion retention period (seven
+days by default, configurable at store creation from one to thirty days). Cleanup
+persists deletion intent and releases capacity only after checked file removal;
+interrupted cleanup resumes from the ledger. Windows file flushing and SQLite
+durability are checked, but Windows directory flush and physical power-loss
+guarantees are not established by these process-termination tests. These controls
+are implemented in the compute review branch; live protected operation remains
+in preparation.
 
 ## Protected booking and key-delivery binding
 

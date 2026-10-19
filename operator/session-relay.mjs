@@ -3,8 +3,6 @@
 // Never expose this module as a raw caller-selected launch/configuration API.
 import { createHash,createPublicKey } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import fs from 'node:fs';
-import path from 'node:path';
 import { TypedDataEncoder,verifyTypedData,getAddress } from 'ethers';
 import { calculateJwkThumbprint } from 'jose';
 import { guestInitialization } from '../compute/guest_initialization.mjs';
@@ -14,6 +12,7 @@ import { validateRelayAccess } from '../web/work-relay.js';
 import { validateUploadAccess } from './result-upload.mjs';
 import { bridgeEncryptedResult } from './result-bridge.mjs';
 import { claimPeerChannel } from '../compute/peer_channel.mjs';
+import { assertResultSpool } from './result-spool.mjs';
 const protocol='cannabis.guest-wire.v1',CHUNK=65536;
 const integer=(n,min,max)=>Number.isSafeInteger(n)&&n>=min&&n<=max;
 const fields=(v,n)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join()===n.sort().join();
@@ -43,14 +42,13 @@ export async function relayAuthenticatedSession(guest,requester,options={}) {
   } catch(error) {guest?.fail?.();requester?.fail?.();throw error;}
   finally {requester?.close?.();}
 }
-export async function relayConfiguredSession(guest,requester,{launch,origin,spoolDirectory,reserveResult,signal,
+export async function relayConfiguredSession(guest,requester,{launch,origin,spool,reserveResult,signal,
   fetchImpl=globalThis.fetch,wait}={}) {
-  const controller=new AbortController(),listeners=[];let timer;
+  const controller=new AbortController(),listeners=[];let timer,reservation;
   const stop=()=>{if(controller.signal.aborted)return;controller.abort();guest.fail();requester.fail();};
   try {
     check(typeof reserveResult==='function'&&(!signal||signal instanceof AbortSignal));
-    check(typeof spoolDirectory==='string'&&path.isAbsolute(spoolDirectory));
-    const spool=fs.lstatSync(spoolDirectory);check(spool.isDirectory()&&!spool.isSymbolicLink());
+    assertResultSpool(spool);
     launch=structuredClone(launch);
     const assignment=guestInitialization(launch.initialization).assignment,b=assignment.binding,challenge=launch.challenge;
     check(canonical(challenge.binding)===canonical(b)&&fields(launch.interval,['start','end'])&&
@@ -132,9 +130,11 @@ export async function relayConfiguredSession(guest,requester,{launch,origin,spoo
         integer(v.expiresAt,now+1,Math.min(launch.interval.end,challenge.expiresAt)));
     };
     fresh();
-    // The operator's local reservation callback must reserve actual storage;
-    // no public reserve endpoint or provider admission is created here. A late
-    // callback can leave an expiring reservation but cannot forward execution.
+    // Local and remote storage are independent. Commit aggregate local capacity
+    // before contacting the chosen relay or forwarding the sealed command.
+    reservation=spool.reserve({expected,maxCiphertextBytes:launch.transport.maxCiphertextBytes,serviceEnd:launch.interval.end},controller.signal);
+    // A late remote callback can leave an expiring remote reservation but cannot
+    // revive the cancelled local reservation or forward execution.
     const provision=await abortable(()=>reserveResult({approvalDigest:expected.digest,
       maxCiphertextBytes:launch.transport.maxCiphertextBytes,serviceEnd:launch.interval.end},controller.signal),controller.signal);
     fresh();check(fields(provision,['upload','read']));
@@ -147,8 +147,9 @@ export async function relayConfiguredSession(guest,requester,{launch,origin,spoo
     const accepted=await requester.readJSON(1024);fresh();
     check(fields(accepted,['protocol','operation','approvalDigest','relayId'])&&accepted.protocol==='cannabis.hosted-session.v1'&&
       accepted.operation==='result-access-ready'&&accepted.approvalDigest===expected.digest&&accepted.relayId===read.id);
+    spool.dispatch(reservation); // durable uncertainty BEFORE any execution bytes
     await guest.writeJSON(command);active();
-    const result=await bridgeEncryptedResult(guest,requester,{expected,access:upload,origin,spoolDirectory,
+    const result=await bridgeEncryptedResult(guest,requester,{expected,access:upload,origin,reservation,
       maxCiphertextBytes:launch.transport.maxCiphertextBytes,timeoutMs:remaining(),signal:controller.signal,fetchImpl,wait});
     active();return {...result,schema:'cannabis.session-relay-report.v1',inputCiphertextBytes:count,
       evidenceForwarded:true,executionRequestForwarded:true,hardwareValidated:false};
@@ -156,5 +157,8 @@ export async function relayConfiguredSession(guest,requester,{launch,origin,spoo
     stop();const failure=Error('Configured encrypted session relay failed; retain complete ciphertext and requester recovery material');
     if(error?.recoveryDirectory)Object.defineProperty(failure,'recoveryDirectory',{value:error.recoveryDirectory,enumerable:false});
     throw failure;
-  } finally {clearTimeout(timer);for(const s of listeners)s.removeEventListener('abort',stop);}
+  } finally {
+    clearTimeout(timer);for(const s of listeners)s.removeEventListener('abort',stop);
+    if(reservation)spool.cancelUnused(reservation);
+  }
 }
