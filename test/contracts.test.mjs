@@ -290,9 +290,15 @@ test('local API restricts origins, rejects repeat claims, and never serves priva
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
-for (const minimumClaimMembers of [4,8]) test(`a configured minimum of ${minimumClaimMembers} gates claims and snapshots at its exact boundary`,async()=>{
+// Snapshots must satisfy the real clock even when tests run quickly or revert old blocks.
+async function freshPolicyChain() {
   await reset();
-  const selected=await deploy(provider,artifacts.Cannabis,{semaphoreAddress:await semaphore.getAddress(),minimumClaimMembers,delay:100});
+  const latest=await provider.getBlock('latest');
+  await timestamp(Math.max(latest.timestamp+1,Math.floor(Date.now()/1000)));
+}
+for (const minimumClaimMembers of [4,8]) test(`a configured minimum of ${minimumClaimMembers} gates claims and snapshots at its exact boundary`,async()=>{
+  await freshPolicyChain();
+  const selected=await deploy(provider,artifacts.Cannabis,{semaphoreAddress:await semaphore.getAddress(),minimumClaimMembers,delay:30});
   const registry=new Contract(await selected.token.enrollment(),artifacts.CannabisEnrollment.abi,await provider.getSigner(2));
   assert.equal(await selected.token.minimumClaimMembers(),BigInt(minimumClaimMembers));
   await (await registry.addVerifiedMembers(Array.from({length:minimumClaimMembers-1},(_,i)=>localIdentity(i).commitment))).wait();
@@ -309,7 +315,7 @@ for (const minimumClaimMembers of [4,8]) test(`a configured minimum of ${minimum
 });
 
 test('owner can raise one to four to eight only after enrollment grows; preparation never signs or broadcasts',async()=>{
-  await reset();const selected=await deploy(provider,artifacts.Cannabis,{semaphoreAddress:await semaphore.getAddress(),delay:100});
+  await freshPolicyChain();const selected=await deploy(provider,artifacts.Cannabis,{semaphoreAddress:await semaphore.getAddress(),delay:30});
   const target=selected.token,registry=new Contract(await target.enrollment(),artifacts.CannabisEnrollment.abi,await provider.getSigner(2));
   const {prepareClaimThreshold}=await import('../scripts/prepare-claim-threshold.mjs');
   const options={rpc:node.rpc,chainId:'31337',token:await target.getAddress(),codeHash:keccak256(await provider.getCode(await target.getAddress())),authority:founder,minimumClaimMembers:4};
