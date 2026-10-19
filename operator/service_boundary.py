@@ -51,6 +51,9 @@ class BoundaryProfile:
         if (config.get('approvals')!=str(state/'approvals') or config.get('dispatch')!=str(state/'dispatch.sqlite') or
                 config.get('relay',{}).get('orders')!=str(state/'orders.sqlite') or config['relay'].get('results')!=str(state/'results.sqlite')):
             raise ValueError('All service metadata must stay on the retained state volume')
+        if config.get('market') is not None and (not isinstance(config['market'],dict) or
+                config['market'].get('journal')!=str(state/'market.sqlite')):
+            raise ValueError('Market journal must stay on the retained state volume')
         self.control=self.limits(v['control']);self.vm=self.limits(v['vm'])
         if self.control.memory_bytes<256*MIB or self.control.processes<32 or self.control.cpu_millis<100:
             raise ValueError('Insufficient control-plane reservation')

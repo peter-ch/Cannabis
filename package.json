@@ -12,6 +12,7 @@
     "test": "node --test --test-concurrency=1 test/*.test.mjs",
     "dev": "node scripts/dev.mjs",
     "worker:console": "node operator/server.mjs",
+    "build:operator": "node scripts/build-market-wallet.mjs",
     "verify:local": "node scripts/verify-local.mjs",
     "verify:claim": "node scripts/claim.mjs",
     "verify:status": "node scripts/status.mjs",

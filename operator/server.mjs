@@ -22,6 +22,9 @@ const files = new Map([
   ['/provider.css', ['provider.css', 'text/css; charset=utf-8']],
   ['/service.js', ['service.js', 'text/javascript; charset=utf-8']],
   ['/service.css', ['service.css', 'text/css; charset=utf-8']],
+  ['/market.js', ['market.js', 'text/javascript; charset=utf-8']],
+  ['/market-wallet.js', ['market-wallet.js', 'text/javascript; charset=utf-8']],
+  ['/market.css', ['market.css', 'text/css; charset=utf-8']],
   ['/compute-engine.webp', ['../web/assets/editorial/compute-engine-small.webp', 'image/webp']]
 ]);
 const assets = new Map([...files].map(([route, [name, type]]) => [route, { type, body: fs.readFileSync(path.join(here, name)) }]));
@@ -79,7 +82,7 @@ export function createObserver(inventory) {
   };
 }
 
-export function createConsoleServer(observer,{results=null,provider=null,service=null}={}) {
+export function createConsoleServer(observer,{results=null,provider=null,service=null,market=null}={}) {
   const actionToken=randomBytes(32).toString('hex');
   const actions=new Map([
     ['/api/results/recover',['id',body=>results.recover(body.id)]],
@@ -92,7 +95,24 @@ export function createConsoleServer(observer,{results=null,provider=null,service
     ['/api/provider/submit',['requestId,signature',body=>provider.submit(body.requestId,body.signature)]],
     ['/api/provider/decline',['requestId',body=>provider.decline(body.requestId)]],
     ['/api/service/start',['',()=>service.start()]],
-    ['/api/service/stop',['',()=>service.stop()]]
+    ['/api/service/stop',['',()=>service.stop()]],
+    ['/api/market/network',['',()=>market.network()]],
+    ['/api/market/offers',['fromBlock,toBlock',body=>market.discover(body)]],
+    ['/api/market/bookings',['bookingIds',body=>market.bookings(body.bookingIds)]],
+    ['/api/market/import',['plan',body=>market.importPlan(body.plan)]],
+    ['/api/market/plan',['planId',body=>market.plan(body.planId)]],
+    ['/api/market/export',['planId',body=>market.exportPlan(body.planId)]],
+    ['/api/market/inspect',['planId',body=>market.inspect(body.planId)]],
+    ['/api/market/begin',['bookingId,method,planId,signer',body=>market.begin(body.planId,{method:body.method,actor:body.signer,bookingId:body.bookingId})]],
+    ['/api/market/detail',['requestId',body=>market.detail(body.requestId)]],
+    ['/api/market/handoff',['requestId',body=>market.handoff(body.requestId)]],
+    ['/api/market/signature',['requestId,signature',body=>market.submitSignature(body.requestId,body.signature)]],
+    ['/api/market/import-signature',['bookingId,planId,signature,signer',body=>market.importSignature(body.planId,body.bookingId,body.signer,body.signature)]],
+    ['/api/market/report-hash',['actionId,transactionHash',body=>market.reportHash(body.actionId,body.transactionHash)]],
+    ['/api/market/action',['actionId',body=>market.action(body.actionId)]],
+    ['/api/market/observe',['actionId',body=>market.observe(body.actionId)]],
+    ['/api/market/wallet-refused',['actionId',body=>market.walletRefused(body.actionId)]],
+    ['/api/market/cancel',['requestId',body=>market.cancel(body.requestId)]]
   ]);
   const server=http.createServer({ requestTimeout: 5000, headersTimeout: 5000, maxHeaderSize: 8192 }, async (req, res) => {
     const origin = `http://127.0.0.1:${res.socket.localPort}`;
@@ -115,18 +135,18 @@ export function createConsoleServer(observer,{results=null,provider=null,service
         !/^[0-9a-f]{64}$/.test(provided)||!timingSafeEqual(Buffer.from(provided),Buffer.from(actionToken))) {
         req.resume();res.writeHead(403).end();return;
       }
-      const signing=req.url.startsWith('/api/provider/'),operating=req.url.startsWith('/api/service/');
-      if(!(operating?service:signing?provider:results)){req.resume();json({error:operating?'No operator service is configured.':signing?'No provider catalog is configured.':'No result store is configured.'},503);return;}
+      const signing=req.url.startsWith('/api/provider/'),operating=req.url.startsWith('/api/service/'),trading=req.url.startsWith('/api/market/');
+      if(!(trading?market:operating?service:signing?provider:results)){req.resume();json({error:trading?'No reviewed market is configured.':operating?'No operator service is configured.':signing?'No provider catalog is configured.':'No result store is configured.'},503);return;}
       const timer=setTimeout(()=>req.destroy(),5000);let body;
       try {
         const chunks=[];let size=0;
-        for await(const chunk of req){size+=chunk.length;if(size>(operating?64:signing?20480:8192))throw Error('Body limit');chunks.push(chunk);}
+        for await(const chunk of req){size+=chunk.length;if(size>(trading?262144:operating?64:signing?20480:8192))throw Error('Body limit');chunks.push(chunk);}
         body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
         if(!body||Array.isArray(body)||Object.keys(body).sort().join()!==actions.get(req.url)[0])throw Error('Body shape');
       }catch{if(!res.destroyed)json({error:'Use the selected item and a bounded console request.'},400);return;}
       finally{clearTimeout(timer);}
       try{json(await actions.get(req.url)[1](body),operating||req.url==='/api/results/start-retry'?202:200);}
-      catch{json({error:operating?'Service action unavailable. Refresh lifecycle status and retain recovery state.':signing?'Provider approval unavailable. Refresh and review the retained assignment.':'Recovery action unavailable. Keep the retained result, refresh its state and review the selected relay.'},409);}
+      catch{json({error:trading?'Market action unavailable. Refresh the selected plan and retain uncertain transaction records.':operating?'Service action unavailable. Refresh lifecycle status and retain recovery state.':signing?'Provider approval unavailable. Refresh and review the retained assignment.':'Recovery action unavailable. Keep the retained result, refresh its state and review the selected relay.'},409);}
       return;
     }
     if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405, { Allow: 'GET, HEAD' }).end(); return; }
@@ -137,14 +157,17 @@ export function createConsoleServer(observer,{results=null,provider=null,service
         value.resultStorage=results?results.snapshot():{state:'not-configured',reason:'No retained result store is selected for this console.'};
         value.providerApprovals=provider?provider.snapshot():{state:'not-configured',reason:'No retained provider assignments are selected for this console.'};
         value.operatorService=service?service.snapshot():{state:'not-configured',reason:'No operator service is selected. This window shows machine observations only.'};
+        value.market=market?market.snapshot():{state:'not-configured',reason:'No reviewed network and market deployment are selected. No offers or payments are available here.'};
+        if(market){value.mode='market-controls';value.worker.reason='Market activity does not establish an admitted worker or verified session earnings.';
+          value.limits[value.limits.length-1]='Market controls prepare explicit wallet approvals. A transaction, offer or reservation does not establish confidential execution or accepted work.';}
         if(service){value.mode='operator-controls';value.worker.reason='Paid acceptance and earnings are not verified by local service or transport status.';
           value.limits[value.limits.length-1]='The selected booked service has separate controls. Local sessions do not establish payment, token issuance or requester attestation.';}
         json(value);
       } catch { res.writeHead(503).end(); }
       return;
     }
-    if(req.url==='/api/control'){json({schema:'cannabis.console-control.v1',configured:Boolean(results||provider||service),
-      resultStorage:Boolean(results),providerApprovals:Boolean(provider),operatorService:Boolean(service),actionToken:results||provider||service?actionToken:null});return;}
+    if(req.url==='/api/control'){json({schema:'cannabis.console-control.v1',configured:Boolean(results||provider||service||market),
+      resultStorage:Boolean(results),providerApprovals:Boolean(provider),operatorService:Boolean(service),market:Boolean(market),actionToken:results||provider||service||market?actionToken:null});return;}
     const asset = assets.get(req.url);
     if (!asset) { res.writeHead(404).end(); return; }
     res.writeHead(200, { 'Content-Type': asset.type, 'Content-Length': asset.body.length });
@@ -164,7 +187,7 @@ function openConsole(url) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  let directory,catalog,approvalDirectory,serviceFile,port=4201,open=false;const relayOrigins=[];
+  let directory,catalog,approvalDirectory,serviceFile,marketFile,marketState,port=4201,open=false;const relayOrigins=[];
   const args=process.argv.slice(2);
   for(let i=0;i<args.length;i++) {
     if(args[i]==='--open'&&!open)open=true;
@@ -173,21 +196,24 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     else if(args[i]==='--provider-catalog'&&!catalog&&args[i+1])catalog=args[++i];
     else if(args[i]==='--provider-approvals'&&!approvalDirectory&&args[i+1])approvalDirectory=args[++i];
     else if(args[i]==='--operator-config'&&!serviceFile&&args[i+1])serviceFile=args[++i];
+    else if(args[i]==='--market-config'&&!marketFile&&args[i+1])marketFile=args[++i];
+    else if(args[i]==='--market-state'&&!marketState&&args[i+1])marketState=args[++i];
     else if(args[i]==='--port'&&/^[0-9]{1,5}$/.test(args[i+1]??''))port=Number(args[++i]);
-    else throw Error('Usage: node operator/server.mjs [--open] [--port PORT] [--operator-config ABSOLUTE_FILE | --result-store ABSOLUTE_PATH --relay-origin ORIGIN --provider-catalog ABSOLUTE_FILE --provider-approvals ABSOLUTE_DIRECTORY]');
+    else throw Error('Usage: node operator/server.mjs [--open] [--port PORT] [--operator-config ABSOLUTE_FILE | --result-store ABSOLUTE_PATH --relay-origin ORIGIN --provider-catalog ABSOLUTE_FILE --provider-approvals ABSOLUTE_DIRECTORY --market-config ABSOLUTE_FILE --market-state ABSOLUTE_JOURNAL]');
   }
   if(!Number.isSafeInteger(port)||port<1024||port>65535||relayOrigins.length&&!directory||Boolean(catalog)!==Boolean(approvalDirectory)||
-    serviceFile&&(directory||catalog||approvalDirectory||relayOrigins.length))throw Error('Invalid local console configuration');
-  let results=null,provider=null,service=null;
-  if(serviceFile){const {openOperatorService}=await import('./service.mjs');({service,results,provider}=await openOperatorService(serviceFile));}
+    Boolean(marketFile)!==Boolean(marketState)||serviceFile&&(directory||catalog||approvalDirectory||relayOrigins.length||marketFile||marketState))throw Error('Invalid local console configuration');
+  let results=null,provider=null,service=null,market=null;
+  if(serviceFile){const {openOperatorService}=await import('./service.mjs');({service,results,provider,market}=await openOperatorService(serviceFile));}
   if(directory){const {ResultConsole}=await import('./storage-console.mjs');results=new ResultConsole(directory,{relayOrigins});}
   if(catalog){const {ProviderApprovals,readProviderCatalog}=await import('./provider-approvals.mjs');
     provider=new ProviderApprovals(readProviderCatalog(catalog),approvalDirectory);}
+  if(marketFile){const {MarketConsole,readMarketConfiguration}=await import('./market-console.mjs');market=new MarketConsole(readMarketConfiguration(marketFile),marketState);}
   const observer = createObserver(await localInventory());
-  const server = createConsoleServer(observer,{results,provider,service});
+  const server = createConsoleServer(observer,{results,provider,service,market});
   let closing;
   const close=()=>closing??=(async()=>{observer.close();server.close();server.closeAllConnections();
-    if(service)await service.close();else{await results?.close();await provider?.close();}})().catch(()=>{
+    if(service)await service.close();else{await market?.close();await results?.close();await provider?.close();}})().catch(()=>{
       console.error('Operator shutdown is unverified. Preserve recovery state and inspect owned processes.');process.exitCode=1;});
   server.on('error', async error => { await close(); console.error(error.code === 'EADDRINUSE' ? 'The selected port is already in use. No existing process was replaced.' : 'Console could not start.'); process.exitCode = 1; });
   server.listen(port, '127.0.0.1', () => {

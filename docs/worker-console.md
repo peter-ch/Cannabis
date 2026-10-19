@@ -1,6 +1,6 @@
 # Your worker console
 
-The Cannabis worker console shows actual CPU activity, memory use and local hardware inventory in a browser window. It is available in the [project source](https://github.com/peter-ch/Cannabis). With an existing result volume selected, it also shows retained attempts and provides encrypted-result recovery and deliberate replacement delivery. The compute review branch additionally contains provider-controlled wallet approvals and an optional booked-service lifecycle connecting retained assignments to the fixed SNP launcher. A reviewed paid worker is not available yet. These controls remain under integration; the older published tools do not include them.
+The Cannabis worker console shows actual CPU activity, memory use and local hardware inventory in a browser window. It is available in the [project source](https://github.com/peter-ch/Cannabis). With an existing result volume selected, it also shows retained attempts and provides encrypted-result recovery and deliberate replacement delivery. The compute review branch additionally contains provider-controlled wallet approvals, direct market controls and an optional booked-service lifecycle connecting retained assignments to the fixed SNP launcher. A reviewed paid worker is not available yet. These controls remain under integration; the older published tools do not include them.
 
 ## Open the console
 
@@ -304,13 +304,153 @@ The boundary follows [systemd resource delegation](https://www.freedesktop.org/s
 [unit shutdown semantics](https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html)
 and the [Linux cgroup v2 model](https://docs.kernel.org/admin-guide/cgroup-v2.html).
 
+## Direct market controls
+
+The review branch contains a local client for independent providers and requesters.
+It reads the selected chain directly, retains public plans locally and submits
+only actions explicitly reviewed in the selected wallet. It does not require a
+founder account, scheduler or capacity database. No mainnet market is configured
+by default. Resource declarations and offers are claims by their publishers;
+neither proves physical availability or confidential hardware admission.
+
+Install the pinned dependencies and generate the browser wallet bundle with
+`npm run build:operator`. Prepare a local JSON configuration with schema
+`cannabis.market-console.v1` and these exact fields:
+
+| Fields | Meaning |
+| --- | --- |
+| `rpc` | Independently selected HTTPS RPC; loopback HTTP is for isolated verification only |
+| `chainId`, `genesisHash` | Decimal string chain ID and exact genesis block hash |
+| `market`, `marketCodeHash` | Reviewed market address and runtime Keccak-256 hash |
+| `nativeEscrow`, `nativeEscrowCodeHash` | ETH escrow address and runtime hash |
+| `cannabisEscrow`, `cannabisEscrowCodeHash` | Cannabis escrow address and runtime hash |
+| `token`, `tokenCodeHash` | Cannabis address and runtime hash |
+| `founderRecipient` | Published fee recipient from the reviewed release |
+| `maxFinalizedAgeSeconds`, `maxHeadAgeSeconds` | Integer freshness limits: 1–7,200 and 1–120 seconds |
+| `feeLimits` | Exact object with decimal strings `gas`, `maxFeePerGas`, `maxPriorityFeePerGas`, `maxTotalWei` |
+
+Addresses must be checksummed; hashes use lowercase `0x` plus 64 hexadecimal
+digits. Select positive finite fee limits locally. `maxTotalWei` bounds the
+maximum network fee plus native ETH value **for each transaction**, not the whole
+order or a session. Token amounts are separately bound to the reviewed job budget.
+Every later step needs a fresh quote. No configuration values constitute a current
+network price or permission to spend. Use only canonical, reviewed deployment
+pins; this guide does not supply live addresses.
+
+Create a fresh journal explicitly, then open it. Use absolute paths:
+
+```sh
+node scripts/prepare-market-state.mjs /absolute/market.json /absolute/new-market.sqlite
+node operator/server.mjs --market-config /absolute/market.json --market-state /absolute/new-market.sqlite
+```
+
+Initialization refuses an existing file. Normal startup never creates or resets
+a missing journal. For the bounded Linux operator service, add optional
+`market: { "configuration": { ... }, "journal": "/var/lib/cannabis/operator-state/mount/state/market.sqlite" }`
+to its private service configuration. Put the complete configuration object there;
+the journal must be the `state/market.sqlite` file inside the selected metadata
+volume. Create it before starting that service. The standalone client stores only
+bounded public metadata; it does not claim physical storage guarantees or admit
+a worker. Preserve the journal and its SQLite sidecars when recovering it.
+
+### Public plans and provider holds
+
+Select a wallet explicitly, connect it, then select an account. The console checks
+that wallet's chain and genesis before signing or submission. Account, network or
+wallet changes invalidate the current review. This transaction adapter supports
+direct externally owned accounts. Contract-wallet transaction adapters are not
+implemented; importing ERC-1271 provider hold signatures is supported when the
+selected contract verifies them at the observed blocks.
+
+The resource form retains a public declaration before any wallet request. Offer
+and order plans are imported JSON with schema `cannabis.market-plan.v1`:
+
+- `kind: "resource"`: `provider`, fresh `resourceId`, `serviceHash`, decimal `units`.
+- `kind: "offer"`: `provider`, fresh `nonce`, and the canonical
+  [provider manifest](decentralized-compute.md). Its offer ID must be the market's
+  provider/nonce hash; its resource, network, escrow and committed terms must agree.
+- `kind: "order"`: `asset` (`ETH` or `Cannabis`), `job`, `settlement`, `bookings`.
+  `job` uses `cannabis.compute.order.v2`, containing only requester, public encrypted
+  package/policy/acceptance commitments and the included-fee payment budget.
+  `settlement` contains `workers` (`account`, integer `shareBps`), `deliveryManager`,
+  `adjudicator`, UTC `acceptBy`/`deliverBy`, `reviewSeconds` and `disputeSeconds`.
+  Each booking contains fresh `reservationId`, `offerId`, decimal `start`, `end`,
+  `units`, `gross` and `holdUntil`. Times in bookings are Unix seconds. Gross
+  amounts must sum to the job budget and match each provider's declared rate and
+  agreed worker share. At most 64 providers/bookings are supported here.
+
+Never put plaintext customer code, arguments, inputs, keys or logs in these plans.
+The planner derives order IDs, terms commitments, booking digests and transaction
+calldata. Export the shareable plan to the other participants. Each provider
+imports it, reviews its own hold and signs in its wallet; the requester imports
+the signed export. Import independently verifies each supplied signature. The
+journal retains the first verified signature for a booking, refusing replacement
+with different bytes; use a fresh agreed plan/nonce if terms change.
+
+### Reserve, fund and activate
+
+1. Publish the resource, then the offer, allowing these declarations to finalize
+   before another participant signs a hold. Search finalized block ranges of up
+   to 256 blocks to discover actual published offers.
+2. Collect every provider signature and reserve the complete group. This creates
+   temporary holds; it neither funds nor authorizes execution.
+3. For Cannabis, approve exactly the job budget when the existing allowance is
+   zero, then fund the escrow. The console refuses to overwrite another allowance.
+   ETH funding attaches exactly the budget as native value. All network fees are
+   additional. Only the earned 1% service fee belongs to the founder.
+4. Every booked provider accepts the same funded terms, then a participant
+   activates the entire booking group before its holds expire and work starts.
+
+Holds last at most 30 minutes. Intermediate reservation, funding, acceptance and
+activation checks therefore use the current canonical head. Once a transaction
+is included, its exact receipt can be freshly checked to permit a later action
+without waiting for each step to finalize. Such inclusion can be reorganized.
+Deployment pins and published offers are still checked against finalized state;
+protected execution separately requires finalized activation evidence. No market
+button releases job keys or starts an unadmitted worker.
+
+Before each transaction, inspect the parties, amounts, destination, nonce and
+maximum fee. The client simulates the exact call and rechecks the retained quote
+at handoff. A changed nonce, insufficient balance, unsupported RPC behavior,
+expired review or higher required fee prevents handoff. Reviews expire within
+30 seconds. A transaction is never silently changed to fit another quote.
+
+### Recover submissions and withdrawals
+
+The local journal records an uncertain submission **before** the wallet prompt.
+A recovery file is downloaded; it can also be saved from retained history after
+restart. Closing a tab, timing out or cancelling cannot revoke an open wallet
+prompt. Do not resend based on a missing response. Inspect wallet activity, retain
+its transaction hash and choose **Check canonical receipt**. Exact sender,
+destination, calldata, nonce, value and fee caps must match the retained handoff.
+An unverified pasted hash may be corrected, preserving prior reported hashes.
+
+Unknown and pending submissions block another action from that account. An exact
+included receipt permits subsequent explicitly reviewed transactions only after a
+fresh receipt check and with a higher nonce. A detected reorganization blocks that
+continuation. An explicit wallet rejection is retained separately; it is a wallet
+report, not an on-chain failure proof. The journal has finite capacity (128 plans,
+1,024 handoffs, 32 MiB of JSON) and never automatically discards recovery records.
+
+The requester may cancel funding before all providers accept. Cancellation creates
+an escrow credit; withdrawing it is a separate action. After all accept, immediate
+cancellation is unavailable and the agreed deadline/dispute rules apply. Worker
+payment and credit withdrawals require actual finalized on-chain entitlement and
+pay the connected account. The console does not approve unverified outputs or
+treat a booking, finished local process or pending transfer as earnings.
+
+Wallet handling follows [EIP-1193](https://eips.ethereum.org/EIPS/eip-1193).
+Canonical hash-bound observations use [EIP-1898](https://eips.ethereum.org/EIPS/eip-1898).
+RPC-reported finality is a disclosed trust assumption, not an independent local
+consensus proof. The controls remain part of the review branch until release.
+
 ## Before a paid worker can start
 
 The Start paid worker control remains disabled in this release. The separate booked-listener controls do not establish paid admission. Admission needs a fresh vendor-verified hardware report bound to the approved guest and assignment, a measured isolated launcher, protected storage/devices/networking, cleanup and key retirement, reviewed payment contracts and provider terms, and a real end-to-end acceptance run. See [worker deployment](worker-deployment.md) and [confidential computation](confidential-compute.md).
 
 Ordinary desktop hardware and the website hosting servers are not automatically eligible. A remotely operated confidential worker could later be controlled from a desktop GUI, provided the attestation and key-release path is validated. No plaintext fallback is permitted.
 
-The console listens only on loopback, serves an explicit asset list and refuses foreign hosts/origins. Result, approval and lifecycle actions require same-origin bounded JSON and a process-local control token. The selected service's peer listener is separate and accepts only retained booked routes. Browser requests cannot add paths, commands, assignments or arbitrary signing messages. There is no plaintext customer-content, wallet-key custody or payment interface. Do not publish or reverse-proxy the console port.
+The console listens only on loopback, serves an explicit asset list and refuses foreign hosts/origins. Result, approval, market and lifecycle actions require same-origin bounded JSON and a process-local control token. The selected service's peer listener is separate and accepts only retained booked routes. Browser requests cannot add local paths, commands, service assignments or arbitrary signing messages. There is no plaintext customer-content or wallet-key custody interface. Payments use the explicit wallet-controlled market flow above. Do not publish or reverse-proxy the console port.
 
 ## Computing and issuance
 

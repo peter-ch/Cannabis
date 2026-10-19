@@ -32,7 +32,7 @@ function read(file,options) {protectedPath(file,options);const fd=fs.openSync(fi
 export function readOperatorConfiguration(file) {
   check(process.platform==='linux'&&process.geteuid()===0);
   const raw=read(file,{privateFile:true,limit:16384}),c=JSON.parse(raw);
-  exact(c,['schema','resources','profile','catalog','approvals','spool','dispatch','peer','relay']);
+  exact(c,['schema','resources','profile','catalog','approvals','spool','dispatch','peer','relay',...(Object.hasOwn(c,'market')?['market']:[])]);
   check(c.schema==='cannabis.operator-service.v1');
   exact(c.peer,['origin','listenHost','cert','key']);exact(c.relay,['origin','port','orders','results']);
   origin(c.peer.origin);origin(c.relay.origin);check(c.peer.origin!==c.relay.origin&&isIP(c.peer.listenHost));
@@ -42,6 +42,8 @@ export function readOperatorConfiguration(file) {
   for(const key of ['approvals','spool'])protectedPath(c[key],{directory:true});
   for(const key of ['orders','results'])protectedPath(c.relay[key],{privateFile:true,limit:512*1024*1024});
   check(new Set([c.dispatch,c.relay.orders,c.relay.results]).size===3);
+  if(Object.hasOwn(c,'market')&&c.market!==null){exact(c.market,['configuration','journal']);protectedPath(c.market.journal,{privateFile:true,limit:64*1024*1024});
+    check(![c.dispatch,c.relay.orders,c.relay.results].includes(c.market.journal));}
   return {configuration:structuredClone(c),configurationSHA256:createHash('sha256').update(raw).digest('hex'),
     tlsCredentials:{key:read(c.peer.key,{privateFile:true,limit:262144}),cert:read(c.peer.cert,{limit:262144})}};
 }
@@ -49,8 +51,8 @@ export function readOperatorConfiguration(file) {
 class OperatorService {
   #c;#tls;#provider;#spool;#journal;#results;#relay;#listener;#controller;#operation;#stopTask;
   #phase='stopped';#reason='Select Start booked listener after reviewing the retained provider approvals.';#sessions=new Map();#closed=false;
-  #hostObserved=false;#cleanupUnknown=false;#closeTask;#boundary;
-  constructor(c,tls,provider,spool,journal,results,boundary) {this.#c=c;this.#tls=tls;this.#provider=provider;this.#spool=spool;this.#journal=journal;this.#results=results;this.#boundary=boundary;}
+  #hostObserved=false;#cleanupUnknown=false;#closeTask;#boundary;#market;
+  constructor(c,tls,provider,spool,journal,results,boundary,market=null) {this.#c=c;this.#tls=tls;this.#provider=provider;this.#spool=spool;this.#journal=journal;this.#results=results;this.#boundary=boundary;this.#market=market;}
   snapshot() {
     const listener=this.#listener?.snapshot();
     if(this.#phase==='listening'&&listener?.closed)this.stop();
@@ -140,7 +142,7 @@ class OperatorService {
       if(['starting','listening','failed'].includes(this.#phase))this.stop();await this.#stopTask;
       // Never close shared stores while a surviving handler can still use them.
       if(this.#listener?.snapshot().connections||[...this.#sessions.values()].some(r=>r.active))throw Error('Operator session cleanup remains pending');
-      await this.#results.close();await this.#provider.close();
+      await this.#market?.close();await this.#results.close();await this.#provider.close();
       if(this.#relay){this.#relay.server.closeAllConnections();await new Promise(resolve=>this.#relay.server.close(resolve));}
       this.#spool.close();this.#journal.close();await this.#boundary.close();this.#tls=undefined;
     })();return this.#closeTask;
@@ -148,14 +150,15 @@ class OperatorService {
 }
 
 export async function openOperatorService(file) {
-  const {configuration:c,configurationSHA256,tlsCredentials}=readOperatorConfiguration(file);let provider,spool,journal,results,boundary;
+  const {configuration:c,configurationSHA256,tlsCredentials}=readOperatorConfiguration(file);let provider,spool,journal,results,boundary,market=null;
   try {
     boundary=await openOperatorBoundary(c.resources,configurationSHA256);
     provider=new ProviderApprovals(readProviderCatalog(c.catalog),c.approvals);
     check(provider.snapshot().assignments.length>0&&provider.snapshot().assignments.every(r=>provider.retainedOrigin(r.id)===c.peer.origin));
     spool=new PhysicalResultSpool(c.spool);journal=new PeerDispatchJournal(c.dispatch);
     results=new ResultConsole(spool,{relayOrigins:[c.relay.origin]});
-    const service=new OperatorService(c,tlsCredentials,provider,spool,journal,results,boundary);boundary.monitor();
-    return {service,provider,results};
-  }catch(error){await results?.close();await provider?.close();spool?.close();journal?.close();await boundary?.close();throw error;}
+    if(c.market){const {MarketConsole}=await import('./market-console.mjs');market=new MarketConsole(c.market.configuration,c.market.journal,{guard:()=>boundary.check()});}
+    const service=new OperatorService(c,tlsCredentials,provider,spool,journal,results,boundary,market);boundary.monitor();
+    return {service,provider,results,market};
+  }catch(error){await market?.close();await results?.close();await provider?.close();spool?.close();journal?.close();await boundary?.close();throw error;}
 }
