@@ -4,32 +4,33 @@ import escrowABI from './escrow-abi.json' with { type: 'json' };
 import { termsDigest } from '../scripts/compute-escrow.mjs';
 import { policy } from '../scripts/compute-plan.mjs';
 import { observeWalletSignatures } from './wallet_signatures.mjs';
+import { boundedDiscoveryRPC } from './discovery_rpc.mjs';
 
 const bytes32=value=>typeof value==='string' && /^0x[0-9a-fA-F]{64}$/.test(value) && !/^0x0+$/.test(value);
 const plain=value=>JSON.parse(JSON.stringify(value,(_,v)=>typeof v==='bigint'?v.toString():v));
 let escrowInterface;
 
-export async function readFinalizedEscrow(options, clock=()=>Math.floor(Date.now()/1000)) {
-  return readEscrowSnapshot(options,clock,'finalized');
+export async function readFinalizedEscrow(options, clock=()=>Math.floor(Date.now()/1000), runtime) {
+  return readEscrowSnapshot(options,clock,'finalized',runtime);
 }
 
 // Re-read the original funding anchor; caller-supplied historical JSON is not
 // evidence that funding existed before an off-chain agreement's signing expiry.
-export async function readFundedEscrowAtAnchor(options, clock=()=>Math.floor(Date.now()/1000)) {
+export async function readFundedEscrowAtAnchor(options, clock=()=>Math.floor(Date.now()/1000), runtime) {
   const a=options.fundedAnchor;
   if(!a || !Number.isSafeInteger(a.number) || a.number<0 || !bytes32(a.hash))throw Error('Invalid funding anchor');
-  return readEscrowSnapshot(options,clock,'anchor');
+  return readEscrowSnapshot(options,clock,'anchor',runtime);
 }
 
 // A canonical latest-state observation supplements finalized funding; it never
 // substitutes for finality and can still be reorganized after this observation.
-export async function readCurrentEscrow(options, clock=()=>Math.floor(Date.now()/1000)) {
+export async function readCurrentEscrow(options, clock=()=>Math.floor(Date.now()/1000), runtime) {
   if(!Number.isSafeInteger(options.maxHeadAgeSeconds) || options.maxHeadAgeSeconds<1 || options.maxHeadAgeSeconds>120)throw Error('Require a latest-head age limit of 1 to 120 seconds');
   for(const anchor of [options.finalizedAnchor,options.fundingAnchor])if(anchor && (!Number.isSafeInteger(anchor.number) || anchor.number<0 || !bytes32(anchor.hash)))throw Error('Invalid finalized anchor');
-  return readEscrowSnapshot(options,clock,'latest');
+  return readEscrowSnapshot(options,clock,'latest',runtime);
 }
 
-async function readEscrowSnapshot(options,clock,blockSelector) {
+async function readEscrowSnapshot(options,clock,blockSelector,runtime) {
   // Retain pins and consent bytes across all asynchronous state observations.
   options=structuredClone(options);
   const anchored=blockSelector==='anchor';
@@ -43,7 +44,9 @@ async function readEscrowSnapshot(options,clock,blockSelector) {
   if(native && options.tokenCodeHash!==null)throw Error('Native ETH uses a null token runtime hash');
   for(const field of ['genesisHash','escrowCodeHash','orderId',...(native?[]:['tokenCodeHash'])])if(!bytes32(options[field]))throw Error('Pin genesis, runtime hashes and order ID');
   if(chainId<=0n || escrow===ZeroAddress)throw Error('Invalid chain ID or escrow');
-  const request=new FetchRequest(options.rpc);request.timeout=15000;
+  const request=new FetchRequest(url.href);request.timeout=15000;
+  const transport=runtime?boundedDiscoveryRPC(runtime):null;
+  if(transport){request.getUrlFunc=transport.getUrl;request.setThrottleParams({maxAttempts:1});}
   const provider=new JsonRpcProvider(request,undefined,{cacheTimeout:-1});
   const send=async(method,params)=>{
     try{return await provider.send(method,params);}catch{throw Error('RPC '+method+' failed; finalized block/hash support is required');}
@@ -89,6 +92,8 @@ async function readEscrowSnapshot(options,clock,blockSelector) {
     // EIP-1898 block as the funded order, before the canonicality recheck below.
     const launchSignatures=Object.hasOwn(options,'launchApprovals')
       ? await observeWalletSignatures(send,block,options.launchApprovals) : undefined;
+    const channelSignatures=Object.hasOwn(options,'channelApprovals')
+      ? await observeWalletSignatures(send,block,options.channelApprovals) : undefined;
     // Recheck canonicality and the finality watermark after every hash-bound state read.
     const [canonical,watermark]=await Promise.all([send('eth_getBlockByNumber',[block.number,false]),send('eth_getBlockByNumber',[anchored?'finalized':blockSelector,false])]);
     if(canonical?.hash!==block.hash || !watermark || BigInt(watermark.number)<BigInt(block.number))throw Error('Finalized chain changed during inspection');
@@ -103,6 +108,7 @@ async function readEscrowSnapshot(options,clock,blockSelector) {
       ...(blockSelector==='latest'?{maxHeadAgeSeconds:options.maxHeadAgeSeconds}:{}),
       runtimeCodeHashes:{escrow:options.escrowCodeHash,token:options.tokenCodeHash},
       ...(launchSignatures?{launchSignatures}:{}),
+      ...(channelSignatures?{channelSignatures}:{}),
       executionAuthorized:false,keyReleaseAuthorized:false,sent:false});
-  }finally{provider.destroy();}
+  }finally{provider.destroy();transport?.close();}
 }

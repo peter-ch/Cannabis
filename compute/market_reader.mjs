@@ -107,20 +107,20 @@ export async function readMarketOffers(options, { fromBlock, toBlock }, clock = 
   }, clock, {}, runtime);
 }
 
-export async function readMarketBookings(options, query, clock = () => Math.floor(Date.now() / 1000)) {
-  return bookingsSnapshot(options, query, clock);
+export async function readMarketBookings(options, query, clock = () => Math.floor(Date.now() / 1000), runtime) {
+  return bookingsSnapshot(options, query, clock, {}, runtime);
 }
 
-export async function readMarketBookingsAtAnchor(options, query, clock = () => Math.floor(Date.now() / 1000)) {
-  return bookingsSnapshot(options, query, clock, { mode: 'anchor', anchor: options.fundedAnchor });
+export async function readMarketBookingsAtAnchor(options, query, clock = () => Math.floor(Date.now() / 1000), runtime) {
+  return bookingsSnapshot(options, query, clock, { mode: 'anchor', anchor: options.fundedAnchor }, runtime);
 }
 
-export async function readCurrentMarketBookings(options, query, clock = () => Math.floor(Date.now() / 1000)) {
+export async function readCurrentMarketBookings(options, query, clock = () => Math.floor(Date.now() / 1000), runtime) {
   if (!options.finalizedAnchor || !options.fundingAnchor) throw Error('Require finalized market anchors before latest-state inspection');
-  return bookingsSnapshot(options, query, clock, { mode: 'latest', finalizedAnchor: options.finalizedAnchor, fundingAnchor: options.fundingAnchor });
+  return bookingsSnapshot(options, query, clock, { mode: 'latest', finalizedAnchor: options.finalizedAnchor, fundingAnchor: options.fundingAnchor }, runtime);
 }
 
-async function bookingsSnapshot(options, { bookingIds }, clock, selection) {
+async function bookingsSnapshot(options, { bookingIds }, clock, selection, runtime) {
   if (!Array.isArray(bookingIds) || bookingIds.length < 1 || bookingIds.length > 64 ||
       bookingIds.some(id => !hash(id)) || new Set(bookingIds.map(id => id.toLowerCase())).size !== bookingIds.length)
     throw Error('Require 1..64 unique booking digests');
@@ -137,5 +137,5 @@ async function bookingsSnapshot(options, { bookingIds }, clock, selection) {
           (record.activated || BigInt(record.booking.holdUntil) > BigInt(block.timestamp)) });
     }
     return { bookings };
-  }, clock, selection);
+  }, clock, selection, runtime);
 }

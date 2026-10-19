@@ -114,36 +114,41 @@ export async function createMarketLeaseProof(network, { job, settlement, booking
 
 // Original activation/funding, fresh finalized state and current canonical state
 // are read independently. Historical JSON and optional indexers have no authority.
-export async function readMarketLeaseState(proof, network, clock = seconds, options = {}) {
+export async function readMarketLeaseState(proof, network, clock = seconds, options = {}, runtime) {
   network = structuredClone(network);
-  exact(options,Object.hasOwn(options,'launchApprovals')?['launchApprovals']:[]);
-  if(Object.hasOwn(network,'launchApprovals'))throw Error('Launch consent belongs to the assignment, not network configuration');
+  exact(options,['launchApprovals','channelApprovals'].filter(k=>Object.hasOwn(options,k)));
+  if(Object.hasOwn(options,'channelApprovals')&&!Object.hasOwn(options,'launchApprovals'))throw Error('Channel authentication requires launch consent');
+  if(['launchApprovals','channelApprovals'].some(k=>Object.hasOwn(network,k)))throw Error('Launch consent belongs to the assignment, not network configuration');
   const launchApprovals=Object.hasOwn(options,'launchApprovals')?validateWalletApprovals(options.launchApprovals):undefined;
+  const channelApprovals=Object.hasOwn(options,'channelApprovals')?validateWalletApprovals(options.channelApprovals):undefined;
   const lease = configuration(proof, network), query = { bookingIds: lease.proof.bookings.map(r => r.bookingId) };
   // Callers derive these digests from inspectLaunchConsent for the exact chosen
   // booking. This low-level reader verifies state, not an arbitrary assignment.
   if(launchApprovals && (launchApprovals[0].signer!==lease.requester || !lease.providers.includes(launchApprovals[1].signer)))
     throw Error('Launch approval parties differ from the funded market group');
-  const consent=launchApprovals?{launchApprovals}:{};
+  if(channelApprovals && channelApprovals.some((a,i)=>a.signer!==launchApprovals[i].signer))
+    throw Error('Channel approval parties differ from launch consent');
+  const consent={...(launchApprovals?{launchApprovals}:{}),...(channelApprovals?{channelApprovals}:{})};
   const n = { ...network, orderId: lease.orderId }, fundedAnchor = lease.fundedAnchor;
   const [originalMarket, originalEscrow] = await Promise.all([
-    readMarketBookingsAtAnchor({ ...n, fundedAnchor }, query, clock), readFundedEscrowAtAnchor({ ...n, fundedAnchor }, clock)
+    readMarketBookingsAtAnchor({ ...n, fundedAnchor }, query, clock, runtime), readFundedEscrowAtAnchor({ ...n, fundedAnchor }, clock, runtime)
   ]);
   checkMarket(originalMarket, lease); checkEscrow(originalEscrow, lease);
   if (canonical(originalEscrow.finalizedBlock) !== canonical(fundedAnchor)) throw Error('Original funding anchor timestamp differs');
-  const finalized = await readMarketBookings(n, query, clock); checkMarket(finalized, lease);
+  const finalized = await readMarketBookings(n, query, clock, runtime); checkMarket(finalized, lease);
   if (finalized.finalizedBlock.number < fundedAnchor.number) throw Error('Market finality regressed');
   // Consent may be created after original funding. It must be valid at both
   // fresh observations, not retroactively at the historical funding anchor.
-  const funded = await readFundedEscrowAtAnchor({ ...n, ...consent, fundedAnchor: finalized.finalizedBlock }, clock); checkEscrow(funded, lease);
+  const funded = await readFundedEscrowAtAnchor({ ...n, ...consent, fundedAnchor: finalized.finalizedBlock }, clock, runtime); checkEscrow(funded, lease);
   if (canonical(funded.finalizedBlock) !== canonical(finalized.finalizedBlock)) throw Error('Finalized booking and funding anchors differ');
-  const currentMarket = await readCurrentMarketBookings({ ...n, finalizedAnchor: finalized.finalizedBlock, fundingAnchor: fundedAnchor }, query, clock);
+  const currentMarket = await readCurrentMarketBookings({ ...n, finalizedAnchor: finalized.finalizedBlock, fundingAnchor: fundedAnchor }, query, clock, runtime);
   checkMarket(currentMarket, lease);
-  const current = await readCurrentEscrow({ ...n, ...consent, finalizedAnchor: finalized.finalizedBlock, fundingAnchor: fundedAnchor }, clock);
+  const current = await readCurrentEscrow({ ...n, ...consent, finalizedAnchor: finalized.finalizedBlock, fundingAnchor: fundedAnchor }, clock, runtime);
   checkEscrow(current, lease);
   if (current.headBlock.number < currentMarket.headBlock.number) throw Error('Latest market/funding view regressed');
   return { schema: 'cannabis.market-lease-state.v1', leaseDigest: lease.digest, market: lease.market, orderId: lease.orderId,
     fundedAnchor, finalizedBlock: finalized.finalizedBlock, headBlock: current.headBlock, observedAt: current.observedAt,
     ...(launchApprovals?{launchSignatures:{finalized:funded.launchSignatures,head:current.launchSignatures}}:{}),
+    ...(channelApprovals?{channelSignatures:{finalized:funded.channelSignatures,head:current.channelSignatures}}:{}),
     executionAuthorized: false, keyReleaseAuthorized: false, hardwareVerified: false };
 }

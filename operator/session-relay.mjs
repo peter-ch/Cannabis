@@ -13,6 +13,7 @@ import { deliveryApprovalTypes } from '../compute/key_delivery.mjs';
 import { validateRelayAccess } from '../web/work-relay.js';
 import { validateUploadAccess } from './result-upload.mjs';
 import { bridgeEncryptedResult } from './result-bridge.mjs';
+import { claimPeerChannel } from '../compute/peer_channel.mjs';
 const protocol='cannabis.guest-wire.v1',CHUNK=65536;
 const integer=(n,min,max)=>Number.isSafeInteger(n)&&n>=min&&n<=max;
 const fields=(v,n)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join()===n.sort().join();
@@ -30,6 +31,17 @@ function abortable(fn,signal) {
     Promise.resolve().then(()=>{check(!signal.aborted);return fn();}).then(resolve,reject)
       .finally(()=>signal.removeEventListener('abort',abort));
   });
+}
+// Network-facing adapters use this entry with a locally retained prepared launch
+// and a provider-side authenticated requester channel. Guest admission remains
+// the responsibility of the sealed launcher and requester evidence appraisal.
+export async function relayAuthenticatedSession(guest,requester,options={}) {
+  try {
+    const launch=structuredClone(options.launch);
+    claimPeerChannel(requester,'provider',launch.funding.consent,launch.initialization,launch.funding.proof);
+    return await relayConfiguredSession(guest,requester,{...options,launch});
+  } catch(error) {guest?.fail?.();requester?.fail?.();throw error;}
+  finally {requester?.close?.();}
 }
 export async function relayConfiguredSession(guest,requester,{launch,origin,spoolDirectory,reserveResult,signal,
   fetchImpl=globalThis.fetch,wait}={}) {

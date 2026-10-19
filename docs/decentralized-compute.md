@@ -117,6 +117,49 @@ live peer's wallet or admit physical hardware. Advertised contact origins are no
 automatically contacted by manifest retrieval. Authenticated session transport,
 aggregate relay storage and end-to-end independent operation remain release work.
 
+## Direct peer channel authentication
+
+The Node adapter in `compute/peer_channel.mjs` authenticates a requester and booked
+provider over one completed TLS 1.3 connection, using ALPN `cannabis-peer/1`.
+Each side retains its own reviewed configuration, initialization and market proof.
+The requester selects the endpoint and TLS trust store and checks its certificate
+and hostname. No founder certificate authority, signing key or website is required.
+Manifest retrieval does not open this connection automatically.
+
+Each wallet signs a distinct EIP-712 role payload committing the genesis, chain,
+market, configuration, assignment, complete booking group, selected booking, both
+parties, endpoint origin, both fresh nonces and a bounded service interval. It also
+commits the connection's [RFC 9266 TLS exporter binding](https://www.rfc-editor.org/rfc/rfc9266.html#section-2),
+obtained directly from [Node's TLS socket](https://nodejs.org/api/tls.html#tlssocketexportkeyingmateriallength-label-context).
+These public binding bytes are not a content key. A new TLS connection requires
+new approvals; signatures cannot authorize another connection or role.
+
+`authenticatePeerChannel` takes the established socket and a user-controlled
+`signApproval` callback. It exchanges only bounded public authentication frames
+until both parties' signatures and active funding are observed. Requester EOA
+and provider EOA/ERC-1271 signatures are checked alongside launch consent at the
+same canonical finalized and current block hashes. Contract-wallet revocation,
+inactive funding, changed commitments, clock rollback, cancellation and a stalled
+wallet or RPC cause refusal and socket closure. One handshake budget covers the
+exchange, signing and chain reads; the connection also expires within the reviewed
+transport budget and booking interval. A successful observation retains the RPC
+trust limits described above; it does not continuously monitor revocations.
+
+The returned channel carries framed public control messages and already encrypted
+customer content. It does not release content keys or attest the worker.
+`relayAuthenticatedSession` consumes its matching live provider-side capability
+once for the retained launch before handing it to the existing opaque relay.
+Copying a report or setting an authentication flag cannot create that capability.
+The protected guest and requester still independently verify funding, consent and
+attestation before any key use. Closing the session disposes the TLS connection.
+
+This is a source-level Node transport adapter under review. A provider listener,
+requester connection/signing UI, complete relay workflow and independent operation
+still need integration and acceptance. Browser APIs do not expose this TLS
+exporter; no browser authentication fallback is enabled. The offline payload and
+state readers explicitly do not claim to authenticate a live socket. Channel
+authentication alone is not hardware admission, paid-job acceptance or mainnet.
+
 ## Protected booking and key-delivery binding
 
 `group.json` contains the universal encrypted `job`, agreed `settlement` and complete `bookingIds`. The funding network adds the selected `escrow`, `token`, `escrowCodeHash`, `tokenCodeHash` and `maxHeadAgeSeconds` (1–120) to the market reader configuration. Native ETH uses the zero token address and a null token hash. The proof builder reads activated bookings and fully accepted funding at the same canonical finalized block; it never creates bookings or signs transactions.

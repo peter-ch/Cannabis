@@ -23,6 +23,9 @@ import { keyDeliveryPayload, sealJobKeyDelivery, openJobKeyDelivery, inspectKeyD
 import { sealResultDelivery, openResultDelivery } from '../compute/result_delivery.mjs';
 import { resultKeyCommitment } from '../compute/result_keys.mjs';
 import { launchConsentPayload, inspectLaunchConsent, readLaunchConsentState } from '../compute/guest_consent.mjs';
+import { peerChannelPayload, readPeerChannelState, authenticatePeerChannel, claimPeerChannel } from '../compute/peer_channel.mjs';
+import { relayAuthenticatedSession } from '../operator/session-relay.mjs';
+import { peerTLSPair } from './helpers/peer_tls.mjs';
 
 const h = n => '0x' + n.toString(16).padStart(64, '0');
 const utc = n => new Date(n * 1000).toISOString().replace('.000Z', 'Z');
@@ -360,6 +363,175 @@ async function bookedConsent(x) {
   const signed={schema:'cannabis.guest-launch-consent.v1',configuration:x.configuration,consents};
   return {signed,...inspectLaunchConsent(signed,x.initialization,x.proof,x.clock())};
 }
+
+function peerOptions(x,pair,role,changes={}) {
+  const signer=role==='requester'?owner:workers[x.addresses.indexOf(x.r.provider)];
+  return {role,origin:pair.origin,signed:x.source.consent,initialization:x.initialization,proof:x.proof,
+    clock:x.clock,signApproval:p=>signer.signTypedData(p.domain,p.types,p.value),...changes};
+}
+async function peerSignatures(x,binding) {
+  return Promise.all(['requester','provider'].map(async role=>{
+    const p=peerChannelPayload(x.source.consent,x.initialization,x.proof,binding,role,x.clock());
+    const signer=role==='requester'?owner:workers[x.addresses.indexOf(x.r.provider)];
+    return {role,signature:await signer.signTypedData(p.domain,p.types,p.value)};
+  }));
+}
+const peerBinding=x=>({origin:'https://independent.example',channelBinding:h(181),requesterNonce:h(182),providerNonce:h(183),
+  validFrom:x.clock(),validUntil:x.clock()+50});
+
+test('peer channel authenticates real TLS endpoints against bilateral booking observations before opaque traffic',async t=>{
+  const x=await configuredFixture(t),pair=await peerTLSPair(t);
+  const channels=await Promise.all(['requester','provider'].map(role=>authenticatePeerChannel(pair[role],peerOptions(x,pair,role))));
+  t.after(()=>channels.forEach(c=>c.close()));
+  const [requesterChannel,providerChannel]=channels;
+  assert.deepEqual(requesterChannel.report.binding,providerChannel.report.binding);
+  for(const c of channels) {
+    assert.equal(c.report.channelAuthenticated,true);assert.equal(c.report.chainVerified,true);
+    for(const flag of ['executionAuthorized','keyReleaseAuthorized','hardwareVerified'])assert.equal(c.report[flag],false);
+    for(const at of ['finalized','head']) {
+      assert.equal(c.report.funding.launchSignatures[at].length,2);
+      assert.deepEqual(c.report.funding.channelSignatures[at].map(s=>s.digest),c.report.approvals.map(s=>s.digest));
+    }
+  }
+  await requesterChannel.writeJSON({operation:'owned-ciphertext-fixture'});
+  assert.deepEqual(await providerChannel.readJSON(1024),{operation:'owned-ciphertext-fixture'});
+  await providerChannel.writeChunk(Buffer.from('opaque encrypted bytes fixture'));
+  assert.equal((await requesterChannel.readChunk()).toString(),'opaque encrypted bytes fixture');
+  requesterChannel.close();assert.equal(requesterChannel.signal.aborted,true);assert.equal(pair.requester.destroyed,true);
+  await assert.rejects(authenticatePeerChannel(pair.requester,peerOptions(x,pair,'requester')));
+});
+
+test('peer channel refuses signatures replayed onto a different TLS connection',async t=>{
+  const x=await configuredFixture(t),first=await peerTLSPair(t),saved={};
+  const channels=await Promise.all(['requester','provider'].map(role=>authenticatePeerChannel(first[role],peerOptions(x,first,role,{
+    signApproval:async p=>{const s=peerOptions(x,first,role).signApproval(p);saved[role]=await s;return saved[role];}
+  }))));channels.forEach(c=>c.close());
+  const next=await peerTLSPair(t),result=await Promise.allSettled(['requester','provider'].map(role=>
+    authenticatePeerChannel(next[role],peerOptions(x,next,role,{signApproval:()=>saved[role]}))));
+  assert.ok(result.every(r=>r.status==='rejected'));assert.ok(next.requester.destroyed&&next.provider.destroyed);
+});
+
+test('peer channel refuses wrong role signatures, selected origins, untrusted certificates and TLS downgrade',async t=>{
+  const x=await configuredFixture(t);
+  for(const mode of ['wallet','origin','tls12','alpn','untrusted','hostname']) {
+    const pair=await peerTLSPair(t,{...(mode==='tls12'?{version:'TLSv1.2'}:{}),...(mode==='alpn'?{alpn:'other/1'}:{}),
+      ...(mode==='untrusted'?{trusted:false}:{})});let signed=0;
+    const result=await Promise.allSettled(['requester','provider'].map(role=>{
+      const normal=peerOptions(x,pair,role);
+      return authenticatePeerChannel(pair[role],{...normal,
+        ...(mode==='origin'&&role==='provider'?{origin:'https://other.example'}:{}),
+        ...(mode==='hostname'?{origin:'https://different.example'}:{}),
+        signApproval:p=>{signed++;return mode==='wallet'&&role==='provider'?owner.signTypedData(p.domain,p.types,p.value):normal.signApproval(p);}});
+    }));
+    assert.ok(result.every(r=>r.status==='rejected'));assert.ok(pair.requester.destroyed&&pair.provider.destroyed);
+    if(['tls12','alpn','untrusted','hostname'].includes(mode))assert.equal(signed,0);
+  }
+});
+
+test('peer channel observes ERC-1271 channel and launch approval independently and refuses either revocation',async t=>{
+  const x=await configuredFixture(t,{contractProvider:true}),launch=inspectLaunchConsent(x.source.consent,x.initialization,x.proof,x.clock());
+  const allow=async(digest,value)=>(await contractWorker.connect(workers[0]).approveDigest(digest,value)).wait();
+  await allow(launch.approvals[1].digest,true);
+  const pair=await peerTLSPair(t);
+  const channels=await Promise.all(['requester','provider'].map(role=>{
+    const normal=peerOptions(x,pair,role);
+    return authenticatePeerChannel(pair[role],{...normal,signApproval:async p=>{
+      if(role==='provider')await allow(p.digest,true);return normal.signApproval(p);
+    }});
+  }));t.after(()=>channels.forEach(c=>c.close()));
+  for(const c of channels)for(const at of ['finalized','head'])assert.equal(c.report.funding.channelSignatures[at][1].method,'erc1271');
+  const report=channels[0].report,signatures=report.approvals.map(({role,signature})=>({role,signature}));
+  for(const digest of [report.approvals[1].digest,launch.approvals[1].digest]) {
+    await allow(digest,false);
+    await assert.rejects(readPeerChannelState(x.source.consent,x.initialization,x.proof,report.binding,signatures,{clock:x.clock}));
+    await allow(digest,true);
+  }
+  assert.equal((await readPeerChannelState(x.source.consent,x.initialization,x.proof,report.binding,signatures,{clock:x.clock})).channelAuthenticated,false);
+  const approvedBlock=await provider.send('eth_getBlockByNumber',['latest',false]);
+  await allow(report.approvals[1].digest,false);
+  const p=await proxy((m,r)=>m.method==='eth_getBlockByNumber'&&m.params[0]==='finalized'?{...r,result:approvedBlock}:r);
+  try {
+    await assert.rejects(readMarketLeaseState(x.proof,{...x.network,rpc:p.rpc},x.clock,
+      {launchApprovals:launch.approvals,channelApprovals:report.approvals}),/signature is not valid/);
+  } finally {await p.close();}
+});
+
+test('peer channel payloads bind origin, exporter, both nonces, role and retained configuration',async t=>{
+  const x=await configuredFixture(t),binding=peerBinding(x),signatures=await peerSignatures(x,binding);
+  const read=b=>readPeerChannelState(x.source.consent,x.initialization,x.proof,b,signatures,{clock:x.clock});
+  const state=await read(binding);assert.equal(state.chainVerified,true);assert.equal(state.channelAuthenticated,false);
+  for(const alter of [b=>b.channelBinding=h(191),b=>b.requesterNonce=h(191),b=>b.providerNonce=h(191),
+    b=>b.origin='https://different.example',b=>b.validUntil--,b=>b.validFrom--,b=>b.secret='no',
+    b=>b.origin='http://independent.example',b=>b.origin='https://independent.example/path',b=>b.providerNonce=b.requesterNonce]) {
+    const b=structuredClone(binding);alter(b);await assert.rejects(read(b));
+  }
+  const signaturesReversed=[...signatures].reverse();
+  await assert.rejects(readPeerChannelState(x.source.consent,x.initialization,x.proof,binding,signaturesReversed,{clock:x.clock}));
+  const pending=read(binding);binding.channelBinding=h(192);signatures[1].signature='0x1234';
+  assert.equal((await pending).binding.channelBinding,h(181));
+  await assert.rejects(readMarketLeaseState(x.proof,x.network,x.clock,{channelApprovals:state.approvals}),/requires launch consent/);
+});
+
+test('peer channel cancels stalled user signing and closes both sockets without forwarding application data',async t=>{
+  const x=await configuredFixture(t),pair=await peerTLSPair(t);let attempts=0;
+  const result=await Promise.allSettled(['requester','provider'].map(role=>authenticatePeerChannel(pair[role],peerOptions(x,pair,role,{
+    timeoutMs:150,signApproval:()=>{attempts++;return new Promise(()=>{});}
+  }))));assert.equal(attempts,2);assert.ok(result.every(r=>r.status==='rejected'));
+  assert.ok(pair.requester.destroyed&&pair.provider.destroyed);
+});
+
+test('peer channel refuses clock rollback after authenticated handoff',async t=>{
+  const x=await configuredFixture(t),pair=await peerTLSPair(t);let now=x.clock();
+  const channels=await Promise.all(['requester','provider'].map(role=>authenticatePeerChannel(pair[role],peerOptions(x,pair,role,{clock:()=>now}))));
+  t.after(()=>channels.forEach(c=>c.close()));now--;
+  await assert.rejects(channels[0].writeJSON({never:'forwarded'}));
+  assert.ok(pair.requester.destroyed);assert.equal(channels[0].signal.aborted,true);
+});
+
+test('peer channel relay consumes only its live matching local capability, never a serialized report',async t=>{
+  const x=await configuredFixture(t),pair=await peerTLSPair(t);
+  const channels=await Promise.all(['requester','provider'].map(role=>authenticatePeerChannel(pair[role],peerOptions(x,pair,role))));
+  t.after(()=>channels.forEach(c=>c.close()));const real=channels[1];
+  const claim=(c,role='provider',init=x.initialization)=>claimPeerChannel(c,role,x.source.consent,init,x.proof);
+  assert.throws(()=>claim({...real}));assert.throws(()=>claim(real,'requester'));
+  const changed=structuredClone(x.initialization);changed.binding.attempt++;
+  assert.throws(()=>claim(real,'provider',changed));
+  real.report.binding.origin='https://forged-report.example';
+  assert.equal(claim(real).origin,pair.origin);assert.throws(()=>claim(real));
+  let guestReads=0,stopped=0;
+  const guest={readJSON:()=>{guestReads++;},fail:()=>{stopped++;}};
+  await assert.rejects(relayAuthenticatedSession(guest,{report:real.report,fail:()=>{stopped++;}},
+    {launch:{initialization:x.initialization,funding:{consent:x.source.consent,proof:x.proof}}}));
+  assert.equal(guestReads,0);assert.equal(stopped,2);
+});
+
+test('peer channel cancellation aborts stalled chain HTTP requests within the same handshake budget',async t=>{
+  const x=await configuredFixture(t);let requests=0,active=0;
+  const server=http.createServer((req,res)=>{requests++;active++;req.resume();res.on('close',()=>active--);});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
+  x.configuration.network.rpc=`http://127.0.0.1:${server.address().port}`;
+  x.initialization.binding=configuredMarketAttestationBinding(x.proof,x.context,x.r.reservationId,x.run,
+    validateGuestConfiguration(x.configuration).configurationSHA256,x.clock());
+  x.source.consent=(await bookedConsent(x)).signed;
+  const pair=await peerTLSPair(t),started=performance.now();
+  const result=await Promise.allSettled(['requester','provider'].map(role=>
+    authenticatePeerChannel(pair[role],peerOptions(x,pair,role,{timeoutMs:1000}))));
+  assert.ok(result.every(r=>r.status==='rejected'));assert.ok(performance.now()-started<2500);
+  for(let i=0;i<30&&active;i++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.ok(requests>0);assert.equal(active,0);assert.ok(pair.requester.destroyed&&pair.provider.destroyed);
+});
+
+test('peer channel refuses an order that leaves active funding while the wallets approve the connection',async t=>{
+  const x=await configuredFixture(t),pair=await peerTLSPair(t);
+  const result=await Promise.allSettled(['requester','provider'].map(role=>{
+    const normal=peerOptions(x,pair,role);
+    return authenticatePeerChannel(pair[role],{...normal,signApproval:async p=>{
+      if(role==='provider')await (await x.escrow.connect(workers[0]).deliver(x.orderId,h(199))).wait();
+      return normal.signApproval(p);
+    }});
+  }));assert.ok(result.every(r=>r.status==='rejected'));assert.ok(pair.requester.destroyed&&pair.provider.destroyed);
+});
 
 async function requesterDelivery(x) {
   const ageKeygen=process.env.CANNABIS_AGE
