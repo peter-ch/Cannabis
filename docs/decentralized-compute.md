@@ -157,7 +157,7 @@ attestation before any key use. Closing the session disposes the TLS connection.
 
 This is a Node transport under review. The provider listener and requester
 connector described below retain user-controlled signing callbacks; a signing UI,
-durable restart reconciliation and independent operating acceptance remain work.
+protected lifecycle reconciliation and independent operating acceptance remain work.
 Browser APIs do not expose this TLS
 exporter; no browser authentication fallback is enabled. The offline payload and
 state readers explicitly do not claim to authenticate a live socket. Channel
@@ -181,11 +181,31 @@ Connection and pending-handshake limits cover clients that never finish TLS or
 the preface. Retry counts are bounded per route, with no automatic renewal.
 
 Only one authentication/handoff may occupy an assignment within a listener.
-After its handler starts, the route stays consumed even if delivery fails.
-Failed authentication may retry within its configured attempt limit. Restart or
-re-execution requires reconciliation with protected guest/requester replay and
-recovery state; this in-memory catalog is not a durable exactly-once guarantee.
-It is also not a physical capacity reservation or shared network scheduler.
+The mandatory `PeerDispatchJournal` in `compute/peer_dispatch.mjs` commits a local
+consumed marker **before** calling the session handler. Concurrent listeners must
+share that same local journal; after a restart they reopen it. A consumed,
+completed or failed assignment cannot be handed off again. An interrupted process
+may leave a consumed marker even if the callback never started. Recover existing
+results and reconcile protected guest/requester state; do not erase the marker or
+blindly re-execute. Handler completion is only a local callback observation.
+
+First journal creation requires `create: true`; normal reopening refuses a missing
+or empty file and changed limits. The journal uses the pinned patched SQLite
+runtime with a [fully synchronized WAL](https://www.sqlite.org/pragma.html#pragma_synchronous).
+Keep its database and live WAL together on a local filesystem, following
+[SQLite's WAL requirements](https://www.sqlite.org/wal.html). Do not copy a running
+database or replace it with an older backup. This ordinary-host state cannot
+defend against deliberate deletion, rollback or another independent journal;
+protected guest/requester replay checks remain essential. It is not a physical
+capacity reservation, shared network scheduler or hardware admission.
+
+The default journal holds at most 4,096 markers and retains each for seven days
+after the signed service interval ends. Limits are fixed at creation; a full or
+unwritable journal refuses handler handoff. Cleanup only removes expired metadata,
+never customer ciphertext. Backward local time fails closed against its persisted
+clock high-water mark; this does not supply a trusted hardware clock. Failed
+authentication may retry within the listener's in-memory attempt limit. Aggregate
+local ciphertext reservations and recovery/retention policy remain separate work.
 
 `connectBookedPeer` validates the selected certificate/hostname, sends the fixed
 preface and performs booked-party authentication. TCP/TLS setup, selection,

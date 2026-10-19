@@ -5,6 +5,7 @@ import { connect, createSecureContext, TLSSocket } from 'node:tls';
 import { performance } from 'node:perf_hooks';
 import { inspectLaunchConsent, launchConsentPayload } from './guest_consent.mjs';
 import { authenticatePeerChannel, peerALPN } from './peer_channel.mjs';
+import { assertPeerDispatchJournal } from './peer_dispatch.mjs';
 
 const magic=Buffer.from('CANPEER1'),maxRoutes=64;
 const seconds=()=>Math.floor(Date.now()/1000);
@@ -105,9 +106,10 @@ function credentials(value) {
 // The operator supplies signing/handling callbacks for each immutable local route.
 // This module does not spawn workers, reserve physical capacity, release keys or
 // attest hardware. A handler must use the sealed launcher and checked cleanup.
-export async function listenBookedPeers({origin,listenHost,tlsCredentials,routes,maxConnections=8,maxHandshakes=4,
+export async function listenBookedPeers({origin,listenHost,tlsCredentials,routes,dispatchJournal,maxConnections=8,maxHandshakes=4,
   maxAttemptsPerRoute=3,timeoutMs=60000,signal,clock=seconds}={}) {
   const url=endpoint(origin),hostname=host(url),port=Number(url.port||443),context=credentials(tlsCredentials);
+  assertPeerDispatchJournal(dispatchJournal);
   check(net.isIP(listenHost)&&integer(port,0,65535)&&integer(maxConnections,1,32)&&integer(maxHandshakes,1,maxConnections)&&
     integer(maxAttemptsPerRoute,1,32)&&integer(timeoutMs,1,60000)&&(!signal||signal instanceof AbortSignal)&&!signal?.aborted);
   if(port===0)check(['127.0.0.1','::1'].includes(listenHost)&&['localhost','127.0.0.1','::1'].includes(hostname));
@@ -119,7 +121,8 @@ export async function listenBookedPeers({origin,listenHost,tlsCredentials,routes
     const r=retained(input.signed,input.initialization,input.proof);
     bytes+=Buffer.byteLength(JSON.stringify([r.signed,r.initialization,r.proof]));
     check(bytes<=16*1024*1024&&!catalog.has(r.routeId)&&r.d.reservation.end>lastClock);
-    catalog.set(r.routeId,{...r,signApproval:input.signApproval,handle:input.handle,attempts:0,state:'idle'});
+    const prior=dispatchJournal.status(r.routeId);
+    catalog.set(r.routeId,{...r,signApproval:input.signApproval,handle:input.handle,attempts:0,state:prior?.state??'idle'});
   }
   const entries=new Set(),tasks=new Set(),listening=new AbortController();let closed=false,closing,pending=0,rejected=0,failed=0,admitted=0,originUsed;
   const readClock=()=>{const now=clock();check(integer(now,lastClock,Number.MAX_SAFE_INTEGER));lastClock=now;return now;};
@@ -131,7 +134,7 @@ export async function listenBookedPeers({origin,listenHost,tlsCredentials,routes
     const stop=()=>{entry.controller.abort();entry.socket?.destroy();raw.destroy();};
     const timer=setTimeout(stop,timeoutMs);raw.once('close',stop);
     const task=(async()=>{
-      let route,channel,invoked=false;
+      let route,channel,dispatch,invoked=false;
       try {
         const remaining=limit=>Math.floor(limit-(performance.now()-entry.started));
         check(!closed&&!entry.controller.signal.aborted);readClock();
@@ -140,7 +143,7 @@ export async function listenBookedPeers({origin,listenHost,tlsCredentials,routes
         check(!closed&&socket.getProtocol()==='TLSv1.3'&&socket.alpnProtocol===peerALPN&&
           (net.isIP(hostname)?!socket.servername:socket.servername===hostname));
         const id=await readRoute(socket,entry.controller.signal);route=catalog.get(id);
-        check(route&&route.state==='idle'&&route.attempts<maxAttemptsPerRoute);readClock();
+        check(route&&route.state==='idle'&&route.attempts<maxAttemptsPerRoute&&dispatchJournal.status(id)===null);readClock();
         route.attempts++;route.state='authenticating';entry.route=route;
         const d=inspectLaunchConsent(route.signed,route.initialization,route.proof,readClock());
         const totalMs=Math.min(d.configuration.transport.timeoutMs,(d.reservation.end-readClock())*1000);
@@ -149,13 +152,16 @@ export async function listenBookedPeers({origin,listenHost,tlsCredentials,routes
           signApproval:route.signApproval,timeoutMs:Math.min(remaining(timeoutMs),remaining(totalMs)),sessionTimeoutMs:remaining(totalMs),
           signal:entry.controller.signal,clock:readClock});
         check(!closed&&!entry.controller.signal.aborted&&remaining(timeoutMs)>0);channel.assertActive();clearTimeout(timer);
+        // Commit before callback handoff. Another listener or a process restart
+        // sees this tombstone, even if this process dies before invoking handle.
+        dispatch=dispatchJournal.consume(route.routeId,d.reservation.end*1000);
         entry.handshake=false;pending--;invoked=true;route.state='consumed';admitted++;
-        // A route remains consumed even after failure. Re-execution/recovery must
-        // be reconciled by the protected lifecycle, never a blind network retry.
+        check(!closed&&!entry.controller.signal.aborted);channel.assertActive();
         await route.handle(channel,{signed:structuredClone(route.signed),initialization:structuredClone(route.initialization),
           proof:structuredClone(route.proof),signal:channel.signal,routeId:route.routeId});
         route.state=entry.controller.signal.aborted?'failed':'completed';
-      } catch {failed++;if(invoked)route.state='failed';}
+        dispatch.finish(route.state);dispatch=undefined;
+      } catch {failed++;if(invoked){route.state='failed';try{dispatch?.finish('failed');}catch{/* Retain uncertain consumed marker. */}}}
       finally {
         clearTimeout(timer);if(entry.handshake)pending--;
         if(entry.route&&!invoked)entry.route.state=entry.route.attempts>=maxAttemptsPerRoute?'exhausted':'idle';
@@ -185,6 +191,6 @@ export async function listenBookedPeers({origin,listenHost,tlsCredentials,routes
   return Object.freeze({origin:originUsed,address:Object.freeze({...server.address()}),close,
     snapshot:()=>({schema:'cannabis.peer-listener-state.v1',closed,connections:entries.size,pendingHandshakes:pending,
       admittedChannels:admitted,rejectedConnections:rejected,failedConnections:failed,
-      routes:[...catalog.values()].map(r=>({routeId:r.routeId,state:r.state,attempts:r.attempts})),
+      routes:[...catalog.values()].map(r=>({routeId:r.routeId,state:dispatchJournal.status(r.routeId)?.state??r.state,attempts:r.attempts})),
       hardwareValidated:false,executionAuthorized:false,keyReleaseAuthorized:false})});
 }

@@ -1,6 +1,7 @@
 // Owned kernel integration only. Separate ordinary operator process with public
 // launch data, local storage and opaque channels. No requester custody is passed.
 import fs from 'node:fs';
+import path from 'node:path';
 import { Socket } from 'node:net';
 import { performance } from 'node:perf_hooks';
 import { GuestWire } from '../../compute/result_transport.mjs';
@@ -8,9 +9,10 @@ import { prepareGuestLaunch } from '../../compute/guest_launch.mjs';
 import { relayAuthenticatedSession } from '../../operator/session-relay.mjs';
 import { createWorkServer } from '../../service/work-server.mjs';
 import { listenBookedPeers } from '../../compute/peer_network.mjs';
+import { PeerDispatchJournal } from '../../compute/peer_dispatch.mjs';
 import { localProvider } from '../../scripts/lib.mjs';
 import tlsFixture from '../../test/helpers/peer-tls-fixture.json' with {type:'json'};
-let guest,control,server,listener,provider,completionTimer;
+let guest,control,server,listener,provider,completionTimer,dispatchJournal;
 try {
   let raw='';for await(const part of process.stdin){raw+=part;if(raw.length>262144)throw Error('Fixture configuration bound');}
   const started=performance.now(),wallStart=Date.now();
@@ -27,7 +29,10 @@ try {
   const signer=await provider.getSigner(p.signedConfiguration.configuration.provider);
   let resolve,reject;const completed=new Promise((yes,no)=>{resolve=yes;reject=no;});completed.catch(()=>{});
   completionTimer=setTimeout(()=>reject(Error('Owned peer workflow expired')),Math.max(1,remaining()));
+  const journalFile=path.join(c.spool,'dispatch.sqlite');
+  dispatchJournal=new PeerDispatchJournal(journalFile,{create:true});
   listener=await listenBookedPeers({origin:'https://localhost:0',listenHost:'127.0.0.1',
+    dispatchJournal,
     tlsCredentials:{key:tlsFixture.key,cert:tlsFixture.cert},maxConnections:2,maxHandshakes:1,
     timeoutMs:Math.min(60000,remaining()),routes:[{signed:p.signedConfiguration,initialization:p.initialization,proof:p.request.proof,
       signApproval:q=>signer.signTypedData(q.domain,q.types,q.value),handle:async(requester,local)=>{
@@ -47,9 +52,15 @@ try {
   const report=await completed,closed=await listener.close();
   if(closed.pendingTasks||closed.liveSockets)throw Error('Owned listener did not finish cleanup');
   report.peerListenerDisposed=true;
+  dispatchJournal.close();dispatchJournal=new PeerDispatchJournal(journalFile);
+  if(!['consumed','completed','failed'].includes(dispatchJournal.status(report.peerRouteId)?.state))throw Error('Dispatch marker lost');
+  let refused=false;try{dispatchJournal.consume(report.peerRouteId,launch.interval.end*1000);}catch{refused=true;}
+  if(!refused)throw Error('Consumed assignment reopened after restart');
+  report.durableDispatchRetained=true;report.restartedDispatchRefused=true;
   fs.writeFileSync(c.report,JSON.stringify(report),{flag:'wx',mode:0o600});
 }catch{process.stderr.write('Owned whole-session operator fixture failed\n');process.exitCode=1;}
 finally {
   clearTimeout(completionTimer);guest?.fail();guest?.close();control?.fail();control?.close();await listener?.close();provider?.destroy();
+  dispatchJournal?.close();
   if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}
 }

@@ -4,6 +4,8 @@ import net from 'node:net';
 import { connect as connectTLS } from 'node:tls';
 import http from 'node:http';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { AbiCoder, ContractFactory, formatUnits, keccak256, ZeroAddress } from 'ethers';
@@ -28,6 +30,7 @@ import { peerChannelPayload, readPeerChannelState, authenticatePeerChannel, clai
 import { relayAuthenticatedSession } from '../operator/session-relay.mjs';
 import { peerTLSPair } from './helpers/peer_tls.mjs';
 import { connectBookedPeer, listenBookedPeers, peerRouteId } from '../compute/peer_network.mjs';
+import { PeerDispatchJournal } from '../compute/peer_dispatch.mjs';
 import tlsFixture from './helpers/peer-tls-fixture.json' with {type:'json'};
 
 const h = n => '0x' + n.toString(16).padStart(64, '0');
@@ -539,8 +542,16 @@ test('peer channel refuses an order that leaves active funding while the wallets
 const later=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
 const localPeerRoute=(x,handle,signApproval=peerOptions(x,{},'provider').signApproval)=>({signed:x.source.consent,
   initialization:x.initialization,proof:x.proof,signApproval,handle});
-const localListener=(x,routes,extra={})=>listenBookedPeers({origin:'https://localhost:0',listenHost:'127.0.0.1',
-  tlsCredentials:{key:tlsFixture.key,cert:tlsFixture.cert},routes,clock:x.clock,...extra});
+async function localListener(x,routes,extra={}) {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cannabis-dispatch-'));
+  const journal=new PeerDispatchJournal(path.join(dir,'dispatch.sqlite'),{create:true,now:()=>x.clock()*1000});
+  try {
+    const listener=await listenBookedPeers({origin:'https://localhost:0',listenHost:'127.0.0.1',
+      tlsCredentials:{key:tlsFixture.key,cert:tlsFixture.cert},routes,clock:x.clock,dispatchJournal:journal,...extra});
+    after(()=>{journal.close();fs.rmSync(dir,{recursive:true,force:true});});
+    return listener;
+  }catch(error){journal.close();fs.rmSync(dir,{recursive:true,force:true});throw error;}
+}
 const localConnect=(x,listener,extra={})=>connectBookedPeer({...peerOptions(x,listener,'requester'),ca:tlsFixture.cert,...extra});
 async function closedSocket(socket) {
   if(socket.destroyed)return;
@@ -640,6 +651,45 @@ test('peer requester cancellation and total connect budget close stalled TLS bef
     assert.ok(performance.now()-started<1500);
   }
   assert.equal(signed,0);
+});
+
+test('peer listener keeps consumed assignments closed after restart and refuses before wallet signing',async t=>{
+  const x=await configuredFixture(t),dir=fs.mkdtempSync(path.join(os.tmpdir(),'cannabis-dispatch-restart-'));
+  const file=path.join(dir,'dispatch.sqlite'),options={now:()=>x.clock()*1000};
+  let journal=new PeerDispatchJournal(file,{create:true,...options}),calls=0,signatures=0;
+  const entered=later(),release=later(),route=localPeerRoute(x,async()=>{calls++;entered.resolve();await release.promise;},async p=>{
+    signatures++;return peerOptions(x,{},'provider').signApproval(p);
+  });
+  const first=await localListener(x,[route],{dispatchJournal:journal});
+  t.after(async()=>{release.resolve();await first.close();journal.close();fs.rmSync(dir,{recursive:true,force:true});});
+  const channel=await localConnect(x,first);t.after(()=>channel.close());await entered.promise;
+  // A second independent DB connection/listener already observes consumption.
+  const secondJournal=new PeerDispatchJournal(file,options);
+  const second=await localListener(x,[route],{dispatchJournal:secondJournal});
+  try{await assert.rejects(localConnect(x,second));assert.equal(second.snapshot().routes[0].state,'consumed');}
+  finally{await second.close();secondJournal.close();}
+  release.resolve();await first.close();journal.close();journal=new PeerDispatchJournal(file,options);
+  const restarted=await localListener(x,[route],{dispatchJournal:journal});
+  try{await assert.rejects(localConnect(x,restarted));assert.notEqual(restarted.snapshot().routes[0].state,'idle');}
+  finally{await restarted.close();}
+  assert.equal(calls,1);assert.equal(signatures,1);
+});
+
+test('peer listener refuses missing or forged journals and cannot hand off with exhausted durable capacity',async t=>{
+  const x=await configuredFixture(t);let calls=0;
+  const routes=[localPeerRoute(x,()=>{calls++;})];
+  await assert.rejects(localListener(x,routes,{dispatchJournal:undefined}));
+  await assert.rejects(localListener(x,routes,{dispatchJournal:{status:()=>null,consume:()=>({finish(){}})}}));
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cannabis-dispatch-full-'));
+  const journal=new PeerDispatchJournal(path.join(dir,'dispatch.sqlite'),{create:true,maxRecords:1,now:()=>x.clock()*1000});
+  journal.consume('0x'+'ab'.repeat(32),x.clock()*1000+60000);
+  const listener=await localListener(x,routes,{dispatchJournal:journal});
+  try {
+    // Authentication may finish, but no service handler/command is forwarded.
+    let channel;try{channel=await localConnect(x,listener);}catch{}
+    channel?.close();await listener.close();assert.equal(calls,0);
+    assert.equal(journal.status(peerRouteId(x.source.consent,x.initialization,x.proof)),null);
+  }finally{await listener.close();journal.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
 
 async function requesterDelivery(x) {
