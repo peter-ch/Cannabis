@@ -88,16 +88,13 @@ async function openReceipt(entry,identity) {
   } catch {throw Error('Encrypted receipt or result-key recovery does not match the selected approval');}
   finally {clear?.fill(0);key?.fill(0);receiptBytes?.fill(0);}
 }
-export async function openApprovedResults({bundle,spec,packageSHA256,identity,encrypted}) {
-  const checked=await validateRecoveryBundle(bundle);identity=resultIdentity(identity);
+async function checkedReceiptSet({bundle,spec,packageSHA256,identity}) {
+  spec=structuredClone(spec);
+  const checked=await validateRecoveryBundle(bundle);bundle=checked.bundle;identity=resultIdentity(identity);
   requireValue(checked.jobId===spec?.id&&checked.packageSHA256===packageSHA256&&Array.isArray(spec?.tasks)&&spec.tasks.length>0&&spec.tasks.length<=4096);
   const ownerRecipient=await identityToRecipient(identity);
   requireValue(spec.resultRecipient===ownerRecipient&&bundle.entries.every(e=>e.recipient===ownerRecipient),'Result identity differs from the original workload or recovery export');
-  requireValue(Array.isArray(encrypted)&&encrypted.length===bundle.entries.length&&encrypted.every(b=>b instanceof Uint8Array)&&
-    encrypted.reduce((n,b)=>n+b.length,0)<=MAX_RESULT_BYTES,'Select one encrypted archive per approved receipt, within 64 MiB');
-  const files=new Map();
-  for(const bytes of encrypted){const digest=await sha256(bytes);requireValue(!files.has(digest),'Duplicate encrypted result');files.set(digest,bytes);}
-  const results=[];
+  const receipts=[];
   for(const entry of bundle.entries) {
     const receipt=await openReceipt(entry,identity),v=entry.approval.value;
     const index=spec.tasks.findIndex(t=>t.id===receipt.taskId),task=spec.tasks[index];
@@ -105,6 +102,28 @@ export async function openApprovedResults({bundle,spec,packageSHA256,identity,en
     const prefix=enc.encode('cannabis.task.v1\0'),binding=new Uint8Array(prefix.length+32+4);
     binding.set(prefix);binding.set(getBytes(v.packageSHA256),prefix.length);new DataView(binding.buffer).setUint32(prefix.length+32,index);
     requireValue(v.taskSHA256==='0x'+await sha256(binding),'Receipt differs from the original approved task');
+    receipts.push(receipt);
+  }
+  requireValue(receipts.reduce((n,r)=>n+r.ciphertextBytes,0)<=MAX_RESULT_BYTES,'Use the streaming client for result sets over 64 MiB');
+  return {bundle,spec,packageSHA256,identity,receipts};
+}
+// Only authenticated archive commitments leave this local verification step.
+// The relay is never allowed to supply approvals, result keys or receipt truth.
+export async function approvedArchiveDescriptors(input) {
+  const {bundle,receipts}=await checkedReceiptSet(input),descriptors=[];
+  for(let i=0;i<receipts.length;i++)descriptors.push({approvalDigest:bundle.entries[i].approval.digest,
+    envelopeSHA256:await sha256(enc.encode(bundle.entries[i].envelope)),
+    ciphertextSHA256:receipts[i].ciphertextSHA256,ciphertextBytes:receipts[i].ciphertextBytes});
+  return descriptors;
+}
+export async function openApprovedResults({encrypted,...input}) {
+  const {spec,packageSHA256,identity,receipts}=await checkedReceiptSet(input);
+  requireValue(Array.isArray(encrypted)&&encrypted.length===receipts.length&&encrypted.every(b=>b instanceof Uint8Array)&&
+    encrypted.reduce((n,b)=>n+b.length,0)<=MAX_RESULT_BYTES,'Select one encrypted archive per approved receipt, within 64 MiB');
+  const files=new Map();
+  for(const bytes of encrypted){const digest=await sha256(bytes);requireValue(!files.has(digest),'Duplicate encrypted result');files.set(digest,bytes);}
+  const results=[];
+  for(const receipt of receipts) {
     const bytes=files.get(receipt.ciphertextSHA256);requireValue(bytes,'Missing encrypted result for an authenticated receipt');files.delete(receipt.ciphertextSHA256);
     results.push({receipt,bytes});
   }

@@ -38,7 +38,7 @@ fs.mkdirSync(out, { recursive: true });
 fs.cpSync(path.join(root, 'web'), out, { recursive: true });
 const bundled = await build({ absWorkingDir: root, entryPoints: [path.join(root, 'web/work.js')], outfile: path.join(out, 'work.js'), bundle: true, format: 'esm', platform: 'browser', target: 'es2023', minify: true, legalComments: 'linked', metafile: true });
 bundleNotices(bundled.metafile, root, path.join(out, 'work.js.LEGAL.txt'));
-for(const name of ['work-results.js','work-approvals.js','work-inbox.js'])fs.unlinkSync(path.join(out,name)); // bundled; no bare npm imports
+for(const name of ['work-results.js','work-approvals.js','work-inbox.js','work-relay.js'])fs.unlinkSync(path.join(out,name)); // bundled; no bare npm imports
 buildMediaPages(out);
 fs.cpSync(path.join(root, 'docs'), path.join(out, 'docs'), { recursive: true });
 fs.cpSync(path.join(root, 'compute'), path.join(out, 'compute'), { recursive: true,

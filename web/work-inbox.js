@@ -96,6 +96,11 @@ export class BrowserResultInbox {
     check(state&&state.revision===snapshot.revision&&state.slots.length>0&&
       state.slots.every(slot=>state.history[slot]?.active),'Result selection changed or was retired; reopen the current selection');
   }
+  // Retrieval may check an unverified selection, but cannot publish results or
+  // mark its receipt verified. Those still require useCurrent after decryption.
+  checkCurrent(snapshot) {
+    return this.#transaction(snapshot.id,'readonly',state=>{this.#current(state,snapshot);return true;});
+  }
   // The synchronous callback runs while a readwrite transaction excludes attempt
   // changes from other tabs. Decryption happens beforehand, never inside IDB.
   useCurrent(snapshot,fn,{verified=false}={}) {

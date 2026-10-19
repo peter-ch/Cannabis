@@ -69,13 +69,31 @@ encrypted backups. Importing a recovery file never silently selects its attempts
 The local cache supports 16 jobs, 128 selected results per job and an 8 MiB recovery
 export per job; larger workloads use the streaming requester client.
 
-The browser supports result sets up to 64 MiB and 128 archives. Larger sets use the streaming desktop client. **Clear decrypted results** removes download links and private file inputs, including an in-progress opening; it preserves the encrypted recovery cache. **Retire selected attempts** removes the selected encrypted records while retaining the local history needed to refuse replay. It does not cancel remote execution or revoke previously disclosed keys. Downloaded plaintext remains on your device. Browser decryption is subject to the security of the delivered website and your browser; use a reviewed local client for stronger separation from the web host.
+The browser supports result sets up to 64 MiB and 128 archives. Larger sets use the streaming desktop client. **Clear results & stop download** removes download links, private file inputs and in-memory downloaded ciphertext, and cancels an active transfer or opening; it preserves the encrypted recovery records in IndexedDB. **Retire selected attempts** removes the selected encrypted records while retaining the local history needed to refuse replay. It does not cancel remote execution or revoke previously disclosed keys. Downloaded plaintext remains on your device. Browser decryption is subject to the security of the delivered website and your browser; use a reviewed local client for stronger separation from the web host.
 
-The result viewer currently opens requester-supplied encrypted files. The source
-includes an optional bounded ciphertext relay described below; browser retrieval
-and admitted-worker publication still need integration. Live quotes, wallet
-checkout and payment-state reconciliation remain unavailable. A local file
-verification or relay upload does not approve a payment.
+The result viewer opens requester-supplied encrypted files or retrieves an
+encrypted delivery when the website reports that its optional relay is enabled.
+Choose one delivery **read-access** file for every selected result. These must
+match the current website origin and your selected approval digests. Before any
+download, the browser opens your local encrypted key custody, authenticates each
+receipt and verifies the original workload bindings. It then accepts only the
+same encrypted receipt, archive hash and size from the relay. Your identity and
+workload are not uploaded; read tokens are sent only in authorization headers.
+
+Completed encrypted chunks remain in this page's memory after an interrupted
+download. Retry with the same delivery files and reselect your identity file;
+already received chunks are reused. A corrupt whole-archive hash discards that
+archive's cache. Requests have bounded retries and time limits, and respect busy
+or rate-limit responses. Closing or clearing the page discards these chunks.
+They and the read tokens are not stored in IndexedDB. The browser checks that the
+selected attempt is still current before and after network operations, then again
+when publishing decrypted files or downloading them. A retrieval check cannot
+mark an unfinished result verified. Another tab's retirement prevents publication.
+
+The relay and retrieval controls are implemented in source but not enabled on the
+public service. Admitted-worker publication, an operational upload/retry client,
+live quotes, wallet checkout and payment-state reconciliation remain unfinished.
+Local verification or relay storage does not approve a payment.
 
 ## Operating the order service
 
@@ -125,6 +143,11 @@ operator recovery. Reserving space incurs no payment and grants no execution.
 All routes use `/api/work/results/{id}` and the matching `Authorization: Bearer`
 token. Writes require the configured `Origin`. The existing host, rate, request
 timeout, no-cache and cross-origin restrictions also apply.
+The reverse proxy must serve result responses without content encoding; disable
+automatic compression on these routes. Keep exact byte lengths and allow the
+documented manifest/chunk body limits only on their corresponding routes, while
+retaining the smaller preparation-body limit elsewhere. The requester rejects
+redirects, encoded responses, oversized bodies and unexpected media types.
 
 | Method and suffix | Role | Behavior |
 | --- | --- | --- |
@@ -153,5 +176,6 @@ limits. Two concurrent body/large-response transfers are allowed, each with a
 30-second total deadline. Existing per-source and global request limits also bound
 chunk throughput; clients must resume later after a rate or busy response. No
 automatic signing, payment, content-key release or admission follows a successful
-upload. Operational retry clients and the website retrieval controls remain to
-be connected before this can serve admitted jobs.
+upload. The website has bounded download/retry controls. Admitted-worker
+publication, an operational upload/retry client and reviewed host deployment
+remain required before this can serve admitted jobs.

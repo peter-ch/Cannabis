@@ -8,7 +8,7 @@ import { sealResultDelivery } from '../../compute/result_delivery.mjs';
 import { deliveryTypesV2 } from '../../compute/key_delivery.mjs';
 
 const hash=b=>createHash('sha256').update(b).digest('hex'),h=n=>'0x'+n.toString(16).padStart(64,'0');
-export async function approvedBrowserFixture({attempt=1,owner,identity}={}) {
+export async function approvedBrowserFixture({attempt=1,owner,identity,repetitions=1}={}) {
   owner??=Wallet.createRandom();identity??=await generateIdentity();
   const recipient=await identityToRecipient(identity),context={chainId:31337,escrow:'0x'+'11'.repeat(20),requester:owner.address};
   const custody=await createResultKeyCustody({releaseId:h(attempt+10),recipient});
@@ -21,7 +21,7 @@ export async function approvedBrowserFixture({attempt=1,owner,identity}={}) {
     packageSHA256:'0x'+packageSHA256,policySHA256:'0x'+policySHA256,runtimeSHA256:'0x'+runtime,taskSHA256:'0x'+taskSHA256,notBefore:1000,expiresAt:1060});
   const approval={domain,value,digest:TypedDataEncoder.hash(domain,deliveryTypesV2,value),requester:owner.address,jobId:'owned-browser-fixture',
     requesterSignature:await owner.signTypedData(domain,deliveryTypesV2,value)};
-  const archive=new Uint8Array(Buffer.from(execFileSync('python',['test/fixtures/browser-result.py',String(attempt)],{encoding:'utf8',windowsHide:true}),'base64'));
+  const archive=new Uint8Array(Buffer.from(execFileSync('python',['test/fixtures/browser-result.py',String(attempt),String(repetitions)],{encoding:'utf8',windowsHide:true}),'base64'));
   const encrypter=new Encrypter();encrypter.addRecipient(recipient);const bytes=await encrypter.encrypt(archive);
   const receipt={schema:'cannabis.result.v1',jobId:approval.jobId,taskId:'calculate',packageSHA256,attempt,rank:0,worldSize:1,
     recipient,ciphertextSHA256:hash(bytes),ciphertextBytes:bytes.length};

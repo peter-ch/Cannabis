@@ -207,6 +207,17 @@ publication/download. Browser and desktop selections are not synchronized; expor
 again after changing attempts. Plaintext identity secrets and result contents are
 never stored in the browser cache or uploaded by this flow.
 
+When the website enables encrypted delivery, its read-access files provide only
+retrieval credentials. The browser derives expected archive hashes and sizes from
+the authenticated local receipts before making requests, checks that the selected
+attempt remains current, and rejects a host-supplied change to the encrypted
+receipt or archive. It requests only ciphertext from the same website origin,
+with no redirected credentials, and verifies the complete hash before local
+reconstruction. Interrupted encrypted chunks can be retried while that page stays
+open; they and read-access tokens are not added to its persistent recovery cache.
+Retrieval alone never marks an output verified or authorizes payment. See the
+[delivery controls and limits](website-orders.md#encrypted-result-relay).
+
 Operational encrypted delivery and acknowledgement, protected hardware
 and live settlement remain required before paid intake can open. Local tests use
 disposable custody, an isolated chain and synthetic attestation; they do not count

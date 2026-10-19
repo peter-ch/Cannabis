@@ -1,12 +1,14 @@
 import { sha256, MAX_RESULT_BYTES } from './work-results.js';
-import { openApprovedResults, MAX_RECOVERY_BYTES } from './work-approvals.js';
+import { approvedArchiveDescriptors, openApprovedResults, MAX_RECOVERY_BYTES } from './work-approvals.js';
 import { BrowserResultInbox } from './work-inbox.js';
+import { downloadApprovedArchives, EncryptedDownloadCache } from './work-relay.js';
 
 const $ = id => document.getElementById(id);
 const enc = new TextEncoder();
 let pending = null, address = null;
 const access = new Map(), downloads = [];
 let inboxPromise, reviewedRecovery=null, selectedRecovery=null, resultGeneration=0;
+const encryptedDownloads=new EncryptedDownloadCache();let resultController=null;
 const inbox=()=>inboxPromise??=BrowserResultInbox.open();
 const feedback = message => { $('feedback').textContent = message; };
 function download(name, bytes, type = 'application/octet-stream') {
@@ -112,7 +114,18 @@ $('sign-in').addEventListener('click', () => action($('sign-in'), async () => {
 }));
 $('sign-out').addEventListener('click', () => action($('sign-out'), async () => { await api('auth/logout', { method: 'POST', body: {} }); signedIn(null); $('orders').replaceChildren(); feedback('Signed out.'); }));
 $('refresh-orders').addEventListener('click', () => action($('refresh-orders'), async () => renderOrders((await api('orders')).orders)));
-function clearResults() { resultGeneration++; downloads.splice(0).forEach(URL.revokeObjectURL); $('results').replaceChildren(); }
+function clearResults({discardDownloads=true}={}) {
+  resultGeneration++;resultController?.abort();resultController=null;
+  if(discardDownloads)encryptedDownloads.clear();
+  downloads.splice(0).forEach(URL.revokeObjectURL);$('results').replaceChildren();$('transfer-progress').textContent='';
+}
+function resultSource() {
+  const hosted=$('result-source').value==='hosted';$('local-results').hidden=hosted;$('hosted-results').hidden=!hosted;
+  $('result-files').required=!hosted;$('relay-access').required=hosted;
+}
+$('result-source').addEventListener('change',()=>{clearResults();resultSource();});
+for(const id of ['workload','package-hash','result-files','relay-access','result-key'])
+  $(id).addEventListener('change',()=>clearResults({discardDownloads:id==='workload'||id==='package-hash'}));
 async function listRecoveries() {
   const entries=await (await inbox()).list();$('saved-results').replaceChildren(new Option('Choose saved job…',''));
   for(const entry of entries)if(entry.active)$('saved-results').append(new Option(`${entry.jobId} · ${entry.active} approved results`,entry.id));
@@ -145,22 +158,42 @@ $('retire-results').addEventListener('click',()=>action($('retire-results'),asyn
   $('selected-execution').textContent='Selected attempts retired on this browser. Existing downloads are unchanged.';
   await listRecoveries();feedback('Retired attempts cannot be reselected. A replacement needs a higher requester-approved attempt.');
 }).finally(()=>{$('retire-results').disabled=!selectedRecovery;}));
-$('clear-results').addEventListener('click', () => { clearResults(); $('results-form').reset(); feedback('Result files and key inputs cleared from this page.'); });
+$('clear-results').addEventListener('click', () => { clearResults(); $('results-form').reset(); resultSource(); feedback('Result files and key inputs cleared from this page.'); });
 $('results-form').addEventListener('submit', event => {
   event.preventDefault(); action(event.submitter, async () => {
-    clearResults(); const generation=resultGeneration,snapshot=selectedRecovery;
+    clearResults({discardDownloads:false}); const generation=resultGeneration,snapshot=selectedRecovery;
     if(!snapshot)throw Error('Review an execution recovery export or choose a saved job first');
+    const assertCurrent=async()=>{
+      if(generation!==resultGeneration)throw Error('Result opening was cleared or superseded');
+      await (await inbox()).checkCurrent(snapshot);
+      if(generation!==resultGeneration)throw Error('Result opening was cleared or superseded');
+    };
+    await assertCurrent();
     const spec = await jsonFile($('workload').files[0]);
-    const selected = [...$('result-files').files];
-    if (!selected.length || selected.length > 128 || selected.reduce((n, f) => n + f.size, 0) > MAX_RESULT_BYTES) throw Error('Use the streaming client for result sets above 64 MiB or 128 archives');
-    const encrypted = [];
-    for (const file of selected) {
-      if(!file.name.endsWith('.age'))throw Error('Select encrypted .age archives; authenticated receipts come from your recovery export');
-      encrypted.push(new Uint8Array(await file.arrayBuffer()));
-    }
+    const packageSHA256=$('package-hash').value,hosted=$('result-source').value==='hosted';let encrypted;
     const identityFile = $('result-key').files[0]; if (!identityFile || identityFile.size > 4096) throw Error('Choose a bounded age result identity file');
     const identity = await identityFile.text(); $('result-key').value = '';
-    const files = await openApprovedResults({bundle:snapshot.bundle,spec,packageSHA256:$('package-hash').value,identity,encrypted});
+    if(hosted) {
+      const selected=[...$('relay-access').files];
+      if(!selected.length||selected.length>128)throw Error('Choose one read-access file per selected result');
+      const accessFiles=[];for(const file of selected)accessFiles.push(await jsonFile(file,8192));
+      const descriptors=await approvedArchiveDescriptors({bundle:snapshot.bundle,spec,packageSHA256,identity});
+      await assertCurrent();const controller=new AbortController();resultController=controller;
+      encrypted=await downloadApprovedArchives({descriptors,accessFiles,origin:location.origin,cache:encryptedDownloads,signal:controller.signal,assertCurrent,
+        onProgress:({completed,total,retrySeconds})=>{
+          if(generation===resultGeneration)$('transfer-progress').textContent=`Encrypted download: ${completed.toLocaleString()} / ${total.toLocaleString()} bytes.${retrySeconds?` Retrying in ${retrySeconds} seconds…`:''}`;
+        }});
+      await assertCurrent();
+    } else {
+      const selected=[...$('result-files').files];
+      if(!selected.length||selected.length>128||selected.reduce((n,f)=>n+f.size,0)>MAX_RESULT_BYTES)throw Error('Use the streaming client for result sets above 64 MiB or 128 archives');
+      encrypted=[];
+      for(const file of selected) {
+        if(!file.name.endsWith('.age'))throw Error('Select encrypted .age archives; authenticated receipts come from your recovery export');
+        encrypted.push(new Uint8Array(await file.arrayBuffer()));
+      }
+    }
+    const files = await openApprovedResults({bundle:snapshot.bundle,spec,packageSHA256,identity,encrypted});
     try {
       if(generation!==resultGeneration)throw Error('Result opening was cleared or superseded');
       await (await inbox()).useCurrent(snapshot,()=>{
@@ -177,8 +210,8 @@ $('results-form').addEventListener('submit', event => {
           $('results').append(a);
         }
       },{verified:true});
-    }catch(error){clearResults();throw error;}
-    finally {for(const bytes of files.values())bytes.fill(0);}
+    }catch(error){if(generation===resultGeneration)clearResults();throw error;}
+    finally {for(const bytes of files.values())bytes.fill(0);if(generation===resultGeneration){encryptedDownloads.clear();resultController=null;}}
     feedback('Requester approvals, encrypted receipts, selected attempts and archive contents verified. Results decrypted locally. Review output quality before approving payment; no transaction was signed or sent.');
   });
 });
@@ -186,5 +219,6 @@ window.addEventListener('pagehide', clearResults);
 listRecoveries().catch(()=>{$('selected-execution').textContent='Local result storage is unavailable. Use the requester desktop client.';});
 action(null, async () => {
   const status = await api('status'); $('service-status').textContent = status.message;
+  $('hosted-option').disabled=status.encryptedResultStorageAvailable!==true;
   signedIn((await api('account')).address);
 }).finally(() => { if ($('service-status').textContent.includes('Connecting')) $('service-status').textContent = 'The order service is unavailable here. Local result decryption remains available.'; });
