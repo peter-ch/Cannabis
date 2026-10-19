@@ -161,7 +161,7 @@ def actor(parent, base, mode):
         else:
             raise AssertionError('Consumed plan reused')
     except (ValueError, RuntimeError) as error:
-        if mode == 'success':
+        if mode in ['success', 'expired-plan', 'native-shared-deadline', 'encoder-shared-deadline', 'publication-deadline']:
             # This executable creates only owned fixtures. Surface bounded
             # control-plane locations and lifecycle state, never exception
             # messages, request/response values, keys or workload contents.
@@ -186,7 +186,10 @@ def actor(parent, base, mode):
                         sites.append(item)
                     trace = trace.tb_next
                 cause = cause.__context__
-            print('Owned native failure metadata: ' + json.dumps(sites), file=sys.stderr, flush=True)
+            remaining = deadline.monotonic_end - time.monotonic() if 'deadline' in locals() else None
+            print('Owned native failure metadata: ' + json.dumps({'mode': mode,
+                'serviceRemainingSeconds': remaining, 'sites': sites}), file=sys.stderr, flush=True)
+        if mode == 'success':
             raise
         assert not destination.exists(), 'Rejected job published a result'
         if mode in ['expired-plan', 'native-shared-deadline', 'encoder-shared-deadline', 'publication-deadline']:
