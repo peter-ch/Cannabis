@@ -56,6 +56,7 @@ def main():
     parser.add_argument('--tools',type=Path,help='Optional directory of already verified fixture tools')
     parser.add_argument('--node-path',type=Path,help='Optional directory of verified native Node dependencies')
     parser.add_argument('--runtime',type=Path,help='Optional built image runtime to copy into owned protected memory')
+    parser.add_argument('--hosted',action='store_true',help='Include a separate ordinary session operator and encrypted HTTP relay')
     args=parser.parse_args()
     spec=importlib.util.spec_from_file_location('owned_execution_fixture',ROOT/'scripts/check-guest-execution.py')
     fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
@@ -66,7 +67,7 @@ def main():
     assert libc.unshare(0x20000)==0
     assert libc.mount(None,b'/',None,0x4000|0x40000,None)==0
     assert libc.mount(b'tmpfs',os.fsencode(base),b'tmpfs',2|4,b'size=768m,nr_inodes=35000,mode=0700,noswap')==0
-    chain=None;scope=None;chain_log=None;requester_proc=None;wire_fds=[]
+    chain=None;scope=None;chain_log=None;requester_proc=None;operator_proc=None;wire_fds=[]
     try:
         (parent/'cgroup.subtree_control').write_text('+cpu +memory +pids')
         tools=base/'tools';tools.mkdir(mode=0o700)
@@ -124,11 +125,15 @@ def main():
             'resultCustody':str(base/'result-key-custody.json'),'resultManifest':str(manifest),
             'resultsCLI':str(ROOT/'scripts/compute-results.mjs'),'resultBase':str(base/'requester-results'),
             'wireFDs':{'read':requester_read,'write':requester_write}}
+        if args.hosted:
+            with socket.socket() as s:s.bind(('127.0.0.1',0));result_port=s.getsockname()[1]
+            request['resultOrigin']=f'http://127.0.0.1:{result_port}'
         requester_proc=subprocess.Popen([str(tools/'node'),str(controller)],cwd=ROOT,env=env,
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,pass_fds=(requester_read,requester_write))
         for fd in [requester_read,requester_write]:os.close(fd);wire_fds.remove(fd)
         requester_proc.stdin.write(canonical(request));requester_proc.stdin.close();requester_proc.stdin=None
         public=public_launch_frame(to_guest)
+        relay_read,relay_write=to_guest,from_guest
         authority_file=base/'owned-authorities.json';authority_file.write_bytes(canonical(public['authorities'])+b'\n');authority_file.chmod(0o600)
         verifier=base/'owned-authorize.mjs'
         verifier.write_text("import { readLaunchJSON, readRetainedLaunch, publicLaunchAdmission } from "+json.dumps((ROOT/'compute/guest_launch.mjs').as_uri())+";\n"
@@ -145,13 +150,34 @@ def main():
             admitted,deadline,transport,admitted_source=authorize_launch(str(tools/'node'),fixture.sha(tools/'node'),str(verifier),fixture.sha(verifier),snapshot.fd)
             assert admitted.value==profile
             assert admitted_source==request['execution']['source']
+            if args.hosted:
+                operator_source=ROOT/'test/helpers/funded_native_operator.mjs'
+                operator_controller=base/'owned-operator.mjs'
+                operator_controller.write_text(re.sub(r"from '([.][.]/[.][.]/[^']+)'",
+                    lambda m:"from '"+(operator_source.parent/m.group(1)).resolve().as_uri()+"'",operator_source.read_text()))
+                operator_controller.chmod(0o600)
+                operator_read,relay_write=os.pipe();relay_read,operator_write=os.pipe()
+                wire_fds.extend([operator_read,relay_write,relay_read,operator_write])
+                spool=base/'operator-spool';spool.mkdir(mode=0o700)
+                report_file=base/'operator-report.json'
+                config={'public':public,'origin':request['resultOrigin'],'spool':str(spool),'report':str(report_file),
+                    'fds':{'guestRead':operator_read,'guestWrite':operator_write,'requesterRead':to_guest,'requesterWrite':from_guest}}
+                # Only public retained launch data and transport/storage handles.
+                # Owner custody paths and keys never enter this operator config.
+                operator_bytes=canonical(config)
+                assert owner_secret.strip() not in operator_bytes and str(identity).encode() not in operator_bytes
+                operator_fds=(operator_read,operator_write,to_guest,from_guest)
+                operator_proc=subprocess.Popen([str(tools/'node'),str(operator_controller)],cwd=ROOT,env=env,
+                    stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,pass_fds=operator_fds)
+                for fd in operator_fds:os.close(fd);wire_fds.remove(fd)
+                operator_proc.stdin.write(operator_bytes);operator_proc.stdin.close();operator_proc.stdin=None
             with FrozenRuntime(admitted_source['rootfs'],admitted.value['runtime']['digestSHA256']) as prepared, GuestCiphertextStorage(admitted_source,admitted.ciphertext) as storage:
                 deadline.check()
                 prepared.verify()
                 assert not list(storage.path.iterdir())
                 scope=GuestJobScope(parent,admitted.total,admitted.control,deadline=deadline)
                 proc=scope.start(str(tools/'node'),fixture.sha(tools/'node'),str(guest_controller),fixture.sha(guest_controller),launch_fd=snapshot.fd)
-                assert relay_guest(scope,proc,to_guest,from_guest,max_ciphertext_bytes=transport['maxCiphertextBytes'],
+                assert relay_guest(scope,proc,relay_read,relay_write,max_ciphertext_bytes=transport['maxCiphertextBytes'],
                     max_input_ciphertext_bytes=admitted.ciphertext.inputBytes)['reason']=='finished'
             deadline.check()
         # After encrypted delivery, five fresh result-CLI processes each retain
@@ -164,6 +190,13 @@ def main():
         assert code==0, f'Owned funded controller exited {code}'
         assert proc.wait(timeout=5)==0, 'Separate guarded guest did not acknowledge delivery and exit'
         result=json.loads(raw)
+        if args.hosted:
+            assert operator_proc.wait(timeout=5)==0,'Separate operator did not complete'
+            report=json.loads(report_file.read_text())
+            assert report['signatureForwarded'] and report['requesterStorageSignatureVerified']
+            assert not report['guestCompletionObserved'] and not report['paymentAuthorized'] and not report['hardwareValidated']
+            assert Path(report['sourceFile']).is_file() and Path(report['directory']).parent==spool
+            result['checks'].update(separateSessionOperator=True,hostedSignatureForwarded=True,completeEncryptedSpoolRetained=True)
         assert not list(parent.glob('job-*'))
         assert owner_secret.strip() not in raw
         result['wholeTreeCleanup']=True
@@ -177,6 +210,7 @@ def main():
         print(json.dumps(result))
     finally:
         if requester_proc and requester_proc.poll() is None:requester_proc.kill();requester_proc.wait(timeout=5)
+        if operator_proc and operator_proc.poll() is None:operator_proc.kill();operator_proc.wait(timeout=5)
         if scope:scope.close()
         for fd in wire_fds:os.close(fd)
         if chain:

@@ -92,7 +92,7 @@ def main():
     if result.get('configuredEntryClosed') is not True or result.get('outerLauncherClosed') is not True:
         raise ValueError('Fixed configured entry did not refuse the unprepared boot')
     supervision=result.get('supervisionChecks',{})
-    supervision_cases={'retirementOutsidePID1Refused','boundedPrefixAndStreamBoundary','oversizedPrefixRefused',
+    supervision_cases={'actualControllerRootRecognized','retirementOutsidePID1Refused','boundedPrefixAndStreamBoundary','oversizedPrefixRefused',
         'truncatedPrefixRefused','intakeDeadline','intakeWatchdogLoss','existingGroupPreserved',
         'boundedLauncherAndRetirement','failedLauncherRetired','detachedTailRefusedAndRetired',
         'stoppedLauncherDeadline','changedControlsRefused','outerOOMAndSeparateJobRetired',

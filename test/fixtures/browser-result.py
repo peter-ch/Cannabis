@@ -1,6 +1,8 @@
 """Owned interoperability fixture; never opens real custody or runs user code."""
 import sys, json, io, tarfile, base64, hashlib
-context = dict(jobId='owned-browser-fixture', taskId='calculate', packageSHA256='a'*64, attempt=int(sys.argv[1]) if len(sys.argv)>1 else 1, rank=0, worldSize=1)
+package_sha256 = sys.argv[3] if len(sys.argv)>3 else 'a'*64
+assert len(package_sha256)==64 and all(c in '0123456789abcdef' for c in package_sha256)
+context = dict(jobId='owned-browser-fixture', taskId='calculate', packageSHA256=package_sha256, attempt=int(sys.argv[1]) if len(sys.argv)>1 else 1, rank=0, worldSize=1)
 repetitions = int(sys.argv[2]) if len(sys.argv)>2 else 1
 assert 1 <= repetitions <= 10000
 data = b'owned verification result\n' * repetitions

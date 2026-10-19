@@ -336,3 +336,43 @@ chunks, retired selections, forged signatures and cancellation during signing.
 These do not establish hardware confidentiality, a deployed session controller,
 whole-VM operation or a genuine paid job. Production composition with admitted
 sessions, authenticated channels and the visible worker remains required.
+
+## Configured session relay
+
+`operator/session-relay.mjs` connects encrypted input delivery, public guest
+evidence, sealed key delivery and the hosted result handoff. Its caller supplies
+the retained output of `prepareGuestLaunch`, already authenticated requester and
+guest channels, the independently configured storage origin, a private spool
+directory and a local storage-reservation callback. This transport module does
+not validate launch-authority signatures itself or admit protected hardware.
+Never expose a caller-selected launch plan through a public endpoint.
+
+Input travels directly to the guest, with its signed package hash and exact byte
+limit checked along the way. Evidence must match the retained challenge before
+it reaches the requester. The requester independently verifies attestation and
+funding, selects and signs the approval, and wraps its keys. The operator checks
+the public approval signature, workload and channel bindings, encryption header
+and validity window without opening the encrypted envelope.
+
+Before forwarding execution, the operator reserves actual result storage and
+delivers the read grant over the authenticated requester channel. The requester
+calls `receiveSessionResultAccess` with its locally selected approval and configured
+origin, validates the grant and acknowledges matching readiness. The operator
+then forwards the original sealed command to the guest and uses the existing
+hosted result bridge. A readiness message is neither payment approval nor
+attestation. A reservation callback that completes after cancellation can leave
+an expiring reservation; it cannot cause late execution.
+
+Both channels, cancellation and the remaining signed service/transport interval
+bound the whole exchange. The operator retains complete ciphertext after a later
+failure, including a failed storage acknowledgement. It still needs aggregate
+spool quotas and a reviewed retention policy. Reserving relay capacity alone does
+not reserve local operator disk or establish worker capacity.
+
+The owned `check-funded-native.py --hosted` integration uses a separate ordinary
+operator process between requester and guarded native execution. It exercises
+HTTP result retrieval and requester recovery before isolated-chain settlement.
+Its attestation is synthetic and its accounts are disposable. It does not admit
+a worker, use real funds or establish an operational paid service. Production
+channel authentication, whole-VM lifecycle, actual hardware and independent review
+remain launch requirements.

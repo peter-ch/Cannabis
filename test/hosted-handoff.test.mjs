@@ -209,7 +209,7 @@ test('separate operator process bridges only public approval and encrypted artif
   let exited;
   try {
     const connected=once(listener,'connection');
-    child=spawn(process.execPath,['test/helpers/hosted_result_bridge.mjs',configFile],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+    child=spawn(process.execPath,['--disable-warning=ExperimentalWarning','test/helpers/hosted_result_bridge.mjs',configFile],{windowsHide:true,stdio:['pipe','pipe','pipe']});
     let errors='';child.stderr.on('data',b=>{errors+=b.toString();assert.ok(errors.length<8192);});
     exited=once(child,'exit');timer=setTimeout(()=>child.kill(),7000);
     [socket]=await Promise.race([connected,exited.then(()=>{throw Error('Operator exited before connecting');})]);

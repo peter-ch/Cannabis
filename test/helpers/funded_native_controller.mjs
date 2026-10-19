@@ -21,6 +21,8 @@ import { ResultInbox } from '../../compute/result_inbox.mjs';
 import { GuestWire, receiveGuestEvidence, sendGuestExecution, receiveEncryptedResult } from '../../compute/result_transport.mjs';
 import { launchConfigurationPayload } from '../../compute/guest_launch.mjs';
 import { sendEncryptedInput } from '../../compute/input_transport.mjs';
+import { receiveSessionResultAccess } from '../../requester/session-access.mjs';
+import { receiveHostedResult } from '../../requester/hosted-result.mjs';
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
 const utc=t=>new Date(t*1000).toISOString().replace('.000Z','Z');
@@ -147,10 +149,12 @@ try {
   const selection={approvalDigest:payload.digest};
   inbox=new ResultInbox(input.resultBase+'.sqlite',{chainId:31337,escrow:address,requester:account});
   await sendGuestExecution(wire,record);
-  const transported=await receiveEncryptedResult(wire,{inbox,approvalDigest:payload.digest,
+  const hosted=input.resultOrigin?{origin:input.resultOrigin,
+    access:await receiveSessionResultAccess(wire,{approvalDigest:payload.digest,origin:input.resultOrigin}),timeoutMs:90000}:{};
+  const transported=await (input.resultOrigin?receiveHostedResult:receiveEncryptedResult)(wire,{inbox,approvalDigest:payload.digest,
     loadResultKey:expected=>recoverRequesterResultKey(resultSource,expected),
     destination:input.resultBase+'-download.age',maxCiphertextBytes:4*1024*1024,
-    signStored:payload=>requester.signTypedData(payload.domain,payload.types,payload.value)});
+    signStored:payload=>requester.signTypedData(payload.domain,payload.types,payload.value),...hosted});
   assert.equal(transported.storageAcknowledged,true);assert.equal(transported.paymentAuthorized,false);
   const authenticated=await inbox.recover(payload.digest,expected=>recoverRequesterResultKey(resultSource,expected));
   const receipt=authenticated.receipt;inbox.close();inbox=undefined;
@@ -187,7 +191,8 @@ try {
       exactFeeAndWorkerSettlement:true,workerWithdrawal:true,sessionReplayRefused:true,encryptedReceiptAuthenticated:true,
       requesterProcessRestartRecovery:true,duplicateReceiptIdempotent:true,approvedWorkloadReconstruction:true,
       separateGuestProcess:true,encryptedStreamingHandoff:true,requesterStorageAcknowledgement:true,
-      authorizedLaunchConfiguration:true,preSessionKernelAdmission:true,encryptedInputStreamedBeforeEvidence:true},
+      authorizedLaunchConfiguration:true,preSessionKernelAdmission:true,encryptedInputStreamedBeforeEvidence:true,
+      ...(input.resultOrigin?{hostedHTTPRecovery:true,sessionReadCapabilityVerified:true}:{})},
     grossBaseUnits:'12000',workerBaseUnits:'11880',founderFeeBaseUnits:'120',chainId:31337,
     realPaidJob:false,hardwareValidated:false,customerKeysUsed:false}));
 } catch(error) {process.stderr.write('Owned funded native fixture failed: '+error.stack+'\n');process.exitCode=1;}

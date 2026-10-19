@@ -23,8 +23,8 @@ import uuid
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from compute.guest_boot import (MAGIC,STAGED,VmProcessTree,VmRetirement,arm_watchdog,
-    encode_public_launch,receive_public_launch,supervise_launcher)
-from compute.guest_resources import JobResourceGroup,ResourceLimits,ResourceTreeLimits,_read,_verify,_write
+    encode_public_launch,receive_public_launch,supervise_launcher,verify_controller_parent)
+from compute.guest_resources import JobResourceGroup,ResourceLimits,ResourceTreeLimits,_directory,_read,_verify,_write
 from compute.guest_vm import VmBudget
 
 
@@ -136,6 +136,14 @@ def main():
     assert os.geteuid()==0 and sys.platform=='linux' and os.getpid()!=1
     assert Path(args.busybox).is_file()
     checks={}
+    # Read-only regression against the real mounted hierarchy. Existing cases
+    # below use nested domains and previously missed this root-only kernel API.
+    root=_directory('/sys/fs/cgroup')
+    try:
+        kind=verify_controller_parent(root)
+        assert kind==('domain' if Path('/sys/fs/cgroup/cgroup.type').exists() else 'hierarchy-root')
+        checks['actualControllerRootRecognized']=True
+    finally:os.close(root)
     try:VmRetirement()
     except ValueError:checks['retirementOutsidePID1Refused']=True
     else:raise AssertionError('Host retirement guard bypassed')

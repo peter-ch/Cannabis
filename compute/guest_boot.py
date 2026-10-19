@@ -119,6 +119,29 @@ def write_status(writer,message,deadline,watchdog):
     _remaining(deadline)
 
 
+def verify_controller_parent(fd):
+    """Accept a domain or the actual mounted hierarchy root, which has no type file."""
+    try:
+        if _read(fd,'cgroup.type')!='domain':raise ValueError('Require a domain controller parent')
+        kind='domain'
+    except FileNotFoundError:
+        # cgroup.type exists only on non-root cgroups. Do not turn an absent
+        # file on an arbitrary directory into root authority: match the retained
+        # descriptor to the fixed cgroup2 mount and its root in mountinfo.
+        fields=dict(line.split(':',1) for line in Path(f'/proc/self/fdinfo/{fd}').read_text().splitlines() if ':' in line)
+        rows=[line.split() for line in Path('/proc/self/mountinfo').read_text().splitlines()
+              if line.split()[0]==fields.get('mnt_id','').strip()]
+        current=os.stat(GROUP_ROOT,follow_symlinks=False);retained=os.fstat(fd)
+        if (len(rows)!=1 or rows[0][3]!='/' or rows[0][4]!=str(GROUP_ROOT)
+                or rows[0][rows[0].index('-')+1]!='cgroup2'
+                or (current.st_dev,current.st_ino)!=(retained.st_dev,retained.st_ino)):
+            raise ValueError('Missing type outside the fixed cgroup hierarchy root') from None
+        kind='hierarchy-root'
+    if not {'cpu','memory','pids'}<=set(_read(fd,'cgroup.subtree_control').split()):
+        raise ValueError('Require the configured VM controller root')
+    return kind
+
+
 class VmProcessTree:
     """Own only two freshly created groups; never adopt or alter unrelated work."""
     def __init__(self,budget,parent=GROUP_ROOT):
@@ -128,8 +151,7 @@ class VmProcessTree:
         self.names=[]
         self.closed=False
         try:
-            if _read(self.root,'cgroup.type')!='domain' or not {'cpu','memory','pids'}<=set(_read(self.root,'cgroup.subtree_control').split()):
-                raise ValueError('Require the configured VM controller root')
+            verify_controller_parent(self.root)
             for name,controls in [('cannabis-outer',budget.outer.controls()),('cannabis-jobs',budget.job_parent_controls())]:
                 os.mkdir(name,0o700,dir_fd=self.root);self.names.append(name)
                 fd=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=self.root)

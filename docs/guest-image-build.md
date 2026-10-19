@@ -176,6 +176,13 @@ The public prefix is deliberately separate from the later encrypted protocol:
    before customer-key release. No bootstrap command or supervisor path comes
    from the prefix.
 
+The supervisor accepts the actual mounted cgroup hierarchy root as well as a
+normal nested domain. Linux exposes `cgroup.type` only on non-root cgroups. If
+that file is absent, the retained descriptor must match the fixed cgroup2 mount
+root; CPU, memory and PID controllers must still be enabled. Owned checks include
+the real root in addition to nested domains, and operating boots exercise the
+root path before acknowledging staged public configuration.
+
 PID 1 and its watchdog stay outside the outer and job groups. The supervisor
 watches the exact launcher and watchdog, rejects changed limits and premature
 transport loss, and requires successful exit with empty groups. Cleanup stops
