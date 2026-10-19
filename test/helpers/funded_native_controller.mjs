@@ -20,6 +20,7 @@ import { createResultKeyCustody, recoverRequesterResultKey } from '../../compute
 import { ResultInbox } from '../../compute/result_inbox.mjs';
 import { GuestWire, receiveGuestEvidence, sendGuestExecution, receiveEncryptedResult } from '../../compute/result_transport.mjs';
 import { launchConfigurationPayload } from '../../compute/guest_launch.mjs';
+import { sendEncryptedInput } from '../../compute/input_transport.mjs';
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
 const utc=t=>new Date(t*1000).toISOString().replace('.000Z','Z');
@@ -114,6 +115,9 @@ try {
   const configPayload=launchConfigurationPayload(authorities,configuration);
   const signedConfiguration={configuration,signatures:[{signer:account,signature:await requester.signTypedData(configPayload.domain,configPayload.types,configPayload.value)}]};
   await wire.writeJSON({authorities,signedConfiguration,initialization,request:{proof:funding.proof,challenge}});
+  const inputTransfer=await sendEncryptedInput(wire,{source:input.inputCiphertext,
+    packageSHA256:input.descriptor.ciphertextSHA256,maxCiphertextBytes:input.execution.profile.ciphertext.inputBytes});
+  assert.equal(inputTransfer.peerReportedStorage,true);assert.equal(inputTransfer.keyReleased,false);
   const evidence=await receiveGuestEvidence(wire);
   const resultCustody=await createResultKeyCustody({releaseId:h(8),recipient:input.spec.resultRecipient});
   fs.writeFileSync(input.resultCustody,JSON.stringify(resultCustody),{flag:'wx',mode:0o600});
@@ -183,7 +187,7 @@ try {
       exactFeeAndWorkerSettlement:true,workerWithdrawal:true,sessionReplayRefused:true,encryptedReceiptAuthenticated:true,
       requesterProcessRestartRecovery:true,duplicateReceiptIdempotent:true,approvedWorkloadReconstruction:true,
       separateGuestProcess:true,encryptedStreamingHandoff:true,requesterStorageAcknowledgement:true,
-      authorizedLaunchConfiguration:true,preSessionKernelAdmission:true},
+      authorizedLaunchConfiguration:true,preSessionKernelAdmission:true,encryptedInputStreamedBeforeEvidence:true},
     grossBaseUnits:'12000',workerBaseUnits:'11880',founderFeeBaseUnits:'120',chainId:31337,
     realPaidJob:false,hardwareValidated:false,customerKeysUsed:false}));
 } catch(error) {process.stderr.write('Owned funded native fixture failed: '+error.stack+'\n');process.exitCode=1;}

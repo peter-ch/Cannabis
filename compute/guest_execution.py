@@ -24,6 +24,7 @@ from .guest_native import NativeTaskPlan
 from .guest_resources import ResourceLimits, ResourceTreeLimits, _directory, _read, _verify
 from .guest_sandbox import ScratchLimits, _pinned_file, BWRAP, BWRAP_SHA256, SECCOMP, SECCOMP_SHA256
 from .job_keys import RecoveredJobKey
+from .guest_ciphertext import CiphertextLimits, CiphertextAdmission
 
 REQUEST_MAX = 65536
 RESPONSE_MAX = 5 * 1024**2
@@ -54,8 +55,8 @@ class NativeServiceProfile:
     def __init__(self, value, service_sha256, units):
         value = copy.deepcopy(value)
         exact(value, ['schema', 'units', 'runtime', 'resources', 'total', 'control',
-                      'helper', 'processLimit', 'scratchInodes', 'staging', 'maxInputBytes', 'tools'])
-        if (value['schema'] != 'cannabis.guest-native-service.v1' or type(units) is not int
+                      'helper', 'processLimit', 'scratchInodes', 'staging', 'ciphertext', 'maxInputBytes', 'tools'])
+        if (value['schema'] != 'cannabis.guest-native-service.v2' or type(units) is not int
                 or units != 1 or type(value['units']) is not int or value['units'] != units
                 or service_sha256 != '0x' + hashlib.sha256(canonical(value)).hexdigest()):
             raise ValueError('Native service profile differs from the signed service unit')
@@ -67,6 +68,7 @@ class NativeServiceProfile:
         self.helper = ResourceLimits(**value['helper'])
         self.task = ResourceLimits.from_task(value['resources'], process_limit=value['processLimit'])
         self.staging = ScratchLimits(**value['staging'])
+        self.ciphertext = CiphertextLimits(**value['ciphertext'])
         self.scratch = ScratchLimits(value['resources']['scratchMiB'] * 1024**2, value['scratchInodes'])
         if self.total.children < 3:
             raise ValueError('Control, native sandbox and sealing helper need three leaves')
@@ -74,7 +76,7 @@ class NativeServiceProfile:
             if sum(getattr(v, name) for v in [self.control, self.helper, self.task]) > getattr(self.total, name):
                 raise ValueError('Service unit does not reserve concurrent process capacity')
         if (self.control.memory_bytes + self.helper.memory_bytes + self.task.memory_bytes
-                + self.staging.bytes + self.scratch.bytes > self.total.memory_bytes):
+                + self.staging.bytes + self.scratch.bytes + self.ciphertext.bytes > self.total.memory_bytes):
             raise ValueError('Service unit does not reserve concurrent memory and protected storage')
         if any(v.wall_seconds > self.total.wall_seconds for v in [self.control, self.helper, self.task]):
             raise ValueError('Stage time exceeds the service unit')
@@ -202,7 +204,7 @@ class NativeExecutionAdmission:
         # Clamping can only shorten the outer guardian's already-running deadline.
         self.deadline = ExecutionDeadline(min(deadline.monotonic_end, interval.monotonic_end))
         self.parent = parent
-        self.tree = self.control = None
+        self.tree = self.control = self.ciphertext = None
         try:
             self.path = Path(os.environ['CANNABIS_JOB_CGROUP'])
             self.control_path = Path(os.environ['CANNABIS_JOB_CONTROL'])
@@ -213,6 +215,7 @@ class NativeExecutionAdmission:
                 raise ValueError('Launcher resource profile differs from signed service')
             self.tree, self.control = _directory(self.path), _directory(self.control_path)
             self.verify()
+            self.ciphertext = CiphertextAdmission(self.source,self.profile.ciphertext,self.binding['packageSHA256'],self.deadline,self.parent)
             self.plan = NativeTaskPlan(self.source['rootfs'], self.profile.value['runtime'], self.profile.value['resources'],
                 process_limit=self.profile.value['processLimit'], scratch_inodes=self.profile.value['scratchInodes'], deadline=self.deadline)
             pins = self.profile.value['tools']
@@ -233,6 +236,7 @@ class NativeExecutionAdmission:
 
     def verify(self):
         self.deadline.check(self.parent)
+        if self.ciphertext is not None:self.ciphertext.verify()
         _verify(self.tree, self.profile.total)
         _verify(self.control, self.profile.control)
         if (_read(self.tree, 'cgroup.procs') or not {'cpu', 'memory', 'pids'} <= set(_read(self.tree, 'cgroup.subtree_control').split())
@@ -257,9 +261,12 @@ class NativeExecutionAdmission:
                               job['policySHA256'], job['inputRecipient'], job['resultRecipient'])
         return self.plan.run(self.path, self.source['ciphertext'], key, self.binding, self.source['destination'],
             age=self.source['age'], helper_limits=self.profile.helper, staging_limits=self.profile.staging,
-            max_input_bytes=self.profile.value['maxInputBytes'], cancelled=self.parent)
+            max_input_bytes=self.profile.value['maxInputBytes'], max_output_ciphertext_bytes=self.profile.ciphertext.outputBytes, cancelled=self.parent)
 
     def close(self):
+        if self.ciphertext is not None:
+            self.ciphertext.close()
+            self.ciphertext = None
         for name in ['tree', 'control']:
             fd = getattr(self, name, None)
             if fd is not None:

@@ -5,6 +5,7 @@ import { readLaunchJSON, readRetainedLaunch } from '../compute/guest_launch.mjs'
 import { inspectNativeGuest } from '../compute/guest_execution.mjs';
 import { InitializedGuestControlPlane } from '../compute/guest_bootstrap.mjs';
 import { GuestWire, serveGuestSession } from '../compute/result_transport.mjs';
+import { receiveEncryptedInput } from '../compute/input_transport.mjs';
 
 let control,wire;
 try {
@@ -15,9 +16,12 @@ try {
   const remaining=()=>Math.floor(Math.min(expires-Date.now(),launch.transport.timeoutMs-(performance.now()-start)));
   const binding=Object.fromEntries(['packageSHA256','policySHA256','runtimeSHA256','taskSHA256','attempt','rank','worldSize','acceleratorClass']
     .map(k=>[k,launch.initialization.binding[k]]));
-  // No session/channel key exists until actual containment and runtime inspection.
-  inspectNativeGuest(launch.execution,binding,launch.interval,{timeoutMs:Math.min(60000,remaining())});
   wire=new GuestWire(process.stdin,process.stdout,{timeoutMs:remaining()});
+  await receiveEncryptedInput(wire,{destination:launch.execution.source.ciphertext,
+    packageSHA256:binding.packageSHA256,maxCiphertextBytes:launch.execution.profile.ciphertext.inputBytes});
+  // No session/channel key exists until actual containment, storage, ciphertext
+  // commitment and runtime inspection. Execution repeats admission before keys.
+  inspectNativeGuest(launch.execution,binding,launch.interval,{timeoutMs:Math.min(60000,remaining())});
   control=await InitializedGuestControlPlane.start({...launch.bootstrap,assignment:launch.initialization},
     {timeoutMs:Math.min(20000,remaining()),signal:wire.signal});
   const session=await control.createSession({policy:launch.policy,challenge:launch.challenge,funding:launch.funding,execution:launch.execution});

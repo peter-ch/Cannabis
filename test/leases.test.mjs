@@ -52,7 +52,13 @@ after(()=>{provider?.destroy();node?.child.kill();});
 
 async function setup({file=':memory:',gross=[3000n,2000n],packageSHA256=h(80).slice(2),serviceSHA256=h(20),native=false}={}) {
   await provider.send('evm_revert',[snapshot]);snapshot=await provider.send('evm_snapshot',[]);
+  // Restoring an old snapshot restores its block timestamp, while later mining
+  // may follow the advancing host clock. Start each owned fixture at an explicit
+  // chain time; otherwise slow suites can manufacture a future-block refusal.
+  const restored=(await provider.getBlock('latest')).timestamp;
+  await provider.send('evm_setNextBlockTimestamp',[restored+1]);await provider.send('evm_mine',[]);
   const now=(await provider.getBlock('latest')).timestamp;
+  assert.equal(now,restored+1);
   const selectedNetwork=native?nativeNetwork:network;
   const context={chainId:31337,registryId:h(1),token:selectedNetwork.token},ledger=new CapacityLedger(file,context);
   const signers=[first,second],requester=await owner.getAddress(),reservations=[];
@@ -352,11 +358,11 @@ test('native ETH funding retains signed asset and runtime pins through fresh gue
 
 test('a funded native session retains its service commitment and cannot bypass readiness with open or prepare', async () => {
   const limits = (cpu, memory, pids, wall) => ({cpu_millis:cpu,memory_bytes:memory*1024**2,processes:pids,wall_seconds:wall});
-  const execution = { profile:{schema:'cannabis.guest-native-service.v1',units:1,
+  const execution = { profile:{schema:'cannabis.guest-native-service.v2',units:1,
     runtime:{adapter:'native-linux-x86_64-v1',architecture:'x86_64',os:'linux',digestSHA256:'b'.repeat(64)},
     resources:{cpus:1,memoryMiB:128,scratchMiB:8,wallSeconds:60,nodes:1},
     total:{...limits(3000,1024,192,120),children:3},control:limits(1000,512,64,120),helper:limits(1000,256,64,60),
-    processLimit:32,scratchInodes:512,staging:{bytes:16*1024**2,inodes:1024},maxInputBytes:1024**2,
+    processLimit:32,scratchInodes:512,staging:{bytes:16*1024**2,inodes:1024},ciphertext:{bytes:8*1024**2,inodes:64,inputBytes:4*1024**2,outputBytes:4*1024**2},maxInputBytes:1024**2,
     tools:{pythonSHA256:'22'.repeat(32),ageSHA256:'22'.repeat(32),ageKeygenSHA256:'22'.repeat(32)}},
     source:Object.fromEntries(['python','rootfs','age','ciphertext','destination'].map(k=>[k,path.join(os.tmpdir(),'owned-unavailable-'+k)])) };
   const d=await deliverySetup(nativeServiceCommitment(execution)),agent=await guestAgentFixture();let guest,legacy;

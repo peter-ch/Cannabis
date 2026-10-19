@@ -60,6 +60,8 @@ def authorize_launch(node, node_sha256, verifier, verifier_sha256, snapshot_fd):
         for field, maximum in [('timeoutMs',3600000),('maxCiphertextBytes',1024**4)]:
             if type(transport[field]) is not int or not 1 <= transport[field] <= maximum:
                 raise ValueError('Invalid authorized transport bound')
+        if transport['maxCiphertextBytes'] > profile.ciphertext.outputBytes:
+            raise ValueError('Result transport exceeds the reserved ciphertext capacity')
         service = ExecutionDeadline.from_service_interval(**value['interval'])
         # Charge authorization time against transport too. Never restart either
         # the signed service interval or the launch allowance after verification.
@@ -76,13 +78,13 @@ def authorize_launch(node, node_sha256, verifier, verifier_sha256, snapshot_fd):
             os.close(fd)
 
 
-def relay_guest(scope, proc, reader, writer, *, max_ciphertext_bytes):
+def relay_guest(scope, proc, reader, writer, *, max_ciphertext_bytes, max_input_ciphertext_bytes):
     """Relay opaque bytes with bounded queues while watching both lifetimes.
 
     The protocol endpoints authenticate messages. This pump cannot acknowledge
     results, decrypt, authorize payment or declare success before checked cleanup.
     """
-    if type(max_ciphertext_bytes) is not int or not 1 <= max_ciphertext_bytes <= 1024**4:
+    if any(type(n) is not int or not 1 <= n <= 1024**4 for n in [max_ciphertext_bytes,max_input_ciphertext_bytes]):
         raise ValueError('Require the authorized ciphertext bound')
     descriptors = [reader, writer, proc.stdin.fileno(), proc.stdout.fileno()]
     if len(set(descriptors)) != len(descriptors) or any(os.isatty(fd) for fd in descriptors):
@@ -93,7 +95,10 @@ def relay_guest(scope, proc, reader, writer, *, max_ciphertext_bytes):
     received = sent = 0
     # Envelopes, evidence and acknowledgements have their own stricter protocol
     # bounds. This additional stream ceiling includes fixed public frame overhead.
-    stream_limit = max_ciphertext_bytes + 32*1024**2
+    # The reviewed senders use full 64 KiB chunks except for their last chunk.
+    # Include framing even at the maximum size, in addition to control overhead.
+    limit = lambda size: size + ((size+65535)//65536)*5 + 32*1024**2
+    input_limit, output_limit = limit(max_input_ciphertext_bytes), limit(max_ciphertext_bytes)
     try:
         child_pidfd, guardian = scope.monitor_handles()
         for fd in descriptors: os.set_blocking(fd, False)
@@ -125,7 +130,7 @@ def relay_guest(scope, proc, reader, writer, *, max_ciphertext_bytes):
                 buffer.extend(chunk)
                 if direction == 'in': received += len(chunk)
                 else: sent += len(chunk)
-                if max(received, sent) > stream_limit:
+                if received > input_limit or sent > output_limit:
                     raise ValueError('Encrypted transport exceeds the approved stream bound')
             for destination, buffer in [(proc.stdin.fileno() if child_input_open else -1,pending_in),(writer,pending_out)]:
                 if destination not in writable: continue

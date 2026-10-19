@@ -71,6 +71,14 @@ def main():
             'cachedControlImports': True, 'changedSourceInvalidatesCache': True,
             'assertionsPreserved': True, 'customerKeysUsed': False, 'hardwareValidated': False}:
         raise ValueError('Pinned Python cache loading and source validation did not pass')
+    ciphertext = result.get('ciphertextChecks', {})
+    ciphertext_cases = {'verifiedInputAndRetirement','changedInputRefused','writableInputRefused',
+        'hardlinkInputRefused','symlinkInputRefused','oversizedInputRefused','retainedInputReplacementRefused',
+        'changedQuotaRefused','kernelByteQuota','kernelInodeQuota','unreservedDirectoryRefused','busyRetirementRefused'}
+    if (ciphertext.get('schema') != 'cannabis.guest-ciphertext-check.v1' or ciphertext.get('kernel') != report['kernelRelease']
+            or ciphertext.get('checks') != {name:True for name in ciphertext_cases}
+            or any(ciphertext.get(k) is not False for k in ['customerKeysUsed','hardwareValidated','realPaidJob'])):
+        raise ValueError('Ciphertext storage acceptance checks did not pass')
     expected_initialization = {'schema':'cannabis.guest-initialization-check.v1',
         'profiles':[{'profile':p, 'unsupportedHardwareRejected':True, 'servicesStopped':True} for p in ['snp','tdx']],
         'cancellationRejected':True, 'changedBinaryRejected':True, 'occupiedPortRejected':True,
@@ -109,7 +117,7 @@ def main():
         raise ValueError('Guest runtime isolation checks did not pass')
     native = result.get('nativeChecks', {})
     native_cases = {'success', 'tampered', 'metadata', 'group', 'dependency', 'missing-output', 'symlink-output',
-                    'decode-quota', 'encode-quota', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel',
+                    'decode-quota', 'encode-quota', 'output-limit', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel',
                     'expired-plan', 'native-shared-deadline', 'encoder-shared-deadline', 'publication-deadline'}
     if (native.get('schema') != 'cannabis.guest-native-check.v1' or native.get('kernel') != report['kernelRelease']
             or native.get('checks') != {name: True for name in native_cases}
@@ -120,7 +128,7 @@ def main():
         'partialLeafCleanup', 'aggregateOOMKillsAllLeaves', 'aggregatePIDLimit', 'pinnedControlAndWorkloadCompletion',
         'busyControlExitRefused', 'stoppedControlAndDetachedWorkloadRetired', 'wholeTreeDeadline',
         'shorterControlDeadlineBoundsWholeTree', 'stoppedOuterOwnerDeadline', 'outerOwnerDeathRetiresControlAndWorkload'}
-    execution_cases = {'success', 'resource-change', 'profile-underbudget', 'runtime-change', 'owner-death', 'deadline'}
+    execution_cases = {'success', 'resource-change', 'profile-underbudget', 'runtime-change', 'input-change', 'storage-change', 'owner-death', 'deadline'}
     launcher_cases = {'kernelSealsPreventMutation','publicInputTypeAndSizeRefusals','success','failed-exit',
         'backpressure','stopped-control','guardian-death','guardian-reaped','busy-exit'}
     for field, schema, cases in [('jobChecks','cannabis.guest-job-check.v1',job_cases),

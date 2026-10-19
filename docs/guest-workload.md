@@ -101,13 +101,31 @@ subtree. A shorter control-plane time limit also shortens the whole job deadline
 Create the session with `execution: { profile, source }` alongside its approved
 funding configuration. Both objects must come from independently approved measured
 configuration. `source` contains trusted absolute `python`, `rootfs`, `age`,
-`ciphertext` and `destination` paths. The service profile specifies the native
+`ciphertext` and `destination` paths. Version 2 of the native service profile
+(`cannabis.guest-native-service.v2`) specifies the native
 runtime inventory, task resources, control/helper limits, aggregate limits, scratch
-and staging quotas, extraction bound and tool hashes. Its canonical SHA-256 must
+and staging quotas, ciphertext storage, extraction bound and tool hashes. Its canonical SHA-256 must
 match the signed reservation's `serviceSHA256` and its exact unit count. This
 adapter represents one reserved service unit; it cannot reinterpret a group or
 accelerator reservation as one CPU task. The profile reserves concurrent control,
-helper and workload capacity, plus both protected filesystem quotas.
+helper and workload capacity, plus scratch, staging and ciphertext filesystem
+quotas. Version-1 profiles are refused because they do not budget ciphertext.
+
+The mandatory `ciphertext` object contains `bytes`, `inodes`, `inputBytes` and
+`outputBytes`. The page-rounded input and output limits must fit concurrently
+inside the byte quota, which also counts against the aggregate service budget.
+The fixed outer launcher creates a new dedicated `noswap` tmpfs with signed
+byte/inode limits and `nosuid,nodev,noexec` restrictions. Its two paths must be
+`workload.age` and `result.age` in that same private directory. These filesystem
+ceilings do not reserve physical machine capacity; whole-VM admission is separate.
+
+The requester streams the already encrypted package with bounded frames before
+the guest creates evidence/session keys. Intake checks the complete size and
+assignment hash, then publishes an exclusive read-only input file. An upload
+acknowledgement is only a peer report, not hardware attestation or key approval.
+Native admission independently verifies the actual kernel mount, quotas,
+permissions, file identity and package hash before readiness. Output publication
+also enforces `outputBytes`; checked retirement removes the whole volume.
 
 ```js
 const session = await control.createSession({
@@ -121,7 +139,8 @@ const result = await session.executeNative(envelope, expectedApproval);
 ```
 
 The helper first checks its real shared cgroups, the live parent process, the
-approved runtime inventory, tool pins and remaining service deadline. Only then
+approved runtime inventory, tool pins, retained ciphertext and storage limits,
+and remaining service deadline. Only then
 does it issue a fresh readiness nonce. The session rechecks funding around key
 opening and sends the key in a nonce-bound second frame. A session bound to this
 execution profile refuses direct `open()` and `prepare()` calls. Closing the
@@ -140,7 +159,8 @@ remaining deadline is checked after sealing. A successful report is still not
 requester quality acceptance, a payment authorization or hardware attestation.
 
 Owned kernel checks cover encrypted execution and separate requester reconstruction,
-changed resource controls/runtime inventory, insufficient reservation capacity,
+changed resource controls/runtime inventory, changed input or storage limits,
+insufficient reservation capacity,
 control-process death and the common deadline. Protocol checks cover malformed and
 out-of-order frames, mismatched service/nonce, failed exit and cancellation during
 key opening. Local-chain checks verify signed service/unit matching and refusal to
@@ -155,7 +175,10 @@ The requester reconstructs its downloaded copy in a fresh process before separat
 application acceptance and settlement. The outer process now verifies the signed
 launch package before creating the job scope. A changed package is refused before
 allocation; the contained session rechecks the same sealed snapshot. An opaque
-relay watches the guardian and control process while carrying encrypted results.
+relay watches the guardian and control process while carrying encrypted input
+and results under separate directional byte limits. The guest starts with an
+empty ciphertext volume; input is streamed from the separate requester process
+before evidence, and the volume must be retired after delivery.
 Fixture setup still creates disposable
 custody on the same ordinary machine; this does not establish protection from its
 operator, an admitted production launcher or hardware admission. After compiling and installing the pinned

@@ -72,7 +72,7 @@ class NativeTaskPlan:
         deadline.check()
         self._runtime, self._resources, self._used = runtime, resources, False
 
-    def run(self, parent, ciphertext, key, binding, destination, *, age, helper_limits, staging_limits, max_input_bytes, cancelled=None):
+    def run(self, parent, ciphertext, key, binding, destination, *, age, helper_limits, staging_limits, max_input_bytes, max_output_ciphertext_bytes, cancelled=None):
         """Consume one guest-opened job key; publish only fully sealed ciphertext.
 
         helper_limits/staging_limits are explicit additional reservation budgets,
@@ -91,6 +91,8 @@ class NativeTaskPlan:
             raise ValueError('Require retained helper and staging budgets')
         if type(max_input_bytes) is not int or not 0 <= max_input_bytes <= staging_limits.bytes:
             raise ValueError('Require a bounded approved input size')
+        if type(max_output_ciphertext_bytes) is not int or not 1 <= max_output_ciphertext_bytes <= 1024**4:
+            raise ValueError('Require a bounded approved encrypted output size')
         if tree_digest(self._root) != self._runtime['digestSHA256']:
             raise ValueError('Approved runtime changed before decoding')
         self._deadline.check(cancelled)
@@ -159,7 +161,7 @@ class NativeTaskPlan:
                         for chunk in iter(lambda: incoming.read(262144), b''):
                             self._deadline.check(cancelled)
                             count += len(chunk)
-                            if count > staging_limits.bytes or (cancelled is not None and cancelled.is_set()):
+                            if count > min(staging_limits.bytes,max_output_ciphertext_bytes) or (cancelled is not None and cancelled.is_set()):
                                 raise RuntimeError('Encrypted publication cancelled or exceeds budget')
                             digest.update(chunk)
                             out.write(chunk)

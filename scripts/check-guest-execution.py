@@ -25,6 +25,7 @@ from compute.guest_job import GuestJobScope
 from compute.guest_resources import ResourceLimits, ResourceTreeLimits
 from compute.guest_sandbox import tree_digest
 from compute.job_keys import _new_identity
+from compute.guest_ciphertext import GuestCiphertextStorage, CiphertextLimits
 
 MIB = 1024**2
 PYTHON = str(Path(sys.executable).resolve())
@@ -79,11 +80,11 @@ def fixture(base, tools, *, runtime_source=None):
     binding = {'packageSHA256':package['ciphertextSHA256'], 'policySHA256':spec['policySHA256'],
         'runtimeSHA256':runtime['digestSHA256'], 'taskSHA256':task_binding_sha256(package['ciphertextSHA256'],0),
         'attempt':1, 'rank':0, 'worldSize':1, 'acceleratorClass':'cpu'}
-    profile = {'schema':'cannabis.guest-native-service.v1', 'units':1, 'runtime':runtime, 'resources':resources,
+    profile = {'schema':'cannabis.guest-native-service.v2', 'units':1, 'runtime':runtime, 'resources':resources,
         'total':asdict(ResourceTreeLimits(3000,1024*MIB,192,120,3)),
         'control':asdict(ResourceLimits(1000,512*MIB,64,120)),
         'helper':asdict(ResourceLimits(1000,256*MIB,64,60)), 'processLimit':32, 'scratchInodes':512,
-        'staging':{'bytes':16*MIB, 'inodes':1024}, 'maxInputBytes':MIB,
+        'staging':{'bytes':16*MIB, 'inodes':1024}, 'ciphertext':{'bytes':8*MIB,'inodes':64,'inputBytes':4*MIB,'outputBytes':4*MIB}, 'maxInputBytes':MIB,
         'tools':{'pythonSHA256':sha(PYTHON), 'ageSHA256':sha(tools/'age'), 'ageKeygenSHA256':sha(tools/'age-keygen')}}
     job = {'identity':job_secret.decode('ascii'), 'jobId':spec['id'], 'packageSHA256':binding['packageSHA256'],
            'policySHA256':spec['policySHA256'], 'inputRecipient':job_public, 'resultRecipient':owner_public}
@@ -94,7 +95,7 @@ def run(parent, base, tools):
     profile, binding, job, owner_secret, spec = fixture(base, tools)
     controller = make_controller(base)
     checks = {}
-    for mode in ['success', 'resource-change', 'profile-underbudget', 'runtime-change', 'owner-death', 'deadline']:
+    for mode in ['success', 'resource-change', 'profile-underbudget', 'runtime-change', 'input-change', 'storage-change', 'owner-death', 'deadline']:
         print('Owned protected channel check: '+mode, file=sys.stderr, flush=True)
         selected = copy.deepcopy(profile)
         if mode == 'profile-underbudget': selected['staging']['bytes'] = 512*MIB
@@ -103,12 +104,21 @@ def run(parent, base, tools):
         seconds = 45 if mode == 'deadline' else 120
         start, end = int(time.time())-1, int(time.time())+seconds
         deadline = ExecutionDeadline.from_service_interval(start,end)
-        scope = GuestJobScope(parent, ResourceTreeLimits(**profile['total']), ResourceLimits(**profile['control']), deadline=deadline)
+        storage_source={'ciphertext':str(base/('ciphertext-'+mode)/'workload.age'),
+                        'destination':str(base/('ciphertext-'+mode)/'result.age')}
+        storage=GuestCiphertextStorage(storage_source,CiphertextLimits(**profile['ciphertext']))
+        scope=None
         try:
+            shutil.copyfile(base/'input.age',storage_source['ciphertext'])
+            if mode=='input-change':Path(storage_source['ciphertext']).write_bytes(b'changed owned ciphertext')
+            Path(storage_source['ciphertext']).chmod(0o400)
+            if mode=='storage-change':
+                assert ctypes.CDLL(None,use_errno=True).mount(None,os.fsencode(storage.path),None,32|2|4|8,b'size=4m,nr_inodes=64,noswap')==0
+            scope = GuestJobScope(parent, ResourceTreeLimits(**profile['total']), ResourceLimits(**profile['control']), deadline=deadline)
             if mode == 'resource-change': (scope.path/'memory.max').write_text(str(1020*MIB))
             proc = scope.start(str(tools/'node'), sha(tools/'node'), str(controller), sha(controller))
             request = {'execution':{'profile':selected, 'source':{'python':PYTHON, 'rootfs':str(base/'root'),
-                'age':str(tools/'age'), 'ciphertext':str(base/'input.age'), 'destination':str(base/(mode+'.age'))}},
+                'age':str(tools/'age'), **storage_source}},
                 'binding':binding, 'interval':{'start':start,'end':end}, 'job':job,
                 'mode':mode, 'readyMarker':str(marker), 'keyMarker':str(key_marker), 'timeoutMs':seconds*1000}
             # The harness acts as the owner/requester for owned fixture keys. Real
@@ -130,7 +140,7 @@ def run(parent, base, tools):
                     assert result['reason'] == 'deadline'
                     proc.wait(timeout=5)
                 assert not scope.path.exists()
-                assert not (base/(mode+'.age')).exists() and not key_marker.exists()
+                assert not Path(storage_source['destination']).exists() and not key_marker.exists()
             else:
                 code = proc.wait(timeout=100)
                 assert code == (0 if mode == 'success' else 2), f'Owned controller exit code {code}'
@@ -148,10 +158,11 @@ def run(parent, base, tools):
                     assert job['identity'].encode().strip() not in raw
                 else:
                     assert not marker.exists() and not key_marker.exists() and not raw
-                    assert not (base/(mode+'.age')).exists()
+                    assert not Path(storage_source['destination']).exists()
             checks[mode] = True
         finally:
-            scope.close()
+            if scope:scope.close()
+            storage.close()
             if mode == 'runtime-change': (base/'root/changed').unlink()
         assert not list(parent.glob('job-*'))
     return checks

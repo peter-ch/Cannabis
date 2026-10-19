@@ -7,6 +7,7 @@ import { GuestWire, serveGuestSession } from '../../compute/result_transport.mjs
 import { guestAgentFixture } from './guest_agent_fixture.mjs';
 import { readRetainedLaunch } from '../../compute/guest_launch.mjs';
 import { inspectNativeGuest } from '../../compute/guest_execution.mjs';
+import { receiveEncryptedInput } from '../../compute/input_transport.mjs';
 
 let agent,session;const wire=new GuestWire(process.stdin,process.stdout,{timeoutMs:110000});
 try {
@@ -14,6 +15,9 @@ try {
   const launch=readRetainedLaunch(JSON.parse(fs.readFileSync(new URL('./owned-authorities.json',import.meta.url))));
   const binding=Object.fromEntries(['packageSHA256','policySHA256','runtimeSHA256','taskSHA256','attempt','rank','worldSize','acceleratorClass']
     .map(k=>[k,launch.initialization.binding[k]]));
+  assert.equal(fs.existsSync(launch.execution.source.ciphertext),false);
+  await receiveEncryptedInput(wire,{destination:launch.execution.source.ciphertext,
+    packageSHA256:binding.packageSHA256,maxCiphertextBytes:launch.execution.profile.ciphertext.inputBytes});
   const preflight=inspectNativeGuest(launch.execution,binding,launch.interval,{timeoutMs:30000});
   assert.equal(preflight.controlContained,true);assert.equal(preflight.executionAuthorized,false);
   agent=await guestAgentFixture();

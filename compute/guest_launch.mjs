@@ -103,14 +103,15 @@ export function launchConfigurationPayload(authorities,configuration) {
   address(n.escrow);address(c.provider);if(!bytes32(c.resourceId))fail();
   nativeServiceCommitment(c.execution);
   const profile=c.execution.profile;
-  exact(profile,['schema','units','runtime','resources','total','control','helper','processLimit','scratchInodes','staging','maxInputBytes','tools']);
+  exact(profile,['schema','units','runtime','resources','total','control','helper','processLimit','scratchInodes','staging','ciphertext','maxInputBytes','tools']);
   exact(profile.runtime,['adapter','architecture','os','digestSHA256']);
   exact(profile.resources,['cpus','memoryMiB','scratchMiB','wallSeconds','nodes']);
   exact(profile.total,['cpu_millis','memory_bytes','processes','wall_seconds','children']);
   for(const name of ['control','helper'])exact(profile[name],['cpu_millis','memory_bytes','processes','wall_seconds']);
   exact(profile.staging,['bytes','inodes']);exact(profile.tools,['pythonSHA256','ageSHA256','ageKeygenSHA256']);
+  exact(profile.ciphertext,['bytes','inodes','inputBytes','outputBytes']);
   for(const value of [...Object.values(profile.resources),...Object.values(profile.total),...Object.values(profile.control),
-    ...Object.values(profile.helper),...Object.values(profile.staging),profile.processLimit,profile.scratchInodes])
+    ...Object.values(profile.helper),...Object.values(profile.staging),...Object.values(profile.ciphertext),profile.processLimit,profile.scratchInodes])
     if(!integer(value,1,Number.MAX_SAFE_INTEGER))fail();
   if(!integer(profile.maxInputBytes,0,profile.staging.bytes)||
     Object.values(profile.tools).some(v=>typeof v!=='string'||!/^[0-9a-f]{64}$/.test(v))||
@@ -121,7 +122,7 @@ export function launchConfigurationPayload(authorities,configuration) {
   for(const field of ['agentBinary','bridgeBinary','runtimeDirectory'])if(typeof b[field]!=='string'||!path.posix.isAbsolute(b[field])||b[field].includes('\\')||b[field].includes('\0')||b[field].split('/').includes('..'))fail();
   if(!integer(b.port,1024,65535))fail();
   exact(c.transport,['timeoutMs','maxCiphertextBytes']);
-  if(!integer(c.transport.timeoutMs,1,3600000)||!integer(c.transport.maxCiphertextBytes,1,1024**4))fail();
+  if(!integer(c.transport.timeoutMs,1,3600000)||!integer(c.transport.maxCiphertextBytes,1,profile.ciphertext.outputBytes))fail();
   const p=structuredClone(c.attestationPolicyTemplate);
   // The assignment digest is derived locally after reading the retained canonical
   // assignment. Everything else, including the image measurement, is signed.

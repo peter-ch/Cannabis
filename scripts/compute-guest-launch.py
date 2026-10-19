@@ -15,6 +15,7 @@ from compute.guest_launcher import authorize_launch, relay_guest
 from compute.guest_launch_snapshot import LaunchSnapshot, read_public_file
 from compute.guest_execution import _unique
 from compute.guest_runtime import FrozenRuntime, image_runtime
+from compute.guest_ciphertext import GuestCiphertextStorage
 
 ROOT = Path('/opt/cannabis')
 NODE = '/usr/local/bin/node'
@@ -47,9 +48,12 @@ def main():
                 max_bytes=runtime['fileBytes'],max_entries=runtime['inventoryEntries']) as prepared:
             deadline.check()
             prepared.verify()
-            with GuestJobScope('/sys/fs/cgroup',profile.total,profile.control,deadline=deadline) as scope:
+            with GuestCiphertextStorage(source,profile.ciphertext), GuestJobScope('/sys/fs/cgroup',profile.total,profile.control,deadline=deadline) as scope:
                 proc = scope.start(NODE,pins[NODE],ENTRY,pins[ENTRY],launch_fd=snapshot.fd)
-                relay_guest(scope,proc,sys.stdin.fileno(),sys.stdout.fileno(),max_ciphertext_bytes=transport['maxCiphertextBytes'])
+                relay_guest(scope,proc,sys.stdin.fileno(),sys.stdout.fileno(),max_ciphertext_bytes=transport['maxCiphertextBytes'],
+                    max_input_ciphertext_bytes=profile.ciphertext.inputBytes)
+            deadline.check()
+        deadline.check()
 
 
 if __name__ == '__main__':

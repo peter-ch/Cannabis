@@ -18,7 +18,8 @@ def main():
         request=json.loads(raw,object_pairs_hook=_unique)
         admission=NativeExecutionAdmission(request,deadline,parent);admission.verify()
         print(json.dumps({'schema':'cannabis.guest-admission-check.v1','serviceSHA256':admission.profile.service_sha256,
-            'controlContained':True,'runtimeVerified':True,'hardwareValidated':False,'executionAuthorized':False}))
+            'controlContained':True,'runtimeVerified':True,'ciphertextVerified':True,'ciphertextStorageVerified':True,
+            'hardwareValidated':False,'executionAuthorized':False}))
     finally:
         if admission:admission.close()
         parent.close()

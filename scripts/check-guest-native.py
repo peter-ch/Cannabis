@@ -144,7 +144,8 @@ def actor(parent, base, mode):
         result = plan.run(parent, own / 'input.age', key, binding, destination, age=age,
             helper_limits=ResourceLimits(1000, 256*1024**2, 64, wall),
             staging_limits=ScratchLimits((1 if mode in ['decode-quota', 'encode-quota'] else 16)*1024**2, 1024),
-            max_input_bytes=1024**2, cancelled=Cancellation() if mode in ['helper-cancel', 'native-shared-deadline'] else None)
+            max_input_bytes=1024**2, max_output_ciphertext_bytes=1 if mode=='output-limit' else 4*1024**2,
+            cancelled=Cancellation() if mode in ['helper-cancel', 'native-shared-deadline'] else None)
         assert mode == 'success', 'Expected refusal: ' + mode
         assert not result.report['paymentAccepted'] and not result.report['hardwareAdmissionEstablished']
         assert job_secret.strip() not in destination.read_bytes() and b'OWNED ENCRYPTED INPUT' not in destination.read_bytes()
@@ -155,7 +156,8 @@ def actor(parent, base, mode):
         assert (own / 'assembled/stdout.txt').read_text() == 'owned private log\n'
         try:
             plan.run(parent, own / 'input.age', key, binding, own / 'again.age', age=AGE,
-                helper_limits=ResourceLimits(1000, 256*1024**2, 64, 30), staging_limits=ScratchLimits(16*1024**2), max_input_bytes=1024**2)
+                helper_limits=ResourceLimits(1000, 256*1024**2, 64, 30), staging_limits=ScratchLimits(16*1024**2),
+                max_input_bytes=1024**2, max_output_ciphertext_bytes=4*1024**2)
         except ValueError:
             pass
         else:
@@ -220,7 +222,7 @@ def main():
         (parent / 'cgroup.subtree_control').write_text('+cpu +memory +pids')
         sandbox_fixture.fixture(base / 'root')
         for mode in ['success', 'tampered', 'metadata', 'group', 'dependency', 'missing-output', 'symlink-output',
-                'decode-quota', 'encode-quota', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel',
+                'decode-quota', 'encode-quota', 'output-limit', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel',
                 'expired-plan', 'native-shared-deadline', 'encoder-shared-deadline', 'publication-deadline']:
             print('Owned encrypted execution check: ' + mode, file=sys.stderr, flush=True)
             proc = subprocess.Popen([sys.executable, '-I', '-B', SCRIPT, 'actor', str(parent), str(base), mode],

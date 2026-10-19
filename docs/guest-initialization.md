@@ -86,8 +86,19 @@ accounting before allocation and retains one service deadline. Authorization tim
 also consumes the transport allowance. The opaque relay holds bounded queues,
 watches the child and independent guardian together, and refuses failed exit,
 expired or stalled transport, and descendants left running after control exit.
-Success requires the whole job tree's checked cleanup. The outer process and
+Success requires the whole job tree's checked cleanup and retirement of its
+runtime mount and dedicated ciphertext volume before the retained deadline.
+The outer process and
 guardian receive no customer content key.
+
+Before starting the control process, the outer entry creates the empty ciphertext
+volume from the signed version-2 service profile. The contained entry receives
+bounded encrypted input, verifies its assignment hash and publishes it without
+overwriting existing files. It then checks actual cgroups, runtime, storage
+permissions and kernel quotas before starting evidence services or creating a
+session key. Native execution repeats admission before key release. The peer's
+input acknowledgement establishes neither hardware protection nor payment
+authorization. See [native execution readiness](guest-workload.md#funded-native-execution-readiness).
 
 The image builder's optional `--launch-authorities PATH` embeds a reviewed public
 authority set. No production authority set is supplied by default. Merely embedding

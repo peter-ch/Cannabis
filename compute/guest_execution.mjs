@@ -23,7 +23,7 @@ export function nativeServiceCommitment(execution) {
   execution = structuredClone(execution);
   if (!fields(execution, ['profile', 'source']) || !fields(execution.source, ['python', 'rootfs', 'age', 'ciphertext', 'destination']) ||
       Object.values(execution.source).some(p => typeof p !== 'string' || !path.isAbsolute(p) || p.includes('\0')) ||
-      execution.profile?.schema !== 'cannabis.guest-native-service.v1' || execution.profile.units !== 1) throw failure();
+      execution.profile?.schema !== 'cannabis.guest-native-service.v2' || execution.profile.units !== 1) throw failure();
   const bytes = Buffer.from(canonical(execution.profile));
   if (bytes.length > 32768) throw failure();
   return { serviceSHA256: '0x' + createHash('sha256').update(bytes).digest('hex'), units: execution.profile.units };
@@ -143,8 +143,9 @@ export function inspectNativeGuest(execution,binding,interval,{timeoutMs}={}) {
   let result;
   try{result=JSON.parse(execFileSync(python,['-I','-B',fileURLToPath(new URL('../scripts/compute-guest-admission.py',import.meta.url))],
     {input,encoding:'utf8',timeout:timeoutMs,maxBuffer:4096,stdio:['pipe','pipe','ignore'],env}));}catch{throw failure();}
-  if(!fields(result,['schema','serviceSHA256','controlContained','runtimeVerified','hardwareValidated','executionAuthorized'])||
+  if(!fields(result,['schema','serviceSHA256','controlContained','runtimeVerified','ciphertextVerified','ciphertextStorageVerified','hardwareValidated','executionAuthorized'])||
     result.schema!=='cannabis.guest-admission-check.v1'||result.serviceSHA256!==commitment.serviceSHA256||result.controlContained!==true||
-    result.runtimeVerified!==true||result.hardwareValidated!==false||result.executionAuthorized!==false)throw failure();
+    result.runtimeVerified!==true||result.ciphertextVerified!==true||result.ciphertextStorageVerified!==true||
+    result.hardwareValidated!==false||result.executionAuthorized!==false)throw failure();
   return result;
 }

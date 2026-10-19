@@ -30,6 +30,7 @@ from compute.guest_job import GuestJobScope
 from compute.guest_launch_snapshot import LaunchSnapshot
 from compute.guest_launcher import authorize_launch, relay_guest
 from compute.guest_runtime import FrozenRuntime
+from compute.guest_ciphertext import GuestCiphertextStorage
 
 
 def public_launch_frame(fd):
@@ -113,7 +114,8 @@ def main():
         wire_fds.extend([to_guest,requester_write,requester_read,from_guest])
         request={'rpc':rpc,'artifact':str(ROOT/'artifacts/ComputeEscrow.json'),'descriptor':descriptor,
             'execution':{'profile':profile,'source':{'python':fixture.PYTHON,'rootfs':str(base/'root'),'age':str(tools/'age'),
-                'ciphertext':str(base/'job/workload.age'),'destination':str(base/'result.age')}},
+                'ciphertext':str(base/'ciphertext/workload.age'),'destination':str(base/'ciphertext/result.age')}},
+            'inputCiphertext':str(base/'job/workload.age'),
             'run':{'runtimeSHA256':profile['runtime']['digestSHA256'],
                 'taskSHA256':task_binding_sha256(descriptor['ciphertextSHA256'],0),'attempt':1,'rank':0,'worldSize':1,'acceleratorClass':'cpu'},
             'custody':{'python':fixture.PYTHON,'age':str(tools/'age'),'identity':str(identity),
@@ -143,12 +145,15 @@ def main():
             admitted,deadline,transport,admitted_source=authorize_launch(str(tools/'node'),fixture.sha(tools/'node'),str(verifier),fixture.sha(verifier),snapshot.fd)
             assert admitted.value==profile
             assert admitted_source==request['execution']['source']
-            with FrozenRuntime(admitted_source['rootfs'],admitted.value['runtime']['digestSHA256']) as prepared:
+            with FrozenRuntime(admitted_source['rootfs'],admitted.value['runtime']['digestSHA256']) as prepared, GuestCiphertextStorage(admitted_source,admitted.ciphertext) as storage:
                 deadline.check()
                 prepared.verify()
+                assert not list(storage.path.iterdir())
                 scope=GuestJobScope(parent,admitted.total,admitted.control,deadline=deadline)
                 proc=scope.start(str(tools/'node'),fixture.sha(tools/'node'),str(guest_controller),fixture.sha(guest_controller),launch_fd=snapshot.fd)
-                assert relay_guest(scope,proc,to_guest,from_guest,max_ciphertext_bytes=transport['maxCiphertextBytes'])['reason']=='finished'
+                assert relay_guest(scope,proc,to_guest,from_guest,max_ciphertext_bytes=transport['maxCiphertextBytes'],
+                    max_input_ciphertext_bytes=admitted.ciphertext.inputBytes)['reason']=='finished'
+            deadline.check()
         # After encrypted delivery, five fresh result-CLI processes each retain
         # their own 30-second bound, followed by local settlement checks. A
         # single CLI's limit cannot also bound this whole sequential phase.
@@ -164,7 +169,8 @@ def main():
         result['wholeTreeCleanup']=True
         result['checks'].update(authorizationBeforeAllocation=True,changedLaunchRefusedBeforeAllocation=True,
             sealedLaunchReverifiedInControl=True,guardianMonitoredEncryptedRelay=True,
-            authorizedRuntimePreparedBeforeControl=True,runtimeMountRetired=True)
+            authorizedRuntimePreparedBeforeControl=True,runtimeMountRetired=True,
+            inputNotPrestaged=True,ciphertextStorageRetired=not storage.path.exists())
         result['runtimeSource']='built image' if args.runtime else 'owned fixture'
         result['runtimeSHA256']=profile['runtime']['digestSHA256']
         result['kernel']=os.uname().release

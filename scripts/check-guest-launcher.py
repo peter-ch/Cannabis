@@ -79,7 +79,7 @@ def run(parent,base):
                 if mode=='guardian-reaped':scope._guard._process.wait(timeout=5)
             os.close(peer_write);peer_write=None
             try:
-                result=relay_guest(scope,proc,to_guest,from_guest,max_ciphertext_bytes=1024)
+                result=relay_guest(scope,proc,to_guest,from_guest,max_ciphertext_bytes=1024,max_input_ciphertext_bytes=1024)
             except EOFError:
                 assert mode in ['guardian-death','guardian-reaped']
             except (RuntimeError,ValueError,OSError):
