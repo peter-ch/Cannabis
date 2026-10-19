@@ -89,13 +89,14 @@ export class InitializedGuestControlPlane {
   // Explicit close/start callers still receive the same cleanup promise/error.
   #stop() { this.close().catch(() => {}); }
   get status() { return { state: this.#state, tee: this.#initialization.assignment.tee, initData: this.#initialization.digest, assignmentRetained: true, hardwareValidated: false, executionAuthorized: false }; }
-  async createSession({ policy, challenge }) {
+  async createSession({ policy, challenge, funding }) {
     this.#alive();
     if (this.#state !== 'ready' || this.#issued) throw Error('Guest permits one evidence session for its retained assignment');
+    if (!funding) throw Error('Initialized guest sessions require an independently approved signed funding configuration');
     this.#issued = true;
     const init = this.#initialization.assignment;
     try {
-      const session = await GuestEvidenceSession.create({ initialization: init, policy, challenge,
+      const session = await GuestEvidenceSession.create({ initialization: init, policy, challenge, funding,
         expectedBinding: init.binding, requester: init.requester, jobId: init.jobId, agentUrl: this.#origin });
       try { this.#alive(); } catch (error) { session.close(); throw error; }
       this.#session = session; return session;

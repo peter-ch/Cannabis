@@ -7,6 +7,7 @@ import { trusteeReportData } from './attestation.mjs';
 import { openJobKeyDelivery } from './key_delivery.mjs';
 import { prepareGuestWorkload } from './guest_workload.mjs';
 import { matchGuestInitialization } from './guest_initialization.mjs';
+import { GuestFunding } from './guest_funding.mjs';
 
 export const GUEST_COMPONENTS_REVISION = 'eae0bf63a3a9db7721f86e0a2b0b9941a7fcba3a';
 export const GUEST_AGENT_VERSION = 'Guest Components Version: v0.22.0';
@@ -62,32 +63,35 @@ export async function probeGuestAgent({ agentUrl = 'http://127.0.0.1:8006', agen
 
 export class GuestEvidenceSession {
   #policy; #challenge; #requester; #jobId; #key; #publicKey; #clock; #agent; #timer;
-  #abort = new AbortController(); #state = 'ready'; #evidence; #preparationAbort;
+  #abort = new AbortController(); #state = 'ready'; #evidence; #preparationAbort; #funding;
   constructor(guard, options, key, publicKey) {
     if (guard !== construction) throw Error('Use GuestEvidenceSession.create');
     this.#policy = options.policy; this.#challenge = options.challenge;
     this.#requester = options.requester; this.#jobId = options.jobId;
     this.#agent = { agentUrl: endpoint(options.agentUrl), agentVersion: GUEST_AGENT_VERSION, tee: options.policy.tee };
     this.#clock = options.clock; this.#key = key; this.#publicKey = publicKey;
+    this.#funding = options.funding;
     this.#timer = setTimeout(() => this.close(), Math.max(1, options.challenge.expiresAt - this.#clock()) * 1000);
     this.#timer.unref();
   }
-  static async create({ initialization, policy, challenge, expectedBinding, requester, jobId, agentUrl = 'http://127.0.0.1:8006' }, { clock = nowSeconds } = {}) {
+  static async create({ initialization, policy, challenge, expectedBinding, requester, jobId, funding, agentUrl = 'http://127.0.0.1:8006' }, { clock = nowSeconds } = {}) {
     policy = structuredClone(policy); challenge = structuredClone(challenge); expectedBinding = structuredClone(expectedBinding);
     endpoint(agentUrl);
     requester = getAddress(requester);
     matchGuestInitialization(initialization, { policy, expectedBinding, requester, jobId });
     if (requester === ZeroAddress || typeof jobId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(jobId) ||
         canonical(challenge.binding) !== canonical(expectedBinding)) throw Error('Challenge differs from the approved guest assignment');
+    const retainedFunding = funding === undefined ? undefined : new GuestFunding(funding, initialization, { clock });
     // The caller cannot supply a channel key. The private key is non-extractable
     // and held only in this session; no file, environment or serialization path.
     const pair = await webcrypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
     const publicKey = await exportJWK(pair.publicKey);
     trusteeReportData(policy, challenge, publicKey, clock());
-    return new GuestEvidenceSession(construction, { policy, challenge, requester, jobId, agentUrl, clock }, pair.privateKey, publicKey);
+    return new GuestEvidenceSession(construction, { policy, challenge, requester, jobId, agentUrl, clock, funding: retainedFunding }, pair.privateKey, publicKey);
   }
   get channelJwk() { return structuredClone(this.#publicKey); }
-  get status() { return { state: this.#state, nonce: this.#challenge.nonce, expiresAt: this.#challenge.expiresAt, executionAuthorized: false }; }
+  get status() { return { state: this.#state, nonce: this.#challenge.nonce, expiresAt: this.#challenge.expiresAt, fundingRequired: !!this.#funding, executionAuthorized: false }; }
+  get serviceInterval() { return this.#funding?.interval; }
   #fresh() {
     const now = this.#clock();
     if (!Number.isSafeInteger(now) || now < this.#challenge.issuedAt || now >= this.#challenge.expiresAt || ['closed', 'consumed'].includes(this.#state)) {
@@ -133,8 +137,16 @@ export class GuestEvidenceSession {
     this.#state = 'opening';
     try {
       expected = structuredClone(expected); this.#match(expected);
+      if (this.#funding) {
+        const interval = this.#funding.interval;
+        if (expected.value.notBefore < interval.start || expected.value.expiresAt > interval.end) throw Error('Key-delivery window exceeds the signed service interval');
+        await this.#funding.refresh(); this.#fresh();
+      }
       const job = await openJobKeyDelivery(envelope, this.#key, expected, { clock: this.#clock, ageKeygen });
-      this.#fresh(); this.#dispose('consumed'); return job;
+      if (this.#funding) await this.#funding.refresh();
+      this.#fresh();
+      if (this.#clock() >= job.deliveryExpiresAt) throw Error('Job-key release expired during guest funding inspection');
+      this.#dispose('consumed'); return job;
     } catch (error) { this.close(); throw error; }
   }
   async prepare(envelope, expected, source, options = {}) {
@@ -146,11 +158,14 @@ export class GuestEvidenceSession {
       const binding = Object.fromEntries(['packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256'].map(k => [k, expected.value[k].slice(2)]));
       for (const k of ['attempt', 'rank', 'worldSize']) binding[k] = expected.value[k];
       binding.acceleratorClass = this.#challenge.binding.acceleratorClass;
-      return await prepareGuestWorkload(source, key, binding, { ...options, signal: preparation.signal });
+      const timeoutMs = this.#funding ? Math.min(options.timeoutMs ?? 600000, this.#funding.remainingMilliseconds()) : options.timeoutMs;
+      const result = await prepareGuestWorkload(source, key, binding, { ...options, ...(timeoutMs === undefined ? {} : { timeoutMs }), signal: preparation.signal });
+      this.#funding?.assertWindow();
+      return result;
     } finally { this.#preparationAbort = undefined; }
   }
   #dispose(state) {
     clearTimeout(this.#timer); this.#abort.abort(); this.#key = undefined; this.#evidence = undefined; this.#state = state;
   }
-  close() { this.#preparationAbort?.abort(); this.#dispose(this.#state === 'consumed' ? 'consumed' : 'closed'); }
+  close() { this.#preparationAbort?.abort(); this.#funding?.close(); this.#dispose(this.#state === 'consumed' ? 'consumed' : 'closed'); }
 }

@@ -34,7 +34,32 @@ const prepared = await session.prepare(envelope, expectedApproval, {
 
 All four paths must be absolute, trusted guest configuration. The Python helper runs in isolated mode; the per-job secret and private contract cross anonymous pipes, never command-line arguments, environment variables or log files. The helper does not need the requester's recovery identity. Its private `workload` result is non-enumerable on the returned JavaScript report, reducing accidental disclosure through ordinary object serialization. Trusted code can read `prepared.workload`; it must keep that data inside the protected control plane.
 
-The original guest session still enforces requester signatures, its retained assignment, its non-extractable channel key and single consumption. Preparing files consumes that session too. `executionAuthorized` remains false. Hardware admission, current funding, task dependencies, permitted networking, resource enforcement and actual runtime measurement must be checked by the reviewed launcher before execution. In particular, comparing two supplied runtime digests does not prove that a runtime binary has been loaded.
+The original guest session still enforces requester signatures, its retained assignment, its non-extractable channel key and single consumption. Preparing files consumes that session too. `executionAuthorized` remains false. A session configured with funding performs the checks below; hardware admission, task dependencies, permitted networking, resource enforcement and actual runtime measurement still require the reviewed launcher. In particular, comparing two supplied runtime digests does not prove that a runtime binary has been loaded.
+
+## Fresh funding inside the guest
+
+`exportLeaseProof(ledger, leaseId)` in `compute/lease_proof.mjs` exports the complete signed lease agreement, its signed offers and reservations, and the original funding block reference. The proof contains no customer code, arguments, content keys or decrypted artifacts. The receiver must bound its transport to 16 MiB before parsing. `verifyLeaseProof` independently reconstructs every signature, quote, provider share, settlement commitment and ordered reservation digest. A saved ledger's `funded` flag or JSON snapshot is not accepted as chain evidence.
+
+The initialized control plane requires this configuration when creating a session:
+
+```js
+const funding = {
+  proof: signedLeaseProof,
+  context: approvedCapacityDomain, // chainId, registryId, token
+  network: approvedNetwork,      // authenticated RPC and pinned release hashes
+  provider: approvedProvider,
+  resourceId: approvedResourceId,
+  serviceSHA256: approvedServiceCommitment
+};
+```
+
+The guest retains its own copies. The approved domain, provider, resource, service and RPC/release pins must come from reviewed measured configuration. They cannot be taken from the same host message as the proof. Resource promises still require actual capacity admission and enforcement; checking a signed service commitment does not supply hardware or prove exclusive allocation across separate registries.
+
+`GuestFunding` rereads the original block and checks that fully accepted escrow funding existed before the signed lease expired. It then checks a fresh finalized snapshot and a canonical latest head, including all worker acceptances, exact settlement terms, fee policy, network and runtime-code pins. The original and fresh finalized anchors must remain canonical through the last read. State reads use hash-bound requests with `requireCanonical`, as specified by [EIP-1898](https://eips.ethereum.org/EIPS/eip-1898). The selected RPC is a reviewed trust dependency; these observations are not a consensus light client or a guarantee against later chain changes.
+
+A funded session repeats those reads before and after opening its requester-approved envelope. Cancellation, a changed order, stale observations or an elapsed service interval retire the session without returning a key. The short challenge/key-delivery expiry is separate from the signed service interval. A signing hold may have expired while a genuinely funded reservation remains valid. The session exposes a copy of `serviceInterval`; its preparation timeout is capped by the remaining interval, with a final expiry check before returning success. A retained monotonic deadline prevents refreshing the gate from restarting that interval, and backward wall-clock changes fail. Trustworthy time and resistance to a hostile host pausing or rolling back the entire VM still require the outer protected lifecycle.
+
+This gate does not launch `NativeTaskPlan`. The operating bridge must carry the same interval through decoding, execution, result sealing and cleanup, enforce whole-VM resource reservations and retire the guest/key state on every failure. Current checks use real signatures, encrypted packages and escrow contracts on an isolated chain with synthetic attestation fixtures; they do not establish hardware admission or a real paid job.
 
 ## Verify before publishing files
 

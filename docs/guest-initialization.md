@@ -37,7 +37,7 @@ const plane = await InitializedGuestControlPlane.start({
   initializationFile: '/run/approved/initialization.json'
 });
 try {
-  const session = await plane.createSession({ policy, challenge });
+  const session = await plane.createSession({ policy, challenge, funding });
   const evidence = await session.evidence();
   // Send evidence to the requester through the reviewed authenticated transport.
 } finally {
@@ -49,7 +49,7 @@ The caller must import `InitializedGuestControlPlane` from `compute/guest_bootst
 
 Startup verifies both service executable hashes against the image input lock, reserves a private runtime directory and starts the agent with `--initdata-digest`. It passes no TOML override and inherits no caller environment. The pinned upstream agent compares the supplied bytes with the hardware field before binding its RPC socket. Cannabis additionally rejects the upstream unsupported-platform branch, which otherwise continues without that comparison. The REST bridge is restricted to attestation on literal loopback; startup verifies the listening socket belongs to the process it launched before querying it.
 
-`createSession` derives requester, job and placement from the retained assignment. It checks the policy's initialization digest and challenge binding before generating the channel key. A failed session creation closes the control plane. Only one session may be issued. Cancellation or either service exiting retires the session and terminates both process groups. `close()` waits for cleanup and reports failures; callers must await it and tear down the guest on failure.
+`createSession` derives requester, job and placement from the retained assignment. It requires `funding`: the signed lease proof plus independently approved capacity domain, provider, resource/service commitments and network configuration described in [fresh guest funding](guest-workload.md#fresh-funding-inside-the-guest). These pins and the RPC endpoint belong to trusted measured configuration; accepting host-chosen values would defeat this check. The session verifies the signatures, assignment, initialization digest and challenge before generating the channel key. Current escrow state is reread before and after opening the delivered job key. A failed session creation closes the control plane. Only one session may be issued. Cancellation or either service exiting retires the session and terminates both process groups. `close()` waits for cleanup and reports failures; callers must await it and tear down the guest on failure.
 
 ## What remains for deployment
 

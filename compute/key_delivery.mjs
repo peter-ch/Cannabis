@@ -223,7 +223,12 @@ export async function openJobKeyDelivery(envelope, channelPrivateKey, expected, 
   if (j.jobId !== expected.jobId || j.packageSHA256 !== a.value.packageSHA256.slice(2) || j.policySHA256 !== a.value.policySHA256.slice(2) || j.inputRecipient !== a.value.inputRecipient ||
     !recipient(j.resultRecipient) || j.resultRecipient === j.inputRecipient || deriveInputRecipient(j.identity, ageKeygen) !== j.inputRecipient) throw Error('Guest job-key binding mismatch');
   const { identity, ...metadata } = j;
+  checkWindow({ value: a.value }, clock());
+  integer(decoded.notAfter, clock() + 1, a.value.expiresAt);
   // Avoid accidental disclosure through ordinary JSON/object inspection. Explicit
   // identity access is still sensitive and must stay inside the protected guest.
-  return Object.defineProperty(metadata, 'identity', { value: identity, enumerable: false });
+  return Object.defineProperties(metadata, {
+    identity: { value: identity, enumerable: false },
+    deliveryExpiresAt: { value: decoded.notAfter, enumerable: false }
+  });
 }

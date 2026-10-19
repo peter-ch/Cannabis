@@ -19,6 +19,8 @@ import { keyDeliveryPayload, sealJobKeyDelivery, openJobKeyDelivery, recoverRequ
 import { settlementTerms } from '../scripts/compute-escrow.mjs';
 import { policy } from '../scripts/compute-plan.mjs';
 import { guestInitialization } from '../compute/guest_initialization.mjs';
+import { exportLeaseProof, verifyLeaseProof } from '../compute/lease_proof.mjs';
+import { GuestFunding } from '../compute/guest_funding.mjs';
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
 const utc=t=>new Date(t*1000).toISOString().replace('.000Z','Z');
@@ -295,6 +297,157 @@ async function deliverySetup({maxTokenAgeSeconds=90}={}) {
   } catch(error) {attestations?.close();s?.ledger.close();removeDeliveryFixture(dir);throw error;}
 }
 
+function guestFundingConfiguration(d) {
+  return { proof: exportLeaseProof(d.ledger, d.lease.leaseId), context: d.context, network: d.network,
+    provider: d.lease.reservations[0].provider, resourceId: h(10), serviceSHA256: h(20) };
+}
+
+test('portable lease proofs independently verify all signatures, quotes and the complete provider bundle', async () => {
+  const s = await setup();
+  try {
+    const signed = await sign(s.ledger, s.request, s.now); await fund(s.request);
+    const lease = await promoteLease(s.ledger, signed, network, s.clock);
+    const proof = exportLeaseProof(s.ledger, lease.leaseId), verified = verifyLeaseProof(proof, s.context);
+    assert.equal(verified.digest, lease.digest); assert.equal(verified.orderId, lease.orderId);
+    assert.equal(verified.reservations[0].serviceSHA256, h(20));
+    assert.equal('executionAuthorized' in proof, false); assert.equal('finalityEvidence' in proof, false);
+    for (const mutate of [
+      p => { p.agreement.requesterSignature = p.agreement.providerSignatures[0].signature; },
+      p => { p.agreement.providerSignatures.pop(); },
+      p => { p.reservations[0].reservation.grossBaseUnits = '4000'; },
+      p => { p.reservations[0].providerSignature = p.reservations[0].requesterSignature; },
+      p => { p.offers[0].offer.serviceSHA256 = h(999); },
+      p => { p.reservations[1] = p.reservations[0]; },
+      p => { p.offers.push(p.offers[0]); },
+      p => { p.agreement.request.job.id = 'different-job'; },
+      p => { p.agreement.request.expiresAt = s.now + 601; },
+      p => { p.fundedAnchor.timestamp = s.now + 501; }
+    ]) { const changed = structuredClone(proof); mutate(changed); assert.throws(() => verifyLeaseProof(changed, s.context)); }
+    assert.throws(() => verifyLeaseProof(proof, { ...s.context, registryId: h(999) }), /signature/);
+  } finally { s.ledger.close(); }
+});
+
+test('guest funding rereads the original finalized anchor and fresh active escrow after signing holds expire', async () => {
+  const d = await deliverySetup();
+  try {
+    const options = guestFundingConfiguration(d), funding = new GuestFunding(options, d.initialization, { clock: d.clock });
+    assert.ok(d.clock() > d.lease.agreement.request.expiresAt);
+    assert.ok(options.proof.reservations.every(s => s.reservation.holdUntil < d.clock()));
+    // Mutating external copies cannot change the retained approved network or lease.
+    options.proof.agreement.request.job.id = 'changed'; options.network.rpc = 'https://invalid.example/';
+    const checked = await funding.refresh();
+    assert.deepEqual(checked.interval, { start: d.now + 900, end: d.now + 1000 });
+    assert.equal(checked.leaseDigest, d.lease.digest); assert.equal(checked.executionAuthorized, false);
+    assert.equal(checked.hardwareVerified, false); assert.equal(JSON.stringify(funding), '{}');
+    d.setTime(d.now + 1000); assert.throws(() => funding.assertWindow(), /expired/);
+    d.setTime(d.time); await assert.rejects(funding.refresh(), /closed/);
+  } finally { d.cleanup(); }
+});
+
+test('guest funding refuses assignment, approved resource and service-window substitution', async () => {
+  const d = await deliverySetup();
+  try {
+    const options = guestFundingConfiguration(d);
+    for (const change of [{ resourceId: h(999) }, { serviceSHA256: h(999) }, { provider: await second.getAddress() },
+      { context: { ...d.context, token: await resolver.getAddress() } }, { network: { ...d.network, chainId: 1 } }]) {
+      assert.throws(() => new GuestFunding({ ...options, ...change }, d.initialization, { clock: d.clock }));
+    }
+    for (const field of ['leaseDigest', 'orderId', 'reservationId', 'packageSHA256', 'policySHA256']) {
+      const initialization = structuredClone(d.initialization);
+      initialization.binding[field] = field.endsWith('SHA256') ? h(999).slice(2) : h(999);
+      assert.throws(() => new GuestFunding(options, initialization, { clock: d.clock }), /retained guest assignment/);
+    }
+    d.setTime(d.now + 899);
+    await assert.rejects(new GuestFunding(options, d.initialization, { clock: d.clock }).refresh(), /not started/);
+    d.setTime(d.time);
+    const funding = new GuestFunding(options, d.initialization, { clock: d.clock });
+    funding.assertWindow(); d.setTime(d.time - 1); assert.throws(() => funding.assertWindow(), /closed/);
+  } finally { d.cleanup(); }
+});
+
+test('guest funding does not trust a fabricated original anchor or a stale latest head', async () => {
+  const d = await deliverySetup(); let p;
+  try {
+    const options = guestFundingConfiguration(d);
+    const changed = structuredClone(options); changed.proof.fundedAnchor.hash = h(999);
+    await assert.rejects(new GuestFunding(changed, d.initialization, { clock: d.clock }).refresh(), /anchor changed/);
+    const falseTime = structuredClone(options); falseTime.proof.fundedAnchor.timestamp--;
+    await assert.rejects(new GuestFunding(falseTime, d.initialization, { clock: d.clock }).refresh(), /signing window/);
+    p = await proxy((req, res) => req.method === 'eth_getBlockByNumber' && req.params[0] === 'latest'
+      ? { ...res, result: { ...res.result, timestamp: '0x' + (d.time - 121).toString(16) } } : res);
+    await assert.rejects(new GuestFunding({ ...options, network: { ...d.network, rpc: p.url } }, d.initialization, { clock: d.clock }).refresh(), /stale/);
+  } finally { if (p) await p.close(); d.cleanup(); }
+});
+
+test('guest funding rejects delivered orders despite an older active finalized view', async () => {
+  const d = await deliverySetup(); let p;
+  try {
+    const options = guestFundingConfiguration(d), active = await provider.send('eth_getBlockByNumber', ['latest', false]);
+    await (await escrow.connect(first).deliver(d.lease.orderId, h(891))).wait();
+    p = await proxy((req, res) => req.method === 'eth_getBlockByNumber' && req.params[0] === 'finalized' ? { ...res, result: active } : res);
+    await assert.rejects(new GuestFunding({ ...options, network: { ...d.network, rpc: p.url } }, d.initialization, { clock: d.clock }).refresh(), /active order/);
+  } finally { if (p) await p.close(); d.cleanup(); }
+});
+
+test('a funded guest closes if its service interval ends during RPC inspection', async () => {
+  const d = await deliverySetup(); let p;
+  try {
+    const options = guestFundingConfiguration(d);
+    p = await proxy((req, res) => { if (req.method === 'eth_call') d.setTime(d.now + 1000); return res; });
+    const funding = new GuestFunding({ ...options, network: { ...d.network, rpc: p.url } }, d.initialization, { clock: d.clock });
+    await assert.rejects(funding.refresh(), /expired/);
+    d.setTime(d.time); await assert.rejects(funding.refresh(), /closed/);
+  } finally { if (p) await p.close(); d.cleanup(); }
+});
+
+test('the original funding anchor must remain canonical throughout current-state inspection', async () => {
+  const d = await deliverySetup(); let p;
+  try {
+    const options = guestFundingConfiguration(d), anchor = options.proof.fundedAnchor;
+    let headSeen = false;
+    p = await proxy((req, res) => {
+      if (req.method === 'eth_getBlockByNumber' && req.params[0] === 'latest') headSeen = true;
+      if (headSeen && req.method === 'eth_getBlockByNumber' && req.params[0] === '0x' + anchor.number.toString(16))
+        return { ...res, result: { ...res.result, hash: h(998) } };
+      return res;
+    });
+    await assert.rejects(new GuestFunding({ ...options, network: { ...d.network, rpc: p.url } }, d.initialization, { clock: d.clock }).refresh(), /anchor changed/);
+  } finally { if (p) await p.close(); d.cleanup(); }
+});
+
+test('a requester-wrapped key is withheld after delivery, cancellation or expiry during the second funding check', async () => {
+  for (const mode of ['delivered', 'cancel', 'expire-after-open', 'key-expiry-after-open']) {
+    const d = await deliverySetup(), agent = await guestAgentFixture(); let guest, p;
+    try {
+      const options = guestFundingConfiguration(d);
+      let anchorReads = 0;
+      if (mode !== 'delivered') {
+        const anchorTag = '0x' + options.proof.fundedAnchor.number.toString(16);
+        p = await proxy((req, res) => {
+          if (mode === 'cancel' && req.method === 'eth_call') guest.close();
+          if (mode.endsWith('after-open') && req.method === 'eth_getBlockByNumber' && req.params[0] === anchorTag && ++anchorReads === 4)
+            d.setTime(mode === 'expire-after-open' ? d.now + 1000 : d.request.expiresAt);
+          return res;
+        });
+        options.network = { ...d.network, rpc: p.url };
+      }
+      guest = await GuestEvidenceSession.create({ initialization: d.initialization, policy: d.attestationPolicy,
+        challenge: d.challenge, expectedBinding: d.challenge.binding, requester: d.payload.requester,
+        jobId: d.payload.jobId, funding: options, agentUrl: agent.url }, { clock: d.clock });
+      const evidence = await guest.evidence(), request = { ...d.request, channelJwk: evidence.channelJwk };
+      const payload = keyDeliveryPayload(d.ledger, d.attestations, request, d.clock());
+      const approval = { request, requesterSignature: await owner.signTypedData(payload.domain, payload.types, payload.value) };
+      const record = await sealJobKeyDelivery(d.ledger, d.attestations, approval,
+        earFixture({ ...d, channel: evidence.channelJwk }), d.network, d.load, { clock: d.clock });
+      if (mode === 'delivered') await (await escrow.connect(first).deliver(d.lease.orderId, h(892))).wait();
+      await assert.rejects(guest.open(record.envelope, payload), mode === 'delivered' ? /active order/ : /closed|expired/);
+      if (mode.endsWith('after-open')) assert.ok(anchorReads >= 4);
+      assert.equal(guest.status.state, 'closed');
+      await assert.rejects(guest.open(record.envelope, payload), /closed/);
+    } finally { guest?.close(); if (p) await p.close(); await agent.close(); d.cleanup(); }
+  }
+});
+
 test('signed funded key delivery recovers a real capsule, wraps to the attested guest and preserves the funded package',async()=>{
   const d=await deliverySetup({maxTokenAgeSeconds:15});try {
     const record=await sealJobKeyDelivery(d.ledger,d.attestations,d.approval,d.token,d.network,d.load,{clock:d.clock});
@@ -304,6 +457,11 @@ test('signed funded key delivery recovers a real capsule, wraps to the attested 
     assert.deepEqual(inspectKeyDelivery(d.attestations,d.request.releaseId),record);
     assert.throws(()=>d.attestations.pending(d.challenge.nonce),/consumed/);
     const opened=await openJobKeyDelivery(record.envelope,d.guest.privateKey,d.payload,{clock:d.clock});
+    assert.equal(opened.deliveryExpiresAt,record.expiresAt);
+    assert.equal(Object.keys(opened).includes('deliveryExpiresAt'),false);
+    let clockReads=0;
+    await assert.rejects(openJobKeyDelivery(record.envelope,d.guest.privateKey,d.payload,
+      {clock:()=>++clockReads<=2?d.time:record.expiresAt}),/time or rank/);
     assert.equal(JSON.stringify(opened).includes('AGE-SECRET-KEY-'),false);
     const code="import sys,json;from compute.client import open_archive;m=open_archive(sys.argv[1],sys.stdin.buffer.read(),sys.argv[3],sys.argv[2]);print(json.dumps({'kind':m['kind'],'resultRecipient':m['context']['resultRecipient']}))";
     const result=JSON.parse(execFileSync(d.info.source.python,['-c',code,path.join(d.dir,'job/workload.age'),opened.packageSHA256,path.join(d.dir,'decoded')],
@@ -402,7 +560,9 @@ test('guest-held channel opens and prepares the funded task once without exposin
   const d=await deliverySetup(),agent=await guestAgentFixture();let guest,as,captured;
   try {
     guest=await GuestEvidenceSession.create({initialization:d.initialization,policy:d.attestationPolicy,challenge:d.challenge,expectedBinding:d.challenge.binding,
-      requester:d.payload.requester,jobId:d.payload.jobId,agentUrl:agent.url},{clock:d.clock});
+      requester:d.payload.requester,jobId:d.payload.jobId,funding:guestFundingConfiguration(d),agentUrl:agent.url},{clock:d.clock});
+    assert.equal(guest.status.fundingRequired,true);
+    assert.deepEqual(guest.serviceInterval,{start:d.now+900,end:d.now+1000});
     const evidence=await guest.evidence();
     const request={...d.request,channelJwk:evidence.channelJwk};
     const payload=keyDeliveryPayload(d.ledger,d.attestations,request,d.clock());
