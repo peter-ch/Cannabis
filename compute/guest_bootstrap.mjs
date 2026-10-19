@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readGuestInitialization } from './guest_initialization.mjs';
+import { readGuestInitialization, guestInitialization } from './guest_initialization.mjs';
 import { GuestEvidenceSession, probeGuestAgent } from './guest_session.mjs';
 
 const construction = Symbol('initialized-guest');
@@ -42,13 +42,14 @@ export class InitializedGuestControlPlane {
     this.#signal = signal; this.#onAbort = () => { this.#stop(); };
     signal?.addEventListener('abort', this.#onAbort, { once: true });
   }
-  static async start({ initializationFile, agentBinary = '/usr/local/bin/ttrpc-aa', bridgeBinary = '/usr/local/bin/api-server-rest', runtimeDirectory = '/run', port = 8006 }, { timeoutMs = 20000, signal } = {}) {
+  static async start({ initializationFile, assignment, agentBinary = '/usr/local/bin/ttrpc-aa', bridgeBinary = '/usr/local/bin/api-server-rest', runtimeDirectory = '/run', port = 8006 }, { timeoutMs = 20000, signal } = {}) {
     if (process.platform !== 'linux' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60000 ||
         !Number.isSafeInteger(port) || port < 1024 || port > 65535 || !path.isAbsolute(runtimeDirectory) || (signal && !(signal instanceof AbortSignal))) {
       throw Error('Require a dedicated Linux guest and bounded startup configuration');
     }
     if (signal?.aborted) throw Error('Guest initialization cancelled');
-    const initialization = readGuestInitialization(initializationFile);
+    if((initializationFile===undefined)===(assignment===undefined))throw Error('Retain exactly one guest initialization source');
+    const initialization = assignment===undefined?readGuestInitialization(initializationFile):guestInitialization(assignment);
     verifyBinary(agentBinary, servicePins['ttrpc-aa']); verifyBinary(bridgeBinary, servicePins['api-server-rest']);
     const directory = fs.mkdtempSync(path.join(runtimeDirectory, 'cannabis-init-'));
     fs.chmodSync(directory, 0o700);
@@ -89,14 +90,14 @@ export class InitializedGuestControlPlane {
   // Explicit close/start callers still receive the same cleanup promise/error.
   #stop() { this.close().catch(() => {}); }
   get status() { return { state: this.#state, tee: this.#initialization.assignment.tee, initData: this.#initialization.digest, assignmentRetained: true, hardwareValidated: false, executionAuthorized: false }; }
-  async createSession({ policy, challenge, funding }) {
+  async createSession({ policy, challenge, funding, execution }) {
     this.#alive();
     if (this.#state !== 'ready' || this.#issued) throw Error('Guest permits one evidence session for its retained assignment');
-    if (!funding) throw Error('Initialized guest sessions require an independently approved signed funding configuration');
     this.#issued = true;
     const init = this.#initialization.assignment;
     try {
-      const session = await GuestEvidenceSession.create({ initialization: init, policy, challenge, funding,
+      if (!funding || !execution) throw Error('Initialized guest sessions require approved funding and execution configurations');
+      const session = await GuestEvidenceSession.create({ initialization: init, policy, challenge, funding, execution,
         expectedBinding: init.binding, requester: init.requester, jobId: init.jobId, agentUrl: this.#origin });
       try { this.#alive(); } catch (error) { session.close(); throw error; }
       this.#session = session; return session;

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import ctypes
 import errno
 import os
+import stat
 from pathlib import Path
 import sys
 import time
@@ -54,6 +55,25 @@ class ResourceLimits:
                 'memory.max': str(self.memory_bytes), 'memory.swap.max': '0',
                 'memory.oom.group': '1', 'pids.max': str(self.processes),
                 'cgroup.max.depth': '0', 'cgroup.max.descendants': '0'}
+
+
+@dataclass(frozen=True)
+class ResourceTreeLimits(ResourceLimits):
+    """Aggregate reservation for a control-plane leaf and bounded stage leaves.
+
+    No process may enter this controller-bearing parent. Its limits include all
+    descendants; children cannot borrow CPU, memory, swap or PIDs beyond them.
+    """
+    children: int
+
+    def __post_init__(self):
+        super().__post_init__()
+        if type(self.children) is not int or not 2 <= self.children <= 16:
+            raise ValueError('Require 2..16 explicitly reserved job leaves')
+
+    def controls(self):
+        return {**super().controls(), 'cgroup.max.depth': '1',
+                'cgroup.max.descendants': str(self.children)}
 
 
 def _directory(path):
@@ -133,8 +153,8 @@ def join_current_process(path, limits):
     then inherit membership. Close every control descriptor before runtime entry,
     drop privileges/capabilities and hide the hierarchy in the runtime sandbox.
     """
-    if not isinstance(limits, ResourceLimits):
-        raise ValueError('Require validated resource limits')
+    if type(limits) is not ResourceLimits:
+        raise ValueError('Require validated leaf resource limits')
     fd = _directory(path)
     try:
         _verify(fd, limits)
@@ -182,6 +202,10 @@ class JobResourceGroup:
             if 'memory.zswap.max' in os.listdir(self._fd):
                 _write(self._fd, 'memory.zswap.max', '0')
             _verify(self._fd, limits)
+            if isinstance(limits, ResourceTreeLimits):
+                _write(self._fd, 'cgroup.subtree_control', '+cpu +memory +pids')
+                if not {'cpu', 'memory', 'pids'} <= set(_read(self._fd, 'cgroup.subtree_control').split()):
+                    raise ValueError('Aggregate job controllers did not enable')
             self._configured = True
             # Verify the tree-kill primitive exists before admitting any child.
             _write(self._fd, 'cgroup.kill', '1')
@@ -257,6 +281,8 @@ class JobResourceGroup:
                 raise ResourceCleanupError('Guest process tree cleanup failed') from error
         if self._created:
             try:
+                if isinstance(self.limits, ResourceTreeLimits):
+                    self._remove_leaves()
                 entry = os.stat(self._name, dir_fd=self._parent, follow_symlinks=False)
                 if self._fd is not None:
                     opened = os.fstat(self._fd)
@@ -271,6 +297,46 @@ class JobResourceGroup:
         self._fd = self._parent = None
         self._report = {**(self._report or {}), 'populated': False, 'removed': True}
         return dict(self._report)
+
+    def _remove_leaves(self):
+        """After tree kill/empty, remove leaves inside this fresh retained group.
+
+        Workloads cannot create groups or keep a process alive here. An inner
+        guardian may already have removed a leaf; never follow any replacement
+        or traverse beyond this job's verified depth-one subtree.
+        """
+        children = []
+        for name in os.listdir(self._fd):
+            try:
+                info = os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISDIR(info.st_mode):
+                children.append((name, info.st_dev, info.st_ino))
+        if len(children) > self.limits.children:
+            raise ResourceCleanupError('Job leaf count exceeds the retained bound')
+        for name, device, inode in children:
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=self._fd)
+            except FileNotFoundError:
+                continue
+            try:
+                info = os.fstat(fd)
+                if (info.st_dev, info.st_ino) != (device, inode) or info.st_uid != 0 or info.st_mode & 0o022:
+                    raise ResourceCleanupError('Job leaf identity changed during cleanup')
+                # A creator can die between mkdir and writing leaf controls.
+                # The retained parent's depth-one limit still prevents nesting.
+                if _values(fd, 'cgroup.events')['populated'] or _values(fd, 'cgroup.stat')['nr_descendants']:
+                    raise ResourceCleanupError('Expected an empty job leaf')
+                try:
+                    current = os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+                    if (current.st_dev, current.st_ino) != (device, inode):
+                        raise ResourceCleanupError('Job leaf was replaced during cleanup')
+                    os.rmdir(name, dir_fd=self._fd)
+                except FileNotFoundError:
+                    pass
+            finally:
+                os.close(fd)
 
     def _removed(self):
         """Verify removal of this retained kernel object, not just its name."""

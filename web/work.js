@@ -129,7 +129,7 @@ $('results-form').addEventListener('submit', event => {
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' })); downloads.push(url);
       const a = document.createElement('a'); a.href = url; a.download = name.split('/').pop(); a.textContent = `Download ${name} · ${bytes.length} bytes`; $('results').append(a);
     }
-    feedback('Integrity and workload bindings verified. Results decrypted locally. Review output quality before approving payment; this did not approve or send a transaction.');
+    feedback('Archive integrity and selected workload fields checked. Results decrypted locally. Use the requester recovery client to verify the approved execution and active attempt. Review output quality before approving payment; this did not approve or send a transaction.');
   });
 });
 window.addEventListener('pagehide', clearResults);

@@ -33,10 +33,16 @@ jobs:
         run: python -m unittest discover -s test -p 'test_guest_measure.py' -v
       - name: Verify guest resource configuration refusals
         run: python -m unittest discover -s test -p 'test_guest_resources.py' -v
+      - name: Verify signed execution profile resource accounting
+        run: python -m unittest discover -s test -p 'test_guest_execution.py' -v
+      - name: Verify embedded launch authority ownership and path refusals
+        run: sudo env PATH="$PATH" node --test --test-name-pattern='embedded authority reads' test/guest-launch.test.mjs
       - name: Exercise kernel CPU, memory, process and deadline limits
         run: sudo python3 -I -B scripts/check-guest-resources.py
       - name: Verify cleanup after supervisor death and stopped supervisors
         run: sudo python3 -I -B scripts/check-guest-guardian.py
+      - name: Verify aggregate control and workload lifecycle
+        run: sudo python3 -I -B scripts/check-guest-job.py
       - name: Install pinned tools for disposable Linux isolation checks
         run: |
           python3 - <<'PY'
@@ -66,6 +72,8 @@ jobs:
           fi
           sudo python3 -I -B scripts/check-guest-sandbox.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-native.py
+          sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-execution.py
+          sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py
       - run: npm audit --audit-level=high
       - run: npm run build:work-service
       - run: npm run build:site

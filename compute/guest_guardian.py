@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-from .guest_resources import JobResourceGroup, ResourceLimits, ResourceCleanupError, _read, _verify
+from .guest_resources import JobResourceGroup, ResourceLimits, ResourceTreeLimits, ResourceCleanupError, _read, _verify
 
 
 def _send(channel, value):
@@ -46,7 +46,8 @@ def _adopt(parent_fd, group_fd, settings):
     deadline = settings['deadline']
     if type(deadline) not in [int, float] or not math.isfinite(deadline):
         raise ValueError('Invalid monotonic deadline')
-    limits = ResourceLimits(**settings['limits'])
+    limits_type = ResourceTreeLimits if 'children' in settings['limits'] else ResourceLimits
+    limits = limits_type(**settings['limits'])
     if deadline > time.monotonic() + limits.wall_seconds:
         raise ValueError('Guardian deadline exceeds the retained limit')
     entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)

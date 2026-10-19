@@ -24,6 +24,16 @@ python3 scripts/build-guest-image.py \
 
 Use fresh, separate output directories outside the public repository. An existing output is refused. Every package/download hash and the service hashes are checked before use. Package maintainer scripts and npm lifecycle scripts are not executed. The builder restores the merged `/usr` directory layout after package extraction and computes module dependencies for the pinned kernel.
 
+The optional `--launch-authorities /work/launch-authorities.json` argument embeds
+only the reviewed public configuration signers and threshold, in canonical form.
+It never embeds signing keys or chooses production authorities. A separately
+signed configuration can then bind the completed image measurement without a
+self-reference. The [fixed session entry](guest-initialization.md#fixed-session-entry-and-signed-configuration)
+requires this embedded authority file, a signed configuration and the exact funded
+assignment. Current component builds omit production authorities. Adding an
+authority file changes the image hash and requires a fresh build, boot check and
+hardware reference; it does not enable customer intake in the boot initializer.
+
 The output contains `vmlinuz`, `initramfs.cpio.gz`, `cmdline`, `build.json`, the unpacked `rootfs/` and private build-tool staging. The initramfs uses a deterministic `newc` archive with fixed ownership, timestamps, ordering and gzip metadata. Compare the final kernel, initramfs and command-line file hashes across builds. The command-line file's terminating newline is removed when passing its contents to QEMU.
 
 The embedded file manifest checks regular-file contents during the boot check. This is local integrity evidence, not a hardware signature or proof against an operator controlling an ordinary VM. There is no persistent root disk or host filesystem mount. Customer execution will additionally require enforced isolation and protected temporary storage; the boot image does not establish those properties by itself.
@@ -48,11 +58,18 @@ python3 scripts/verify-guest-boot.py \
   --output /work/cannabis-image-first-boot
 ```
 
-This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default boot-check deadline is fifteen minutes, allowing CPU emulation of all component checks; individual workload deadlines remain enforced separately. Failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private. The owned entry point emits bounded phase names so slow or stalled checks can be distinguished without customer content.
+This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default boot-check deadline is thirty minutes, allowing CPU emulation of the expanded 71-case suite; individual component, workload and cleanup deadlines remain enforced separately. Failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private. The owned entry point emits bounded phase names so slow or stalled checks can be distinguished without customer content.
 
 Inside the VM, the entry point mounts ephemeral runtime storage, disables core dumps and further kernel-module loading, checks embedded files, exercises the Python extensions and age executable, and starts the actual attestation agent and REST bridge on loopback. Both production CPU probes must reject the unsupported sample profile with their exact structured refusal. Import errors, missing libraries and unexpected success fail the check. No hardware evidence, channel key, job key or customer computation is requested. The services are terminated and the VM powers off.
 
 The boot check also runs the [initialization gate](guest-initialization.md) with both CPU profiles. It requires exact refusal on unsupported hardware and verifies that child services and sockets are removed. A cancelled startup, changed service binary and occupied loopback port must fail. An existing listener is never queried as if it were the spawned bridge.
+
+It also invokes the fixed session entry with no staged launch configuration and
+requires refusal before any session key or workload is created. This checks the
+unprepared entry's closed state; the separate owned integration exercises signed
+configuration and kernel admission using disposable authorities and synthetic
+appraisal. Neither check establishes a production signer set or actual hardware
+admission.
 
 The check deliberately does not treat execution on real SNP/TDX hardware as an accepted deployment: that requires the separate initialization, measurement, negative-case and full workload acceptance run. Do not turn an ordinary boot result into an attestation policy.
 
@@ -314,10 +331,11 @@ and result encryption, and owner suspension during ciphertext publication:
 sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-native.py
 ```
 
-The boot image runs these owned checks and powers off. It is still not a customer
-launcher: connection to the initialized evidence session, finalized funded lease,
-fresh key-delivery admission, protected distributed transport and outer VM/key
-lifecycle remains unfinished. An ordinary VM check proves neither protection
+The boot image runs these owned checks and powers off. Its additional aggregate-job
+and execution-channel checks exercise the [funded native readiness API](guest-workload.md#funded-native-execution-readiness)
+with owned fixture workloads. It is still not a customer launcher: full integration
+of the initialized evidence session, finalized funded lease, hardware appraisal,
+protected distributed transport and outer VM/key lifecycle remains unfinished. An ordinary VM check proves neither protection
 against its host operator nor an independently reviewed paid service. A stopped
 control plane may retain memory after its helpers are killed; external lifecycle
 enforcement must dispose of the guest. No physical-erasure claim is made.

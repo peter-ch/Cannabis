@@ -32,6 +32,12 @@ export class GuestFunding {
     this.#end = performance.now() + Math.max(0, reservation.end - now) * 1000;
   }
   get interval() { return { start: this.#reservation.start, end: this.#reservation.end }; }
+  assertService({ serviceSHA256, units }) {
+    this.assertWindow();
+    if (serviceSHA256 !== this.#reservation.serviceSHA256 || !Number.isSafeInteger(units) || units !== this.#reservation.units) {
+      this.close(); throw Error('Execution profile differs from the signed service or unit count');
+    }
+  }
   close() { this.#closed = true; }
   assertWindow() {
     const now = this.#clock(), r = this.#reservation;

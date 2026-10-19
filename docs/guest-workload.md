@@ -1,6 +1,6 @@
 # From an attested channel to the approved workload
 
-The guest control-plane integration can now open its requester-approved key delivery and decode the corresponding workload. It checks the encrypted package, private job contract, selected task, runtime digest, execution rank, group size, artifact inventory and return recipient before publishing decoded files at the configured guest path. It never starts a program.
+The guest decoder can open its requester-approved key delivery and decode the corresponding workload. It checks the encrypted package, private job contract, selected task, runtime digest, execution rank, group size, artifact inventory and return recipient before publishing decoded files at the configured guest path. The decoder itself never starts a program. A separate native execution API connects a retained service profile to runtime preparation and execution, as described below.
 
 `compute/guest_workload.py` implements the decoder. `compute/guest_workload.mjs` connects it to `GuestEvidenceSession.prepare(...)` through anonymous local pipes. This is a software integration for an approved confidential guest; measured guest construction, real vendor evidence, protected storage and the runtime launcher still need validation.
 
@@ -59,6 +59,14 @@ The guest retains its own copies. The approved domain, provider, resource, servi
 
 A funded session repeats those reads before and after opening its requester-approved envelope. Cancellation, a changed order, stale observations or an elapsed service interval retire the session without returning a key. The short challenge/key-delivery expiry is separate from the signed service interval. A signing hold may have expired while a genuinely funded reservation remains valid. The session exposes a copy of `serviceInterval`; its preparation timeout is capped by the remaining interval, with a final expiry check before returning success. A retained monotonic deadline prevents refreshing the gate from restarting that interval, and backward wall-clock changes fail. Trustworthy time and resistance to a hostile host pausing or rolling back the entire VM still require the outer protected lifecycle.
 
+Native ETH uses the zero address only for the payment asset and an explicit
+`tokenCodeHash: null`. Its signed offers, durable reservations, lease proof and
+key-release checks preserve that asset binding. The escrow implementation remains
+pinned and its on-chain asset is checked at canonical block hashes. ERC-20 funding
+also requires the pinned nonempty token implementation; neither path permits zero
+provider, requester or escrow addresses. An ETH service order does not depend on
+opening Cannabis community claims first.
+
 This gate does not launch `NativeTaskPlan`. The [native execution path](guest-image-build.md#encrypted-native-task-execution) now requires one retained deadline across decoding, execution, result sealing, publication and cleanup; its helpers and runtime guardians enforce the same remaining reservation. The operating bridge must bind that deadline to this session's independently verified service interval without resetting it, enforce whole-VM resource reservations and retire the guest/key state on every failure. Current checks use real signatures, encrypted packages and escrow contracts on an isolated chain with synthetic attestation fixtures; they do not establish hardware admission or a real paid job.
 
 ## Verify before publishing files
@@ -79,6 +87,82 @@ The decoder and its trusted decryption subprocesses have a shared termination bo
 
 This boundary contains the trusted decoder's subprocesses; it is not isolation for arbitrary customer programs. It does not enforce CPU, memory, disk or network limits. If the controlling Node process itself crashes, the reviewed worker supervisor must dispose of the helper and its descendants independently. It must also discard incomplete staging and any unacknowledged destination, enforce storage quotas and keep those files protected throughout cleanup. Pipe shutdown waits up to five additional seconds before reporting a failure without a cleanup guarantee. Never launch from directory existence alone. Cleanup does not promise physical erasure from underlying storage or all language-runtime memory copies.
 
-The [encrypted native task path](guest-image-build.md#encrypted-native-task-execution) adds a separate Linux integration using this decoder: each decode/encode helper enters a resource group before reading its private request and has an independent guardian, while staging uses an explicitly bounded unswappable filesystem. That path verifies the retained runtime tree, executes one supported native task in the sandbox, and seals declared outputs for requester reconstruction. It does not upgrade `session.prepare()` implicitly. Connecting the initialized evidence session and fresh funded assignment to that execution path, and enforcing the outer guest/key lifecycle, remain required before customer operation.
+The [encrypted native task path](guest-image-build.md#encrypted-native-task-execution) adds a separate Linux integration using this decoder: each decode/encode helper enters a resource group before reading its private request and has an independent guardian, while staging uses an explicitly bounded unswappable filesystem. That path verifies the retained runtime tree, executes one supported native task in the sandbox, and seals declared outputs for requester reconstruction. It does not upgrade `session.prepare()` implicitly. The native API below supplies the session connection; a complete admitted launcher, protected transport and the outer guest/key lifecycle remain required before customer operation.
+
+## Funded native execution readiness
+
+`GuestJobScope` starts a pinned trusted control program inside a bounded cgroup
+leaf before that program creates the initialized session. An independent outer
+guardian holds no customer keys and owns the whole job subtree. The parent limits
+cover the control leaf and every decoder, runtime and encoder leaf. Parent death,
+deadline expiry, aggregate memory exhaustion and failed completion retire the
+subtree. A shorter control-plane time limit also shortens the whole job deadline.
+
+Create the session with `execution: { profile, source }` alongside its approved
+funding configuration. Both objects must come from independently approved measured
+configuration. `source` contains trusted absolute `python`, `rootfs`, `age`,
+`ciphertext` and `destination` paths. The service profile specifies the native
+runtime inventory, task resources, control/helper limits, aggregate limits, scratch
+and staging quotas, extraction bound and tool hashes. Its canonical SHA-256 must
+match the signed reservation's `serviceSHA256` and its exact unit count. This
+adapter represents one reserved service unit; it cannot reinterpret a group or
+accelerator reservation as one CPU task. The profile reserves concurrent control,
+helper and workload capacity, plus both protected filesystem quotas.
+
+```js
+const session = await control.createSession({
+  policy, challenge, funding,
+  execution: { profile: approvedNativeService, source: approvedGuestPaths }
+});
+// Collect and verify this session's hardware evidence before approving delivery.
+const result = await session.executeNative(envelope, expectedApproval);
+// result.resultEnvelope is encrypted; result.ciphertext identifies encrypted output.
+// The requester opens the receipt with its separately recovered result secret.
+```
+
+The helper first checks its real shared cgroups, the live parent process, the
+approved runtime inventory, tool pins and remaining service deadline. Only then
+does it issue a fresh readiness nonce. The session rechecks funding around key
+opening and sends the key in a nonce-bound second frame. A session bound to this
+execution profile refuses direct `open()` and `prepare()` calls. Closing the
+session cancels the channel; late key-opening completion cannot transmit a key
+after cancellation. Frames have byte limits and travel through anonymous local
+pipes or unnamed Unix socket pairs. Regular files and named/network sockets are
+not accepted as key channels.
+
+The native plan consumes the same deadline for decoding, execution, sealing and
+checked cleanup. Native sessions require a version-2 approval with a fresh result
+secret commitment. The private receipt is authenticated and encrypted as described
+in [result return](key-delivery.md#authenticated-private-result-return); the API
+exposes its encrypted envelope and no plaintext receipt. The output path remains
+non-enumerable. Fresh funding is checked again before result sealing and the
+remaining deadline is checked after sealing. A successful report is still not
+requester quality acceptance, a payment authorization or hardware attestation.
+
+Owned kernel checks cover encrypted execution and separate requester reconstruction,
+changed resource controls/runtime inventory, insufficient reservation capacity,
+control-process death and the common deadline. Protocol checks cover malformed and
+out-of-order frames, mismatched service/nonce, failed exit and cancellation during
+key opening. Local-chain checks verify signed service/unit matching and refusal to
+bypass readiness. An additional combined Linux check now carries one signed ETH
+reservation through fresh funded admission, the actual native runtime, encrypted
+result reconstruction and exact 99% worker / 1% founder settlement, including
+worker withdrawal and whole-tree cleanup. It uses disposable keys, an isolated
+chain and synthetic appraisal. The requester and guarded guest now run in separate
+processes using the [encrypted streaming handoff](key-delivery.md#encrypted-streaming-handoff),
+with requester recovery, active-attempt checks and a signed storage acknowledgement.
+The requester reconstructs its downloaded copy in a fresh process before separate
+application acceptance and settlement. Fixture setup still creates disposable
+custody on the same ordinary machine; this does not establish protection from its
+operator, an admitted production launcher or hardware admission. After compiling and installing the pinned
+verification prerequisites, run:
+
+```sh
+sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py
+```
+
+The complete operating launcher and genuine paid acceptance,
+whole-VM overhead/disposal, trustworthy time against host pause or rollback,
+protected distributed/accelerator paths and independent review remain unfinished.
 
 Verification uses real age packages and disposable keys, signed requester approvals and funded escrow on an isolated local chain, with explicitly synthetic attestation-agent and verifier fixtures. It covers source substitution, malformed or mismatched private contracts, task/runtime/rank mismatch, inventory and return-recipient checks, CPU/device mismatch, byte limits and concurrent session consumption. Process tests create a helper, child and grandchild, check their termination after timeouts and other faults, and verify that an unrelated process remains running. Real SNP/TDX execution and protection against a hostile worker host remain tracked in the [hardware-validation milestone](https://github.com/peter-ch/Cannabis/issues/1).

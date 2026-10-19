@@ -38,7 +38,14 @@ A reviewed integration must bind the source and destination chains/assets, appro
 
 The result panel works locally even without an account or live order service. Select the **original private workload**, its encrypted package SHA-256, result receipts and corresponding `.age` files, and the requester's age identity file. Never enter a wallet seed or wallet private key. Windows DPAPI identity vaults remain in the desktop client; the browser accepts a plain age result identity file already controlled by the requester.
 
-The viewer uses [age-encryption](https://github.com/FiloSottile/typage), bundled with the site. It checks the encrypted file digest and size before decryption, authenticates the complete age stream, and verifies archive hashes, job/package/task/rank/recipient bindings, output inventory and assembly destinations. It rejects extra members, unsafe paths, duplicate or overlapping destinations and incomplete required results. No archive code is executed or rendered as HTML. Only fully verified files receive download links. Keep the original private terms and reviewed result commitments: hashes in an arbitrary supplied receipt alone do not prove who performed the work or whether the result is correct.
+The viewer uses [age-encryption](https://github.com/FiloSottile/typage), bundled with the site. It checks the encrypted file digest and size before decryption, authenticates the complete age stream, and verifies archive hashes, job/package/task/rank/recipient bindings, output inventory and assembly destinations. It rejects extra members, unsafe paths, duplicate or overlapping destinations and incomplete required results. No archive code is executed or rendered as HTML. Only files that pass these archive checks receive download links. Keep the original private terms and reviewed result commitments: hashes in an arbitrary supplied receipt alone do not prove who performed the work or whether the result is correct.
+
+This browser flow does not yet authenticate the version-2 encrypted receipt against
+the requester-approved execution or retain the active-attempt selection. An age
+recipient is public, so age encryption alone does not establish the sender. Use
+the [requester recovery client](key-delivery.md) for that receipt and attempt
+verification. Integrating the same checks into the browser remains required before
+it can serve as the verified retrieval path for paid jobs.
 
 The browser supports result sets up to 64 MiB and 128 receipts. Larger sets use the streaming desktop client. **Clear decrypted results** removes download links and file inputs; closing the page releases its memory references. Downloaded plaintext remains on your device. Browser decryption is subject to the security of the delivered website and your browser; use a reviewed local client for stronger separation from the web host.
 

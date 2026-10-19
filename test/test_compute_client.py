@@ -51,6 +51,41 @@ class ClientTests(unittest.TestCase):
         out=self.root/'decoded';m=open_archive(p,self.identity,out,d['ciphertextSHA256'],age=self.age)
         self.assertEqual(m['context'],self.spec);self.assertEqual((out/'input.dat').read_bytes(),(self.source/'input.dat').read_bytes())
         self.assertFalse(d['executionAuthorized']);self.assertFalse(d['keyReleaseAuthorized'])
+    def test_requester_reconstruction_pipe_binds_original_workload_and_approved_attempt(self):
+        # This private helper receives authenticated receipts from ResultInbox;
+        # signature/JWE authentication is separately exercised by the Node tests.
+        self.spec['resultRecipient']=self.recipient
+        _,descriptor=self.pack();package=descriptor['ciphertextSHA256']
+        outputs=self.root/'outputs';outputs.mkdir();(outputs/'answer.bin').write_bytes(b'owned-private-answer')
+        encrypted=self.root/'result.age'
+        receipt=seal_result(self.spec,'work',package,outputs,self.recipient,encrypted,attempt=2,age=self.age)
+        identity=self.root/'owner.key'
+        if os.name=='nt':
+            import base64
+            identity.write_text(json.dumps({'schema':'cannabis.compute.identity.dpapi.v1','recipient':self.recipient,
+                'protected':base64.b64encode(dpapi(self.identity)).decode()}))
+        else:identity.write_bytes(self.identity)
+        manifest=self.root/'manifest.json';manifest.write_text(json.dumps(self.spec))
+        approval={'jobId':self.spec['id'],'value':{'packageSHA256':'0x'+package,'policySHA256':'0x'+self.spec['policySHA256'],
+            'taskSHA256':'0x'+task_binding_sha256(package,0),'runtimeSHA256':'0x'+self.spec['tasks'][0]['runtime']['digestSHA256'],
+            'attempt':2,'rank':0,'worldSize':1}}
+        request={'source':{'age':self.age,'identity':str(identity),'manifest':str(manifest),'destination':str(self.root/'assembled')},
+            'packageSHA256':package,'results':[{'receipt':receipt,'file':str(encrypted),'approval':approval}]}
+        helper=pathlib.Path(__file__).resolve().parents[1]/'scripts/compute-result-reconstruct-pipe.py'
+        def run(value):return subprocess.run([sys.executable,str(helper)],input=json.dumps(value).encode(),capture_output=True,timeout=30)
+        success=run(request);self.assertEqual(success.returncode,0,success.stderr.decode())
+        report=json.loads(success.stdout)
+        self.assertTrue(report['integrityVerified']);self.assertTrue(report['approvedAttemptsVerified'])
+        self.assertFalse(report['qualityAccepted']);self.assertFalse(report['paymentAuthorized'])
+        self.assertEqual((self.root/'assembled/final/answer.bin').read_bytes(),b'owned-private-answer')
+        self.assertNotIn(b'owned-private-answer',success.stdout);self.assertNotIn(self.identity.strip(),success.stdout)
+        for field,value in [('taskSHA256','0x'+task_binding_sha256(package,1)),('runtimeSHA256','0x'+'c'*64),
+            ('policySHA256','0x'+'c'*64),('packageSHA256','0x'+'c'*64),('attempt',1),('rank',1),('worldSize',2)]:
+            with self.subTest(field=field):
+                changed=copy.deepcopy(request);changed['results'][0]['approval']['value'][field]=value
+                destination=self.root/('refused-'+field);changed['source']['destination']=str(destination)
+                refused=run(changed);self.assertNotEqual(refused.returncode,0);self.assertEqual(refused.stdout,b'')
+                self.assertEqual(refused.stderr.decode().splitlines(),['Requester reconstruction failed']);self.assertFalse(destination.exists())
     def test_large_artifact_crosses_legacy_bundle_limit(self):
         with (self.source/'input.dat').open('wb') as f:
             for _ in range(34):f.write(b'abcdef0123456789'*(1024*1024//16))

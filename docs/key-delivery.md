@@ -33,6 +33,7 @@ Use `scripts/compute-key-delivery.mjs`. Its private configuration contains:
 | `attestationLedger` | Private challenge/delivery SQLite path |
 | `network` | Reviewed RPC, chain/genesis/code pins, token/escrow, `finality: rpc-finalized`, `maxFinalizedAgeSeconds`, `maxHeadAgeSeconds` |
 | `keySource` | Trusted local `python`, `age`, `identity`, `capsule`, `descriptor` paths; Python and age executables must be absolute paths for `seal` |
+| `resultKeySource` | Local `python`, `age`, `identity`, `custody` paths for reopening the encrypted per-release result secret; required for version-2 approvals |
 | `trusteeEndpoint` | Requester-controlled AS `/attestation` URL used by `appraise`; never taken from a worker's message |
 
 These paths and executable choices are requester configuration, never worker-supplied protocol fields. Python 3.12+, Node 22.22+ and the pinned age/age-keygen installation are required.
@@ -40,6 +41,7 @@ These paths and executable choices are requester configuration, never worker-sup
 ```sh
 node scripts/compute-key-delivery.mjs challenge ../private/delivery-config.json ../private/run-binding.json
 node scripts/compute-key-delivery.mjs appraise ../private/delivery-config.json ../private/guest-evidence.json
+node scripts/compute-key-delivery.mjs create-result-key ../private/delivery-config.json ../private/result-key-binding.json
 node scripts/compute-key-delivery.mjs prepare ../private/delivery-config.json ../private/delivery-request.json
 node scripts/compute-key-delivery.mjs seal ../private/delivery-config.json ../private/signed-delivery.json
 node scripts/compute-key-delivery.mjs inspect ../private/delivery-config.json ../private/release-id.json
@@ -48,6 +50,7 @@ node scripts/compute-key-delivery.mjs inspect ../private/delivery-config.json ..
 - `challenge` input: `{leaseId, reservationId, run}`. `run` contains `runtimeSHA256`, `taskSHA256`, `attempt`, `rank`, `worldSize`, `acceleratorClass`. Values must come from the approved workload and placement. The challenge must be created close enough to the reserved service window to remain fresh.
 - `appraise` input: the guest's `nonce`, `channelJwk` and base64url `evidence`. It calls the configured Trustee, verifies the EAR and returns `{token, appraisal, challengeConsumed: false, ...}`. Keep the response private and pass its token into `seal`; it does not recover a key or consume the challenge. This supports the [guest-held session](guest-attestation.md).
 - `prepare` input: `{releaseId, leaseId, nonce, channelJwk, descriptor, notBefore, expiresAt}`. `descriptor` is the requester's saved package-v2 descriptor. Times are integer Unix seconds and must fit inside both the reservation and challenge lifetime. The returned typed-data payload is ready for wallet review; it does not sign anything.
+- `create-result-key` input: `{releaseId, recipient}` using the requester's own result recipient. Save its encrypted custody record privately and durably before delivery, with the existing requester identity backup. Add its `resultKeySHA256` to the `prepare` request to produce a version-2 approval. The result secret is never printed. Native execution requires this version; legacy version-1 envelopes support only the earlier internal preparation path.
 - `seal` input: `{approval: {request, requesterSignature}, token}`. `token` is the Trustee EAR. Successful output reports `keyWrapped: true`, `transmitted: false`, `executionAuthorized: false` and includes the encrypted envelope. It contains no raw identity key.
 - `inspect` input: `{releaseId}`. Retrieves the original encrypted journal record after an interrupted caller. It does not renew expiry or create a new release.
 
@@ -68,3 +71,154 @@ Every rank and replacement needs its own fresh admission. A replacement must use
 Automated integration checks use actual age packages and requester recovery, actual escrow contracts on an isolated chain, real EIP-712 signatures and real JWE encryption/decryption. Disposable signed EAR fixtures exercise the result consumer; they do not establish real hardware attestation. Checks cover wrong signatures and guest keys, cross-binding, envelope tampering, expiry, cancellation, concurrent delivery, state changes during recovery, and a finalized Active order whose latest state is already Delivered. Independent review and hardware validation remain required before operational customer delivery.
 
 The JOSE implementation is the pinned [jose library](https://github.com/panva/jose/tree/v6.2.12); its [compact JWE API](https://github.com/panva/jose/blob/v6.2.12/docs/jwe/compact/encrypt/classes/CompactEncrypt.md) supplies the standard encryption construction.
+
+## Authenticated private result return
+
+Each version-2 approval commits to a fresh, random 256-bit result secret, separate
+from the workload input key. The requester first encrypts this secret into an age
+custody record for its own recipient, using the pinned [age TypeScript
+implementation](https://github.com/FiloSottile/typage). Losing that custody record
+prevents recovery of this result channel; the workload capsule alone is not enough.
+The requester-held identity and encrypted record must both remain recoverable.
+
+After signature, attestation and funding checks, `sealJobKeyDelivery` opens the
+result custody through a private local helper and checks its recipient, release ID
+and signed key commitment. The result secret travels only inside the guest's
+existing authenticated key envelope. Native execution rejects version-1 approvals
+before opening keys. The trusted guest control plane retains the result secret;
+the untrusted workload and its decoder/runtime do not receive it.
+
+After successful execution, cleanup and fresh funding inspection,
+`GuestEvidenceSession.executeNative` seals the private receipt with JOSE `dir` and
+`A256GCM`. The protected header and encrypted payload bind the entire approval
+digest, including chain, escrow, lease, reservation, package, task, attempt and
+attested channel. The returned `resultEnvelope` contains encrypted receipt data;
+the native session no longer returns a plaintext `receipt` property. Output and
+logs remain age-encrypted to the original requester recipient.
+
+The requester recovers its saved result secret, calls `openResultDelivery`, then
+uses the authenticated receipt's ciphertext commitment when decrypting and
+reconstructing the result archive. Receipt authentication is not output integrity,
+application quality acceptance or permission to pay. Those checks remain separate.
+Version-2 delivery records retain the complete public `expectedApproval` and
+requester signature, so reopening the private journal also recovers the original
+approval context. Keep this journal with the encrypted result custody and existing
+requester identity recovery material; it contains no raw result key.
+The requester may decrypt the same receipt again after interruption; that recovery
+does not represent another execution or another payment. A changed approval or
+another attempt's secret fails. Keep the active approved attempt in requester
+state; do not adopt a server-supplied approval as the expected one.
+
+This is shared-secret authentication between requester and admitted session, not a
+publicly verifiable proof or a signature preventing the requester from producing
+its own receipt. An earlier guest that learned the workload input key cannot derive
+a later fresh result secret. Host metadata, language-runtime memory copies,
+hardware/launcher assurance and protected transport operation still require their
+separate controls and independent review. The combined local verification uses
+synthetic appraisal and disposable custody; it does not establish live hardware.
+
+## Requester receipt recovery and approved attempts
+
+The requester-local `ResultInbox` stores the selected signed version-2 approval
+for each order, encrypted package, task and rank. Select it from the requester's
+own delivery journal before handing work to the guest. Never let an incoming
+server response select an expected approval. The SQLite database fixes its chain,
+escrow and requester on first use; keep it on the requester's device with its
+recovery material.
+
+Replacing an attempt requires the current approval digest and a strictly higher
+attempt number. The retained job, runtime, policy, recipient and group size cannot
+change through a replacement. A retired approval cannot be reactivated. Retirement
+only changes local result eligibility: it does not stop a guest, revoke a key it
+already learned, cancel a lease or send a payment transaction.
+
+Only authenticated encrypted receipt envelopes are stored. A repeated identical
+envelope recovers the existing delivery; a conflicting envelope for that approval
+is refused. Reopening custody rechecks the active selection after decryption, so a
+concurrent replacement or retirement cannot save an obsolete result. Bounded release
+count and total encrypted-receipt storage apply; the defaults are 4,096 releases
+and 64 MiB. Preserve the database and its SQLite WAL coherently when backing it up.
+Its public approval context still contains linkable order and timing metadata.
+
+Use the local CLI with a private configuration:
+
+```json
+{
+  "inbox": "../private/requester/results.sqlite",
+  "context": { "chainId": 1, "escrow": "REVIEWED_ESCROW_ADDRESS", "requester": "YOUR_ADDRESS" },
+  "resultKeySources": {
+    "SIGNED_RELEASE_ID": { "python": "ABSOLUTE_PYTHON_PATH", "age": "ABSOLUTE_AGE_PATH", "identity": "OWNER_IDENTITY_PATH", "custody": "ENCRYPTED_RESULT_KEY_PATH" }
+  },
+  "reconstruction": { "python": "ABSOLUTE_PYTHON_PATH", "age": "ABSOLUTE_AGE_PATH", "identity": "OWNER_IDENTITY_PATH" }
+}
+```
+
+These placeholders are not a deployed release or permission to use an arbitrary
+escrow. Resolve all paths on the requester device; tool paths must be absolute.
+
+```sh
+node scripts/compute-results.mjs activate ../private/results-config.json ../private/selection.json
+node scripts/compute-results.mjs receive ../private/results-config.json ../private/receipt-input.json
+node scripts/compute-results.mjs recover ../private/results-config.json ../private/approval-id.json
+node scripts/compute-results.mjs assemble ../private/results-config.json ../private/assembly-input.json
+```
+
+| Action | Input fields |
+| --- | --- |
+| `activate` | `deliveryRecord` (local journal file), `resultRecipient`, optional `previousApprovalDigest` for an explicit replacement |
+| `receive` | `approvalDigest`, `envelopeFile`; that file contains exactly `approvalDigest` and `resultEnvelope` |
+| `recover`, `inspect`, `retire` | `approvalDigest` |
+| `assemble` | `manifest` (original private workload), `packageSHA256` (without `0x`), `results` containing `{approvalDigest, file}` for each encrypted archive, and a new `destination` |
+
+Each command can run in a fresh process. `recover` authenticates the saved receipt
+using local key custody and prints metadata, never the private receipt or result
+secret. `assemble` checks the authenticated receipt against the original workload,
+package, policy, task index, runtime, rank and exact approved attempt. It holds the
+local selection lock during synchronous reconstruction, refusing a stale snapshot.
+The trusted helper verifies and reconstructs files without executing customer code.
+Reconstruction still requires separate application quality acceptance and reviewed
+requester-controlled settlement; this CLI neither signs nor approves payment.
+
+The command-line path is separate from the current website result form. Browser
+integration, operational encrypted delivery and acknowledgement, protected hardware
+and live settlement remain required before paid intake can open. Local tests use
+disposable custody, an isolated chain and synthetic attestation; they do not count
+as paid jobs or establish confidentiality from a real worker operator.
+
+## Encrypted streaming handoff
+
+`compute/result_transport.mjs` connects an existing protected guest session to a
+requester through bounded binary frames. It sends public evidence, accepts the
+requester's encrypted version-2 delivery, and streams the encrypted result receipt
+and age ciphertext. It never transports local file paths, requester custody files,
+identity secrets, content keys, private receipts or decrypted outputs. Relay
+operators can still observe public commitments, message timing and ciphertext sizes.
+
+The requester authenticates the receipt against its locally selected approval
+before accepting the ciphertext. It bounds the transfer, hashes the stream, checks
+the exact ciphertext length and digest, flushes a temporary file and publishes it
+without overwriting any existing destination. It rechecks active selection before
+publication and again after acknowledgement signing. Failed or truncated transfers
+remove incomplete files; already verified ciphertext remains available if a later
+acknowledgement is interrupted. Windows flushes the file; directory durability
+depends on the requester's filesystem and recovery policy.
+
+The guest requires a separate EIP-712 `ResultStored` acknowledgement from the
+requester, binding the approval, encrypted-receipt hash, ciphertext hash and byte
+count to the chain and escrow. The wallet message is named **Cannabis encrypted
+result stored**. It acknowledges storage of those bytes only. It does not verify
+output quality, approve an escrow payment or prove the requester will keep a
+backup. The requester reviews and controls this signature; it is never substituted
+for payment approval. Guest handoff fails on a wrong signer or binding, cancellation,
+truncation, missing acknowledgement or the retained transport deadline.
+
+The integrated kernel check now uses separate requester and guarded guest
+processes, with this framed stream carrying evidence, key envelopes, ciphertext and
+the signed acknowledgement. The requester reconstructs the downloaded copy in a
+fresh process before separate owned application acceptance and isolated-chain
+settlement. Fixture setup still creates disposable custody and uses synthetic
+attestation on one ordinary machine. Process separation is not confidentiality
+from that machine's operator. The measured production entry, outer VM/key lifecycle,
+authenticated network channel, durable relay/retry operation, actual hardware and
+independent review remain required. No public transport endpoint or paid intake is
+enabled by this component.

@@ -1,5 +1,6 @@
 // Run inside the approved guest control plane. This module is not a TEE or launcher.
 import http from 'node:http';
+import path from 'node:path';
 import { createHash, webcrypto } from 'node:crypto';
 import { exportJWK } from 'jose';
 import { getAddress, ZeroAddress } from 'ethers';
@@ -8,6 +9,8 @@ import { openJobKeyDelivery } from './key_delivery.mjs';
 import { prepareGuestWorkload } from './guest_workload.mjs';
 import { matchGuestInitialization } from './guest_initialization.mjs';
 import { GuestFunding } from './guest_funding.mjs';
+import { nativeServiceCommitment, executeNativeGuest } from './guest_execution.mjs';
+import { sealResultDelivery } from './result_delivery.mjs';
 
 export const GUEST_COMPONENTS_REVISION = 'eae0bf63a3a9db7721f86e0a2b0b9941a7fcba3a';
 export const GUEST_AGENT_VERSION = 'Guest Components Version: v0.22.0';
@@ -63,7 +66,7 @@ export async function probeGuestAgent({ agentUrl = 'http://127.0.0.1:8006', agen
 
 export class GuestEvidenceSession {
   #policy; #challenge; #requester; #jobId; #key; #publicKey; #clock; #agent; #timer;
-  #abort = new AbortController(); #state = 'ready'; #evidence; #preparationAbort; #funding;
+  #abort = new AbortController(); #state = 'ready'; #evidence; #preparationAbort; #funding; #execution;
   constructor(guard, options, key, publicKey) {
     if (guard !== construction) throw Error('Use GuestEvidenceSession.create');
     this.#policy = options.policy; this.#challenge = options.challenge;
@@ -71,10 +74,11 @@ export class GuestEvidenceSession {
     this.#agent = { agentUrl: endpoint(options.agentUrl), agentVersion: GUEST_AGENT_VERSION, tee: options.policy.tee };
     this.#clock = options.clock; this.#key = key; this.#publicKey = publicKey;
     this.#funding = options.funding;
+    this.#execution = options.execution;
     this.#timer = setTimeout(() => this.close(), Math.max(1, options.challenge.expiresAt - this.#clock()) * 1000);
     this.#timer.unref();
   }
-  static async create({ initialization, policy, challenge, expectedBinding, requester, jobId, funding, agentUrl = 'http://127.0.0.1:8006' }, { clock = nowSeconds } = {}) {
+  static async create({ initialization, policy, challenge, expectedBinding, requester, jobId, funding, execution, agentUrl = 'http://127.0.0.1:8006' }, { clock = nowSeconds } = {}) {
     policy = structuredClone(policy); challenge = structuredClone(challenge); expectedBinding = structuredClone(expectedBinding);
     endpoint(agentUrl);
     requester = getAddress(requester);
@@ -82,12 +86,17 @@ export class GuestEvidenceSession {
     if (requester === ZeroAddress || typeof jobId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(jobId) ||
         canonical(challenge.binding) !== canonical(expectedBinding)) throw Error('Challenge differs from the approved guest assignment');
     const retainedFunding = funding === undefined ? undefined : new GuestFunding(funding, initialization, { clock });
+    if (execution !== undefined) {
+      execution = structuredClone(execution);
+      if (!retainedFunding) throw Error('Native execution requires a signed funding configuration');
+      retainedFunding.assertService(nativeServiceCommitment(execution));
+    }
     // The caller cannot supply a channel key. The private key is non-extractable
     // and held only in this session; no file, environment or serialization path.
     const pair = await webcrypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
     const publicKey = await exportJWK(pair.publicKey);
     trusteeReportData(policy, challenge, publicKey, clock());
-    return new GuestEvidenceSession(construction, { policy, challenge, requester, jobId, agentUrl, clock, funding: retainedFunding }, pair.privateKey, publicKey);
+    return new GuestEvidenceSession(construction, { policy, challenge, requester, jobId, agentUrl, clock, funding: retainedFunding, execution }, pair.privateKey, publicKey);
   }
   get channelJwk() { return structuredClone(this.#publicKey); }
   get status() { return { state: this.#state, nonce: this.#challenge.nonce, expiresAt: this.#challenge.expiresAt, fundingRequired: !!this.#funding, executionAuthorized: false }; }
@@ -120,7 +129,7 @@ export class GuestEvidenceSession {
   #match(expected) {
     const b = this.#challenge.binding, v = expected?.value, d = expected?.domain;
     if (!v || !d || expected.requester !== this.#requester || expected.jobId !== this.#jobId ||
-        d.name !== 'Cannabis confidential key delivery' || d.version !== '1' || BigInt(d.chainId) !== BigInt(b.chainId) ||
+        d.name !== 'Cannabis confidential key delivery' || !['1','2'].includes(d.version) || BigInt(d.chainId) !== BigInt(b.chainId) ||
         getAddress(d.verifyingContract) !== getAddress(b.escrow)) throw Error('Delivery differs from retained guest assignment');
     const fields = { leaseDigest: b.leaseDigest, orderId: b.orderId, reservationId: b.reservationId,
       nonce: '0x' + this.#challenge.nonce, attestationPolicySHA256: '0x' + this.#challenge.attestationPolicySHA256,
@@ -132,9 +141,15 @@ export class GuestEvidenceSession {
         v.notBefore < this.#challenge.issuedAt || v.expiresAt > this.#challenge.expiresAt || v.expiresAt <= v.notBefore) throw Error('Delivery binding differs from retained guest assignment');
   }
   async open(envelope, expected, { ageKeygen } = {}) {
+    if (this.#preparationAbort) throw Error('Guest execution or preparation already in progress');
+    if (this.#execution) throw Error('Bound native sessions release keys only through execution readiness');
+    return this.#open(envelope, expected, { ageKeygen });
+  }
+  async #open(envelope, expected, { ageKeygen } = {}) {
     this.#fresh();
     if (this.#state !== 'quoted') throw Error('Guest session has no completed evidence or is already opening');
     this.#state = 'opening';
+    let job;
     try {
       expected = structuredClone(expected); this.#match(expected);
       if (this.#funding) {
@@ -142,19 +157,20 @@ export class GuestEvidenceSession {
         if (expected.value.notBefore < interval.start || expected.value.expiresAt > interval.end) throw Error('Key-delivery window exceeds the signed service interval');
         await this.#funding.refresh(); this.#fresh();
       }
-      const job = await openJobKeyDelivery(envelope, this.#key, expected, { clock: this.#clock, ageKeygen });
+      job = await openJobKeyDelivery(envelope, this.#key, expected, { clock: this.#clock, ageKeygen });
       if (this.#funding) await this.#funding.refresh();
       this.#fresh();
       if (this.#clock() >= job.deliveryExpiresAt) throw Error('Job-key release expired during guest funding inspection');
       this.#dispose('consumed'); return job;
-    } catch (error) { this.close(); throw error; }
+    } catch (error) { job?.resultKey?.fill(0);this.close(); throw error; }
   }
   async prepare(envelope, expected, source, options = {}) {
+    if (this.#execution) throw Error('Bound native sessions release keys only through execution readiness');
     expected = structuredClone(expected); source = structuredClone(source); options = structuredClone(options);
     if (this.#preparationAbort) throw Error('Guest workload preparation already in progress');
     const preparation = new AbortController(); this.#preparationAbort = preparation;
     try {
-      const key = await this.open(envelope, expected, options);
+      const key = await this.#open(envelope, expected, options);
       const binding = Object.fromEntries(['packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256'].map(k => [k, expected.value[k].slice(2)]));
       for (const k of ['attempt', 'rank', 'worldSize']) binding[k] = expected.value[k];
       binding.acceleratorClass = this.#challenge.binding.acceleratorClass;
@@ -163,6 +179,34 @@ export class GuestEvidenceSession {
       this.#funding?.assertWindow();
       return result;
     } finally { this.#preparationAbort = undefined; }
+  }
+  async executeNative(envelope, expected) {
+    this.#fresh();
+    if (!this.#funding || !this.#execution) throw Error('Require a retained funded native execution profile');
+    if (this.#preparationAbort) throw Error('Guest execution or preparation already in progress');
+    const running = new AbortController(); this.#preparationAbort = running;
+    let resultKey;
+    try {
+      expected = structuredClone(expected); this.#match(expected);
+      if(expected.domain.version!=='2')throw Error('Native execution requires an approved confidential result channel');
+      this.#funding.assertService(nativeServiceCommitment(this.#execution));
+      const binding = Object.fromEntries(['packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256',
+        'attempt', 'rank', 'worldSize', 'acceleratorClass'].map(k => [k, this.#challenge.binding[k]]));
+      const result = await executeNativeGuest(this.#execution, binding, this.#funding.interval, async () => {
+        if (running.signal.aborted) throw Error('Guest execution cancelled before key opening');
+        const key = await this.#open(envelope, expected, { ageKeygen: path.join(path.dirname(this.#execution.source.age), 'age-keygen') });
+        resultKey=key.resultKey;
+        if (running.signal.aborted) throw Error('Guest execution cancelled during key opening');
+        this.#funding.assertWindow(); return key;
+      }, { timeoutMs: this.#funding.remainingMilliseconds(), signal: running.signal });
+      await this.#funding.refresh(); this.#funding.assertWindow();
+      if (running.signal.aborted) throw Error('Guest execution cancelled before result acceptance');
+      const resultEnvelope=await sealResultDelivery(result.receipt,resultKey,expected);
+      this.#funding.assertWindow();
+      if(running.signal.aborted)throw Error('Guest execution cancelled during result sealing');
+      return Object.defineProperty({...result,resultEnvelope},'ciphertext',{value:result.ciphertext,enumerable:false});
+    } catch (error) { this.close(); throw error; }
+    finally { resultKey?.fill(0);this.#preparationAbort = undefined; }
   }
   #dispose(state) {
     clearTimeout(this.#timer); this.#abort.abort(); this.#key = undefined; this.#evidence = undefined; this.#state = state;

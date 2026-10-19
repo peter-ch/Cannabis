@@ -162,6 +162,31 @@ def actor(parent, base, mode):
             raise AssertionError('Consumed plan reused')
     except (ValueError, RuntimeError) as error:
         if mode == 'success':
+            # This executable creates only owned fixtures. Surface bounded
+            # control-plane locations and lifecycle state, never exception
+            # messages, request/response values, keys or workload contents.
+            cause, sites, seen = error.__context__, [], set()
+            project = Path(SCRIPT).parents[1]
+            while cause is not None and id(cause) not in seen and len(seen) < 4:
+                seen.add(id(cause))
+                trace = cause.__traceback__
+                while trace is not None and len(sites) < 16:
+                    filename = Path(trace.tb_frame.f_code.co_filename)
+                    if filename.is_relative_to(project):
+                        state = trace.tb_frame.f_locals
+                        item = {'type': type(cause).__name__,
+                            'source': filename.relative_to(project).as_posix(), 'line': trace.tb_lineno}
+                        if trace.tb_frame.f_code is run_guarded_helper.__code__:
+                            operation = state.get('request', {}).get('operation')
+                            item['operation'] = operation if operation in ['decode', 'seal-result'] else None
+                            child = state.get('child')
+                            item['childExitCode'] = child.poll() if child is not None else None
+                            reason = (state.get('cleanup') or {}).get('reason')
+                            item['cleanupReason'] = reason if reason in ['finished', 'cancelled', 'deadline', 'not-empty', 'invalid-command', 'channel-closed'] else None
+                        sites.append(item)
+                    trace = trace.tb_next
+                cause = cause.__context__
+            print('Owned native failure metadata: ' + json.dumps(sites), file=sys.stderr, flush=True)
             raise
         assert not destination.exists(), 'Rejected job published a result'
         if mode in ['expired-plan', 'native-shared-deadline', 'encoder-shared-deadline', 'publication-deadline']:

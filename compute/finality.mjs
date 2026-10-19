@@ -1,5 +1,5 @@
 // Read-only, hash-pinned finalized escrow inspection. No signing or transaction submission.
-import { FetchRequest, Interface, JsonRpcProvider, getAddress, keccak256 } from 'ethers';
+import { FetchRequest, Interface, JsonRpcProvider, getAddress, keccak256, ZeroAddress } from 'ethers';
 import escrowABI from './escrow-abi.json' with { type: 'json' };
 import { termsDigest } from '../scripts/compute-escrow.mjs';
 import { policy } from '../scripts/compute-plan.mjs';
@@ -35,9 +35,11 @@ async function readEscrowSnapshot(options,clock,blockSelector) {
   if(url.username || url.password || !(url.protocol==='https:' || url.protocol==='http:' && url.hostname==='127.0.0.1'))throw Error('Use HTTPS RPC or loopback verification RPC');
   if(options.finality!=='rpc-finalized')throw Error('An explicit reviewed rpc-finalized policy is required');
   if(!Number.isSafeInteger(options.maxFinalizedAgeSeconds) || options.maxFinalizedAgeSeconds<1 || options.maxFinalizedAgeSeconds>7200)throw Error('Require a bounded finalized-block age, at most two hours');
-  for(const field of ['genesisHash','escrowCodeHash','tokenCodeHash','orderId'])if(!bytes32(options[field]))throw Error('Pin genesis, runtime hashes and order ID');
   const chainId=BigInt(options.chainId),escrow=getAddress(options.escrow),token=getAddress(options.token);
-  if(chainId<=0n)throw Error('Invalid chain ID');
+  const native=token===ZeroAddress;
+  if(native && options.tokenCodeHash!==null)throw Error('Native ETH uses a null token runtime hash');
+  for(const field of ['genesisHash','escrowCodeHash','orderId',...(native?[]:['tokenCodeHash'])])if(!bytes32(options[field]))throw Error('Pin genesis, runtime hashes and order ID');
+  if(chainId<=0n || escrow===ZeroAddress)throw Error('Invalid chain ID or escrow');
   const request=new FetchRequest(options.rpc);request.timeout=15000;
   const provider=new JsonRpcProvider(request,undefined,{cacheTimeout:-1});
   const send=async(method,params)=>{
@@ -60,8 +62,9 @@ async function readEscrowSnapshot(options,clock,blockSelector) {
     };
     fresh();
     const tag={blockHash:block.hash,requireCanonical:true};
-    const codes=await Promise.all([send('eth_getCode',[escrow,tag]),send('eth_getCode',[token,tag])]);
-    if(codes.some(c=>c==='0x') || keccak256(codes[0]).toLowerCase()!==options.escrowCodeHash.toLowerCase() || keccak256(codes[1]).toLowerCase()!==options.tokenCodeHash.toLowerCase())throw Error('Runtime code differs from the reviewed release');
+    const codes=await Promise.all([send('eth_getCode',[escrow,tag]),...(native?[]:[send('eth_getCode',[token,tag])])]);
+    if(codes.some(c=>c==='0x') || keccak256(codes[0]).toLowerCase()!==options.escrowCodeHash.toLowerCase() ||
+        !native && keccak256(codes[1]).toLowerCase()!==options.tokenCodeHash.toLowerCase())throw Error('Runtime code differs from the reviewed release');
     escrowInterface??=new Interface(escrowABI);
     const call=async(name,args=[])=>{
       const encoded=escrowInterface.encodeFunctionData(name,args);

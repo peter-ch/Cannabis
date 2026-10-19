@@ -37,7 +37,7 @@ const plane = await InitializedGuestControlPlane.start({
   initializationFile: '/run/approved/initialization.json'
 });
 try {
-  const session = await plane.createSession({ policy, challenge, funding });
+  const session = await plane.createSession({ policy, challenge, funding, execution });
   const evidence = await session.evidence();
   // Send evidence to the requester through the reviewed authenticated transport.
 } finally {
@@ -49,13 +49,87 @@ The caller must import `InitializedGuestControlPlane` from `compute/guest_bootst
 
 Startup verifies both service executable hashes against the image input lock, reserves a private runtime directory and starts the agent with `--initdata-digest`. It passes no TOML override and inherits no caller environment. The pinned upstream agent compares the supplied bytes with the hardware field before binding its RPC socket. Cannabis additionally rejects the upstream unsupported-platform branch, which otherwise continues without that comparison. The REST bridge is restricted to attestation on literal loopback; startup verifies the listening socket belongs to the process it launched before querying it.
 
-`createSession` derives requester, job and placement from the retained assignment. It requires `funding`: the signed lease proof plus independently approved capacity domain, provider, resource/service commitments and network configuration described in [fresh guest funding](guest-workload.md#fresh-funding-inside-the-guest). These pins and the RPC endpoint belong to trusted measured configuration; accepting host-chosen values would defeat this check. The session verifies the signatures, assignment, initialization digest and challenge before generating the channel key. Current escrow state is reread before and after opening the delivered job key. A failed session creation closes the control plane. Only one session may be issued. Cancellation or either service exiting retires the session and terminates both process groups. `close()` waits for cleanup and reports failures; callers must await it and tear down the guest on failure.
+`createSession` derives requester, job and placement from the retained assignment. It requires `funding`: the signed lease proof plus independently approved capacity domain, provider, resource/service commitments and network configuration described in [fresh guest funding](guest-workload.md#fresh-funding-inside-the-guest). It also requires the independently approved `execution` profile and guest paths described in [native execution readiness](guest-workload.md#funded-native-execution-readiness); the profile commitment and exact unit count must match the signed service. These pins and the RPC endpoint belong to trusted measured configuration; accepting host-chosen values would defeat this check. The session verifies the signatures, assignment, initialization digest and challenge before generating the channel key. Current escrow state is reread before and after opening the delivered job key. A failed session creation closes the control plane. Only one session may be issued. Cancellation or either service exiting retires the session and terminates both process groups. `close()` waits for cleanup and reports failures; callers must await it and tear down the guest on failure.
+
+## Fixed session entry and signed configuration
+
+`scripts/compute-guest-session.mjs` is the fixed Linux control entry for one
+already-contained job. It accepts no command-line override for its authorities,
+runtime, service binaries or agent. The entry reads these fixed guest paths:
+
+| Path | Role |
+| --- | --- |
+| `/opt/cannabis/launch-authorities.json` | Public configuration signers, quorum, chain and maximum configuration lifetime, embedded in the measured image |
+| `/run/cannabis-launch/configuration.json` | Configuration and its authority signatures |
+| `/run/cannabis-launch/initialization.json` | Canonical retained assignment prepared by the initialization tool |
+| `/run/cannabis-launch/request.json` | Exactly the signed lease `proof` and fresh attestation `challenge` |
+
+All inputs use compact sorted-key JSON and one trailing newline. The authority file
+and its ancestor directories must be root-owned and not writable by group or
+others. Reads refuse nonregular files, final symlinks, oversized data, changed
+length and alternative/duplicate-key encodings. The authority file contains only
+public addresses. Customer keys, program contents, arguments and private output
+metadata do not belong in these files.
+
+The image builder's optional `--launch-authorities PATH` embeds a reviewed public
+authority set. No production authority set is supplied by default. Merely embedding
+keys does not establish their owners' independence, an audit or hardware admission.
+The ordinary acceptance image still runs checks and powers off without job intake.
+
+The external configuration is authorized with EIP-712 **Cannabis guest launch
+configuration** signatures. Its digest covers the exact capacity domain, funding
+RPC/genesis/escrow code pins, provider/resource, native service profile, tool/runtime
+paths, attestation policy template, evidence-service paths and transport limits.
+Distinct signers must meet the image's quorum. The signing domain also binds the
+authority set and chain. Unknown signers, duplicates, missing signatures, changed
+configuration and out-of-window approvals fail. Credentials and query parameters
+are refused in RPC URLs. Configure an appropriate public or separately mediated
+RPC endpoint; do not place API secrets in this public launch configuration.
+
+Keeping the signed configuration outside the image avoids a self-reference: a
+reviewer can sign the completed image's measurement without changing those image
+bytes. The signed policy template requires `measurements.initData: null`; the entry
+replaces only that field with the retained assignment's actual digest. The image
+measurement, verifier key, TCB requirements and other policy fields remain signed.
+The challenge, lease, service commitment and reserved interval must all match. A
+configuration ID is an identifier, not a monotonic rollback counter. Expiry and
+current requester appraisal pins do not replace an operational revocation policy,
+trustworthy time or outer protection against VM rollback.
+
+Local review tooling never signs or starts a worker:
+
+```sh
+node scripts/prepare-guest-launch.mjs authorities /private/launch-authorities.json
+node scripts/prepare-guest-launch.mjs prepare /private/launch-authorities.json /private/launch-configuration.json
+node scripts/prepare-guest-launch.mjs verify /private/launch-authorities.json /private/signed-launch-configuration.json
+```
+
+`compute/guest_launch.mjs` exports `encodeLaunchJSON` for the required canonical
+file encoding. Authority signatures acknowledge configuration authorization only;
+retain independent security/privacy review and user-controlled release approval
+as separate launch requirements.
+
+Before creating a session key, the entry invokes the pinned public admission
+helper. That helper checks the actual cgroup containment, signed resource profile,
+runtime tree and tool pins under the retained outer deadline. This is a point-in-time
+inspection; execution repeats admission before opening customer keys. The entry
+then starts only the pinned SNP/TDX services, retains the assignment without
+rereading a host replacement, and serves the [encrypted result handoff](key-delivery.md#encrypted-streaming-handoff).
+Failure closes the session and services. The outer owner must still retire the
+entire VM and its key-bearing processes, including failures during cleanup.
 
 ## What remains for deployment
 
 The requester still verifies the signed Trustee appraisal, including vendor evidence, approved boot measurements, initialization digest, fresh challenge and channel key. The startup API does not independently validate a hardware report or authorize workload execution.
 
-The measured launcher must isolate customer code from the agent, bridge, attestation devices and control-plane memory; enforce resource and network policy; and provide protected storage, encrypted results, replay controls and teardown. Do not expose the raw bridge through a host proxy. Passing a matching job binding is not a substitute for enforcing the actual runtime.
+The fixed entry assumes an independently supervised `GuestJobScope` and reviewed
+guest filesystem/runtime layout already exist. The complete measured boot/outer
+launcher must supply them, stage only bounded public configuration and encrypted
+workloads, authenticate network transport, reserve whole-VM overhead and enforce
+VM disposal/key retirement. Runtime isolation, result transport and local receipt
+recovery are connected components; they do not establish the complete operating
+worker. Do not expose the raw bridge through a host proxy. Passing a matching job
+binding is not a substitute for enforcing the actual runtime.
 
 The [boot check](guest-image-build.md) runs the pinned binaries and requires both SNP and TDX initialization attempts to reject ordinary hardware. It also checks cancellation, changed binaries, occupied ports and cleanup. These are negative acceptance checks. A real worker must additionally reject a hardware-field mismatch, accept the independently approved measured image and complete the [full worker acceptance run](worker-deployment.md#complete-the-worker-acceptance-run).
 

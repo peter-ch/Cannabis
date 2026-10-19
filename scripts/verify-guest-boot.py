@@ -16,12 +16,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--timeout', type=int, default=900)
+    parser.add_argument('--timeout', type=int, default=1800)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     image, out = args.image.resolve(), args.output.resolve()
-    if sys.platform != 'linux' or not 30 <= args.timeout <= 900:
-        raise ValueError('Use Linux and a 30..900 second boot deadline')
+    if sys.platform != 'linux' or not 30 <= args.timeout <= 1800:
+        raise ValueError('Use Linux and a 30..1800 second boot deadline')
     if out.exists() or root == out or root in out.parents:
         raise ValueError('Require a new private output directory')
     qemu = shutil.which('qemu-system-x86_64')
@@ -56,6 +56,8 @@ def main():
     if code != 0 or len(lines) != 1 or 'CANNABIS_BOOT_CHECK' in text:
         raise ValueError('Guest boot check failed; inspect private serial log')
     result = json.loads(lines[0])
+    if result.get('configuredEntryClosed') is not True:
+        raise ValueError('Fixed configured entry did not refuse the unprepared boot')
     expected_initialization = {'schema':'cannabis.guest-initialization-check.v1',
         'profiles':[{'profile':p, 'unsupportedHardwareRejected':True, 'servicesStopped':True} for p in ['snp','tdx']],
         'cancellationRejected':True, 'changedBinaryRejected':True, 'occupiedPortRejected':True,
@@ -101,6 +103,20 @@ def main():
             or any(native.get(k) is not False for k in ['customerCodeExecuted', 'hardwareValidated', 'realPaidJob'])
             or any(native.get(k) is not True for k in ['ownedEncryptedExecution', 'requesterReconstruction'])):
         raise ValueError('Encrypted guest execution checks did not pass')
+    job_cases = {'childCountBound', 'parentEntryRejected', 'retainedLeafHandlesAfterParentCleanup',
+        'partialLeafCleanup', 'aggregateOOMKillsAllLeaves', 'aggregatePIDLimit', 'pinnedControlAndWorkloadCompletion',
+        'busyControlExitRefused', 'stoppedControlAndDetachedWorkloadRetired', 'wholeTreeDeadline',
+        'shorterControlDeadlineBoundsWholeTree', 'stoppedOuterOwnerDeadline', 'outerOwnerDeathRetiresControlAndWorkload'}
+    execution_cases = {'success', 'resource-change', 'profile-underbudget', 'runtime-change', 'owner-death', 'deadline'}
+    for field, schema, cases in [('jobChecks','cannabis.guest-job-check.v1',job_cases),
+                                 ('executionChecks','cannabis.guest-execution-check.v1',execution_cases)]:
+        component = result.get(field, {})
+        if (component.get('schema') != schema or component.get('kernel') != report['kernelRelease']
+                or component.get('checks') != {name: True for name in cases}
+                or any(component.get(k) is not False for k in ['customerCodeExecuted','hardwareValidated','realPaidJob'])):
+            raise ValueError('Aggregate execution acceptance checks did not pass')
+    if result['executionChecks'].get('requesterReconstruction') is not True:
+        raise ValueError('Protected channel requester reconstruction did not pass')
     if result['schema'] != 'cannabis.guest-boot-check.v1' or result['kernel'] != report['kernelRelease'] or result['imageFilesVerified'] != report['embeddedFiles'] or result['tee'] != 'sample' or result['profileChecks'] != [{'profile':p, 'unsupportedHardwareRejected':True} for p in ['snp','tdx']] or any(result[k] is not False for k in ['requestedEvidence','acceptedJobKeys','launchedCustomerWork','hardwareValidated']):
         raise ValueError('Unexpected guest result')
     final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}
