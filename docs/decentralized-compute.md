@@ -79,6 +79,30 @@ Requester key-delivery configuration can use `marketProofFile` and `{ chainId, m
 
 The retained operating launcher requires `cannabis.guest-launch-configuration.v3`, including market address/runtime pins, and rejects older configuration and local-ledger proof formats. Its complete canonical configuration hash enters the version-2 initialized assignment and version-3 requester key approval. The requester retains the full reviewed configuration locally and independently checks its network, booked service, runtime and derived appraisal policy. Encrypted result receipts, relay checks and browser recovery retain this same approval commitment; stripping it cannot downgrade the session. Legacy utilities remain for historical component checks. The launch-authority mechanism still needs replacement with requester/provider consent before decentralized production admission. Updated measured images, actual confidential hardware, independent review and genuine paid acceptance remain release requirements.
 
+## Booked launch consent under integration
+
+The consent reader now prepares separate requester and provider signatures over
+the complete configuration hash, initialized assignment hash, booking-group
+digest, selected booking, parties and service interval. Its typed-data domain
+includes the chain and market. Offline inspection checks these commitments but
+does not establish that a booking exists or permit execution.
+
+`readLaunchConsentState` independently reads the approved network. Both parties'
+signatures are checked with the active escrow at the same canonical block hash,
+at fresh finalized and current observations. Provider contract wallets use
+[ERC-1271](https://eips.ethereum.org/EIPS/eip-1271); code and approval queries use
+[EIP-1898 canonical block hashes](https://eips.ethereum.org/EIPS/eip-1898).
+Approval created after funding need not have existed at the original funding
+block. Revoked approval at the current block, changed canonicality, malformed
+responses and unsupported hash queries cause refusal. Contract code never falls
+back to an ordinary signature check after refusing an approval.
+
+Requester signatures currently require an EOA signing key, consistent with the
+existing key-delivery flow. Signature and funding observations do not establish
+hardware admission. The fixed operating entry still uses the earlier launch
+authority; replacing it and carrying consent through protected lifetime checks,
+participant tools and encrypted recovery remain unfinished integration work.
+
 ## Limits and remaining trust
 
 The contract bounds active or unexpired inventory to 64 bookings per resource and each batch to 64 entries. These are safety bounds, not promised throughput. Gas grows with the number and arrangement of overlapping bookings. A larger planner graph does not imply it fits in one market batch or transaction. The current time-rate quote uses integer base units with rates in multiples of 100, preserving exact fee precision. Other pricing models need reviewed formats.

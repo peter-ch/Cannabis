@@ -20,6 +20,7 @@ import { guestInitialization } from '../compute/guest_initialization.mjs';
 import { keyDeliveryPayload, sealJobKeyDelivery } from '../compute/key_delivery.mjs';
 import { sealResultDelivery, openResultDelivery } from '../compute/result_delivery.mjs';
 import { resultKeyCommitment } from '../compute/result_keys.mjs';
+import { launchConsentPayload, inspectLaunchConsent, readLaunchConsentState } from '../compute/guest_consent.mjs';
 
 const h = n => '0x' + n.toString(16).padStart(64, '0');
 const utc = n => new Date(n * 1000).toISOString().replace('.000Z', 'Z');
@@ -39,13 +40,26 @@ function syntheticEAR(key, policy, challenge, channel, now) {
   const body = [{ alg: 'ES256', typ: 'JWT', jwk: key.publicKey.export({ format: 'jwk' }) }, claims].map(v => Buffer.from(JSON.stringify(v)).toString('base64url')).join('.');
   return body + '.' + sign('sha256', Buffer.from(body), { key: key.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
 }
-let node, provider, owner, workers, judge, native, tokenEscrow, market, asset, initial;
+let node, provider, owner, workers, judge, native, tokenEscrow, market, asset, contractWorker, initial;
 const port = () => new Promise(resolve => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 before(async () => {
   const artifacts = compile({ 'MarketLeaseAsset.sol': { content: `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 contract MarketLeaseAsset is ERC20 { constructor() ERC20("Isolated verification", "FIX") { _mint(msg.sender, 1000000 ether); } }
+contract MarketConsentWallet {
+  address public immutable owner;
+  mapping(bytes32 => bool) public approved;
+  constructor(address owner_) { owner = owner_; }
+  function approveDigest(bytes32 digest, bool value) external { require(msg.sender == owner); approved[digest] = value; }
+  function invoke(address target, bytes calldata data) external {
+    require(msg.sender == owner); (bool ok,) = target.call(data); require(ok);
+  }
+  function isValidSignature(bytes32 digest, bytes calldata signature) external view returns (bytes4) {
+    return approved[digest] && ECDSA.recover(digest, signature) == owner ? bytes4(0x1626ba7e) : bytes4(0xffffffff);
+  }
+}
 ` } });
   node = await startNode(await port(), 'market-lease-test-node.log'); provider = node.provider;
   const accounts = await Promise.all([0, 1, 2, 3].map(i => provider.getSigner(i))); [owner, ...workers] = accounts; judge = workers.pop();
@@ -53,17 +67,25 @@ contract MarketLeaseAsset is ERC20 { constructor() ERC20("Isolated verification"
   asset = await deploy('MarketLeaseAsset'); native = await deploy('ComputeEscrow', [ZeroAddress, policy.founderRecipient]);
   tokenEscrow = await deploy('ComputeEscrow', [await asset.getAddress(), policy.founderRecipient]);
   market = await deploy('ComputeMarket', [await native.getAddress(), await tokenEscrow.getAddress()]);
+  contractWorker = await deploy('MarketConsentWallet', [await workers[0].getAddress()]);
   await (await asset.approve(await tokenEscrow.getAddress(), 100000000n)).wait();
   initial = await provider.send('evm_snapshot', []);
 });
 after(() => { provider?.destroy(); node?.child.kill(); });
 
-async function setup({ token = false, activate = true, execution } = {}) {
+async function setup({ token = false, activate = true, execution, contractProvider = false } = {}) {
   await provider.send('evm_revert', [initial]); initial = await provider.send('evm_snapshot', []);
   let time = (await provider.getBlock('latest')).timestamp;
   await provider.send('evm_setNextBlockTimestamp', [time + 1]); await provider.send('evm_mine', []); ++time;
   const clock = () => time, start = time + 1000, end = start + 100, escrow = token ? tokenEscrow : native;
   const account = await owner.getAddress(), addresses = await Promise.all(workers.map(w => w.getAddress()));
+  if(contractProvider)addresses[0]=await contractWorker.getAddress();
+  const workerCall=async(i,target,name,args)=>{
+    const tx=contractProvider&&i===0
+      ? await contractWorker.connect(workers[i]).invoke(await target.getAddress(),target.interface.encodeFunctionData(name,args))
+      : await target.connect(workers[i])[name](...args);
+    return tx.wait();
+  };
   const network = { rpc: node.rpc, chainId: 31337, market: await market.getAddress(), marketCodeHash: keccak256(await provider.getCode(await market.getAddress())),
     token: token ? await asset.getAddress() : ZeroAddress, escrow: await escrow.getAddress(), genesisHash: (await provider.getBlock(0)).hash,
     escrowCodeHash: keccak256(await provider.getCode(await escrow.getAddress())), tokenCodeHash: token ? keccak256(await provider.getCode(await asset.getAddress())) : null,
@@ -78,26 +100,27 @@ async function setup({ token = false, activate = true, execution } = {}) {
   const digest = termsDigest({ chainId: 31337, escrow: network.escrow, token: network.token, founderRecipient: policy.founderRecipient, ...terms });
   const bookings = [], signatures = [], ids = [];
   for (let i = 0; i < 2; ++i) {
-    await (await market.connect(workers[i]).publishResource(h(10 + i), execution?nativeServiceCommitment(execution).serviceSHA256:h(20 + i), 1)).wait();
+    await workerCall(i,market,'publishResource',[h(10 + i),execution?nativeServiceCommitment(execution).serviceSHA256:h(20 + i),1]);
     const resource = await market.resourceKey(addresses[i], h(10 + i));
     const offer = { resource, escrow: network.escrow, policyHash: '0x' + job.policySHA256, manifestHash: h(30 + i), start, end,
       expiresAt: time + 900, units: 1, grossPerUnitSecond: 100 };
-    await (await market.connect(workers[i]).publishOffer(h(40 + i), offer)).wait();
+    await workerCall(i,market,'publishOffer',[h(40 + i),offer]);
     const offerId = keccak256(coder.encode(['address', 'bytes32'], [addresses[i], h(40 + i)]));
     const booking = { reservationId: h(50 + i), offerId, requester: account, orderId, termsDigest: digest, start, end, units: 1, gross: '10000', holdUntil: time + 600 };
     const p = bookingPayload(context, booking); bookings.push(booking); ids.push(p.digest);
+    if(contractProvider&&i===0)await (await contractWorker.connect(workers[0]).approveDigest(p.digest,true)).wait();
     signatures.push(await workers[i].signTypedData(p.domain, p.types, p.value));
   }
   await (await market.reserveBatch(bookings, signatures)).wait();
   await (await escrow.fund(terms.terms, terms.accounts, terms.shares, { value: token ? 0 : 20000 })).wait();
-  for (const w of workers) await (await escrow.connect(w).accept(orderId)).wait();
+  for (let i=0;i<workers.length;++i) await workerCall(i,escrow,'accept',[orderId]);
   if (activate) await (await market.activate(ids.sort())).wait();
   time = (await provider.getBlock('latest')).timestamp;
   const input = { job, settlement, bookingIds: ids };
   const proof = activate ? await createMarketLeaseProof(network, input, clock) : null;
   const run = { runtimeSHA256: execution?.profile.runtime.digestSHA256??h(73).slice(2), taskSHA256: h(74).slice(2), attempt: 1, rank: 0, worldSize: 1, acceleratorClass: 'cpu' };
   const setTime = async value => { time = value; await provider.send('evm_setNextBlockTimestamp', [time]); await provider.send('evm_mine', []); };
-  return { network, context, input, proof, clock, setTime, start, end, escrow, orderId, ids, run };
+  return { network, context, input, proof, clock, setTime, start, end, escrow, orderId, ids, run, addresses, workerCall };
 }
 
 function guest(d, proof = d.proof, changes = {}) {
@@ -251,9 +274,9 @@ test('requester approval and encrypted result recovery retain the market group w
   } finally { attestations.close(); g.funding.close(); }
 });
 
-async function configuredFixture(t) {
-  const f=launchFixture(),d=await setup({execution:f.configuration.execution});await d.setTime(d.start+1);
-  const lease=verifyMarketLeaseProof(d.proof,d.context),r=lease.reservations[0],key=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
+async function configuredFixture(t,{contractProvider=false}={}) {
+  const f=launchFixture(),d=await setup({execution:f.configuration.execution,contractProvider});await d.setTime(d.start+1);
+  const lease=verifyMarketLeaseProof(d.proof,d.context),r=lease.reservations.find(r=>!contractProvider||r.provider===d.addresses[0]),key=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
   const configuration={...f.configuration,schema:'cannabis.guest-launch-configuration.v3',context:d.context,network:d.network,
     provider:r.provider,resourceId:r.resourceId,validFrom:d.start-10,validUntil:d.end+10};
   configuration.attestationPolicyTemplate.signingJwk=key.publicKey.export({format:'jwk'});
@@ -320,4 +343,118 @@ test('requester independently binds full configuration, appraisal policy and res
   await (await x.escrow.connect(workers[0]).deliver(x.orderId,h(95))).wait();
   await assert.rejects(sealJobKeyDelivery(x.source,x.attestations,signed,token,x.network,recover,{clock:x.clock}),/fully accepted active/);
   assert.equal(recoveries,1);
+});
+
+async function bookedConsent(x) {
+  const consents=[];
+  for(const [role,signer,account] of [['requester',owner,x.lease.requester],
+    ['provider',workers[x.addresses.indexOf(x.r.provider)],x.r.provider]]) {
+    const p=launchConsentPayload(x.configuration,x.initialization,x.proof,role);
+    consents.push({role,signer:account,signature:await signer.signTypedData(p.domain,p.types,p.value)});
+  }
+  const signed={schema:'cannabis.guest-launch-consent.v1',configuration:x.configuration,consents};
+  return {signed,...inspectLaunchConsent(signed,x.initialization,x.proof,x.clock())};
+}
+
+test('booked EOA consent is observed with finalized and current active funding, without offline authorization',async t=>{
+  const x=await configuredFixture(t),c=await bookedConsent(x),options={launchApprovals:c.approvals};
+  const state=await readMarketLeaseState(x.proof,x.network,x.clock,options);
+  for(const at of ['finalized','head']) {
+    assert.deepEqual(state.launchSignatures[at].map(a=>a.digest),c.approvals.map(a=>a.digest));
+    assert.deepEqual(state.launchSignatures[at].map(a=>a.method),['ecdsa','ecdsa']);
+    assert.deepEqual(state.launchSignatures[at].map(a=>a.signer),[x.lease.requester,x.r.provider]);
+  }
+  assert.equal(state.executionAuthorized,false);assert.equal(state.keyReleaseAuthorized,false);
+  assert.equal(c.chainVerified,false);
+  for(const mutate of [a=>a[0].digest=h(99),a=>a[1].signature=a[0].signature,a=>a[1].signer=judge.address]) {
+    const a=structuredClone(c.approvals);mutate(a);
+    await assert.rejects(readMarketLeaseState(x.proof,x.network,x.clock,{launchApprovals:a}));
+  }
+  for(const options of [{launchApprovals:undefined},{launchApprovals:[]},{approvals:c.approvals}])
+    await assert.rejects(readMarketLeaseState(x.proof,x.network,x.clock,options));
+  await assert.rejects(readMarketLeaseState(x.proof,{...x.network,launchApprovals:c.approvals},x.clock),/assignment/);
+});
+
+test('contract-provider consent can follow funding, but revocation at the latest block refuses a finalized approval',async t=>{
+  const x=await configuredFixture(t,{contractProvider:true}),c=await bookedConsent(x),a=c.approvals[1];
+  await assert.rejects(readMarketLeaseState(x.proof,x.network,x.clock,{launchApprovals:c.approvals}),/signature is not valid/);
+  await (await contractWorker.connect(workers[0]).approveDigest(a.digest,true)).wait();
+  await x.setTime(x.start+10);
+  const approvedBlock=await provider.send('eth_getBlockByNumber',['latest',false]);
+  const state=await readMarketLeaseState(x.proof,x.network,x.clock,{launchApprovals:c.approvals});
+  assert.equal(state.launchSignatures.finalized[1].method,'erc1271');
+  assert.equal(state.launchSignatures.head[1].codeHash,keccak256(await provider.getCode(a.signer)));
+  // The actual contract did not approve launch at the original funding block.
+  const data=contractWorker.interface.encodeFunctionData('isValidSignature',[a.digest,a.signature]);
+  const old=await provider.send('eth_call',[{to:a.signer,data},{blockHash:x.proof.fundedAnchor.hash,requireCanonical:true}]);
+  assert.equal(contractWorker.interface.decodeFunctionResult('isValidSignature',old)[0],'0xffffffff');
+  await (await contractWorker.connect(workers[0]).approveDigest(a.digest,false)).wait();
+  await x.setTime(x.start+20);
+  const revokedBlock=await provider.send('eth_getBlockByNumber',['latest',false]),seen=[];
+  // Only the finality watermark is controlled; wallet code, approval state and
+  // escrow reads execute on the real isolated chain at their requested hashes.
+  const p=await proxy((m,r)=>{
+    if(m.method==='eth_getBlockByNumber'&&m.params[0]==='finalized')return {...r,result:approvedBlock};
+    if(m.method==='eth_call'&&m.params[0].to===a.signer) {
+      assert.equal(m.params[1].requireCanonical,true);seen.push(m.params[1].blockHash);
+    }
+    return r;
+  });
+  try {
+    await assert.rejects(readMarketLeaseState(x.proof,{...x.network,rpc:p.rpc},x.clock,{launchApprovals:c.approvals}),/signature is not valid/);
+    assert.deepEqual(seen,[approvedBlock.hash,revokedBlock.hash]);
+  } finally {await p.close();}
+});
+
+test('canonicality is rechecked after party signatures and unsupported wallet hash reads fail closed',async t=>{
+  const x=await configuredFixture(t),c=await bookedConsent(x);
+  for(const mode of ['replacement','unsupported']) {
+    let walletRead=false;
+    const p=await proxy((m,r)=>{
+      if(m.method==='eth_getCode'&&c.approvals.some(a=>a.signer===m.params[0])) {
+        assert.equal(m.params[1].requireCanonical,true);walletRead=true;
+        if(mode==='unsupported')return {id:m.id,jsonrpc:'2.0',error:{code:-32602,message:'Wallet hash read unavailable'}};
+      }
+      if(mode==='replacement'&&walletRead&&m.method==='eth_getBlockByNumber'&&/^0x[0-9a-f]+$/.test(m.params[0]))
+        return {...r,result:{...r.result,hash:h(999)}};
+      return r;
+    });
+    try {
+      await assert.rejects(readMarketLeaseState(x.proof,{...x.network,rpc:p.rpc},x.clock,{launchApprovals:c.approvals}),
+        mode==='replacement'?/chain changed/:/RPC eth_getCode failed/);
+      assert.equal(walletRead,true);
+    } finally {await p.close();}
+  }
+});
+
+test('consent observations retain approved bytes across asynchronous chain reads',async t=>{
+  const x=await configuredFixture(t),c=await bookedConsent(x),approvals=structuredClone(c.approvals);
+  const pending=readMarketLeaseState(x.proof,x.network,x.clock,{launchApprovals:approvals});
+  approvals[1].digest=h(99);approvals[1].signature='0x1234';
+  const state=await pending;
+  assert.equal(state.launchSignatures.head[1].digest,c.approvals[1].digest);
+  const retained=readLaunchConsentState(c.signed,x.initialization,x.proof,{clock:x.clock});
+  c.signed.configuration.network.rpc='https://unreviewed.invalid/';
+  x.proof.bookings[0].offer.manifestHash=h(99);
+  const observed=await retained;
+  assert.equal(observed.configurationSHA256,x.configurationSHA256);
+  assert.equal(observed.funding.launchSignatures.head[1].digest,c.approvals[1].digest);
+});
+
+test('consent reader derives exact parties and network from retained review, and refuses expired or invented assignments',async t=>{
+  const x=await configuredFixture(t),c=await bookedConsent(x);
+  const state=await readLaunchConsentState(c.signed,x.initialization,x.proof,{clock:x.clock});
+  assert.equal(state.bookingId,x.r.reservationId);assert.equal(state.provider,x.r.provider);
+  assert.equal(state.configurationSHA256,x.configurationSHA256);
+  assert.equal(state.funding.launchSignatures.head[1].digest,c.approvals[1].digest);
+  assert.equal(state.executionAuthorized,false);assert.equal(state.keyReleaseAuthorized,false);assert.equal(state.hardwareVerified,false);
+  const fake=structuredClone(x.proof);fake.bookings[0].offer.manifestHash=h(99);
+  // Consistent offline records and signatures do not establish canonical state.
+  inspectLaunchConsent(c.signed,x.initialization,fake,x.clock());
+  await assert.rejects(readLaunchConsentState(c.signed,x.initialization,fake,{clock:x.clock}),/activated bookings differ/);
+  let reads=0;
+  await assert.rejects(readLaunchConsentState(c.signed,x.initialization,x.proof,{clock:()=>++reads<4?x.clock():x.end}));
+  assert.ok(reads>=4);
+  await x.setTime(x.end);
+  await assert.rejects(readLaunchConsentState(c.signed,x.initialization,x.proof,{clock:x.clock}));
 });

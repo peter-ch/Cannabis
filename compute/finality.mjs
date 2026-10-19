@@ -3,6 +3,7 @@ import { FetchRequest, Interface, JsonRpcProvider, getAddress, keccak256, ZeroAd
 import escrowABI from './escrow-abi.json' with { type: 'json' };
 import { termsDigest } from '../scripts/compute-escrow.mjs';
 import { policy } from '../scripts/compute-plan.mjs';
+import { observeWalletSignatures } from './wallet_signatures.mjs';
 
 const bytes32=value=>typeof value==='string' && /^0x[0-9a-fA-F]{64}$/.test(value) && !/^0x0+$/.test(value);
 const plain=value=>JSON.parse(JSON.stringify(value,(_,v)=>typeof v==='bigint'?v.toString():v));
@@ -29,6 +30,8 @@ export async function readCurrentEscrow(options, clock=()=>Math.floor(Date.now()
 }
 
 async function readEscrowSnapshot(options,clock,blockSelector) {
+  // Retain pins and consent bytes across all asynchronous state observations.
+  options=structuredClone(options);
   const anchored=blockSelector==='anchor';
   const blockTag=anchored?'0x'+options.fundedAnchor.number.toString(16):blockSelector;
   const url=new URL(options.rpc);
@@ -82,6 +85,10 @@ async function readEscrowSnapshot(options,clock,blockSelector) {
     const t=order.terms;
     const terms={jobHash:t.jobHash,budget:t.budget,deliveryManager:t.deliveryManager,adjudicator:t.adjudicator,acceptBy:t.acceptBy,deliverBy:t.deliverBy,reviewSeconds:t.reviewSeconds,disputeSeconds:t.disputeSeconds};
     const result={chainId,escrow,token,founderRecipient:founder[0],requester:order.requester,terms,accounts,shares};
+    // Contract-wallet approval is revocable. Read it at precisely the same
+    // EIP-1898 block as the funded order, before the canonicality recheck below.
+    const launchSignatures=Object.hasOwn(options,'launchApprovals')
+      ? await observeWalletSignatures(send,block,options.launchApprovals) : undefined;
     // Recheck canonicality and the finality watermark after every hash-bound state read.
     const [canonical,watermark]=await Promise.all([send('eth_getBlockByNumber',[block.number,false]),send('eth_getBlockByNumber',[anchored?'finalized':blockSelector,false])]);
     if(canonical?.hash!==block.hash || !watermark || BigInt(watermark.number)<BigInt(block.number))throw Error('Finalized chain changed during inspection');
@@ -95,6 +102,7 @@ async function readEscrowSnapshot(options,clock,blockSelector) {
       finality:anchored?'rpc-finalized-anchor':blockSelector==='finalized'?'rpc-finalized':'unfinalized-head',genesisHash:genesis.hash,maxFinalizedAgeSeconds:options.maxFinalizedAgeSeconds,
       ...(blockSelector==='latest'?{maxHeadAgeSeconds:options.maxHeadAgeSeconds}:{}),
       runtimeCodeHashes:{escrow:options.escrowCodeHash,token:options.tokenCodeHash},
+      ...(launchSignatures?{launchSignatures}:{}),
       executionAuthorized:false,keyReleaseAuthorized:false,sent:false});
   }finally{provider.destroy();}
 }

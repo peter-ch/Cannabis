@@ -6,6 +6,7 @@ import { readMarketBookings, readMarketBookingsAtAnchor, readCurrentMarketBookin
 import { readFundedEscrowAtAnchor, readCurrentEscrow } from './finality.mjs';
 import { settlementTerms, termsDigest } from '../scripts/compute-escrow.mjs';
 import { policy } from '../scripts/compute-plan.mjs';
+import { validateWalletApprovals } from './wallet_signatures.mjs';
 
 const coder = AbiCoder.defaultAbiCoder();
 const seconds = () => Math.floor(Date.now() / 1000);
@@ -113,9 +114,17 @@ export async function createMarketLeaseProof(network, { job, settlement, booking
 
 // Original activation/funding, fresh finalized state and current canonical state
 // are read independently. Historical JSON and optional indexers have no authority.
-export async function readMarketLeaseState(proof, network, clock = seconds) {
+export async function readMarketLeaseState(proof, network, clock = seconds, options = {}) {
   network = structuredClone(network);
+  exact(options,Object.hasOwn(options,'launchApprovals')?['launchApprovals']:[]);
+  if(Object.hasOwn(network,'launchApprovals'))throw Error('Launch consent belongs to the assignment, not network configuration');
+  const launchApprovals=Object.hasOwn(options,'launchApprovals')?validateWalletApprovals(options.launchApprovals):undefined;
   const lease = configuration(proof, network), query = { bookingIds: lease.proof.bookings.map(r => r.bookingId) };
+  // Callers derive these digests from inspectLaunchConsent for the exact chosen
+  // booking. This low-level reader verifies state, not an arbitrary assignment.
+  if(launchApprovals && (launchApprovals[0].signer!==lease.requester || !lease.providers.includes(launchApprovals[1].signer)))
+    throw Error('Launch approval parties differ from the funded market group');
+  const consent=launchApprovals?{launchApprovals}:{};
   const n = { ...network, orderId: lease.orderId }, fundedAnchor = lease.fundedAnchor;
   const [originalMarket, originalEscrow] = await Promise.all([
     readMarketBookingsAtAnchor({ ...n, fundedAnchor }, query, clock), readFundedEscrowAtAnchor({ ...n, fundedAnchor }, clock)
@@ -124,14 +133,17 @@ export async function readMarketLeaseState(proof, network, clock = seconds) {
   if (canonical(originalEscrow.finalizedBlock) !== canonical(fundedAnchor)) throw Error('Original funding anchor timestamp differs');
   const finalized = await readMarketBookings(n, query, clock); checkMarket(finalized, lease);
   if (finalized.finalizedBlock.number < fundedAnchor.number) throw Error('Market finality regressed');
-  const funded = await readFundedEscrowAtAnchor({ ...n, fundedAnchor: finalized.finalizedBlock }, clock); checkEscrow(funded, lease);
+  // Consent may be created after original funding. It must be valid at both
+  // fresh observations, not retroactively at the historical funding anchor.
+  const funded = await readFundedEscrowAtAnchor({ ...n, ...consent, fundedAnchor: finalized.finalizedBlock }, clock); checkEscrow(funded, lease);
   if (canonical(funded.finalizedBlock) !== canonical(finalized.finalizedBlock)) throw Error('Finalized booking and funding anchors differ');
   const currentMarket = await readCurrentMarketBookings({ ...n, finalizedAnchor: finalized.finalizedBlock, fundingAnchor: fundedAnchor }, query, clock);
   checkMarket(currentMarket, lease);
-  const current = await readCurrentEscrow({ ...n, finalizedAnchor: finalized.finalizedBlock, fundingAnchor: fundedAnchor }, clock);
+  const current = await readCurrentEscrow({ ...n, ...consent, finalizedAnchor: finalized.finalizedBlock, fundingAnchor: fundedAnchor }, clock);
   checkEscrow(current, lease);
   if (current.headBlock.number < currentMarket.headBlock.number) throw Error('Latest market/funding view regressed');
   return { schema: 'cannabis.market-lease-state.v1', leaseDigest: lease.digest, market: lease.market, orderId: lease.orderId,
     fundedAnchor, finalizedBlock: finalized.finalizedBlock, headBlock: current.headBlock, observedAt: current.observedAt,
+    ...(launchApprovals?{launchSignatures:{finalized:funded.launchSignatures,head:current.launchSignatures}}:{}),
     executionAuthorized: false, keyReleaseAuthorized: false, hardwareVerified: false };
 }
