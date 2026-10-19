@@ -39,6 +39,10 @@ def main():
         # libraries; no customer package or participant custody is consulted.
         phase('python_runtime')
         import ctypes, ssl, sqlite3, lzma, bz2  # noqa: F401
+        phase('python_cached_runtime')
+        cached = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-python.py'],
+            capture_output=True, timeout=30, check=True)
+        python_checks = json.loads(cached.stdout)
         phase('configured_entry_closed')
         # No launch request, configured runtime or customer intake is staged in
         # the component boot. The fixed entry must import and fail closed.
@@ -132,7 +136,7 @@ def main():
             print('CANNABIS_EXECUTION_FAILURE ' + execution.stderr.decode(errors='replace')[-8192:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Native execution channel acceptance failed')
         execution_checks = json.loads(execution.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'configuredEntryClosed': True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:

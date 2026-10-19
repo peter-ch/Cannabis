@@ -161,6 +161,7 @@ def main():
             copy_text(source, project / 'compute' / source.name)
     for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'check-guest-guardian.py', 'compute-guest-guardian.py', 'check-guest-sandbox.py', 'compute-guest-sandbox.py', 'check-guest-native.py', 'compute-guest-helper.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs', 'compute-guest-control.py', 'check-guest-job.py', 'compute-guest-native-pipe.py', 'check-guest-execution.py', 'compute-guest-admission.py', 'compute-guest-session.mjs']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
+    copy_text(ROOT / 'scripts/check-guest-python.py', project / 'scripts/check-guest-python.py')
     for name in lock['guestServices']:
         shutil.copyfile(services / name, tree / 'usr/local/bin' / name)
         (tree / 'usr/local/bin' / name).chmod(0o755)
@@ -177,6 +178,16 @@ def main():
     if not (tree / 'usr/bin/sh').exists():
         (tree / 'usr/bin/sh').symlink_to('busybox')
     subprocess.run(['/usr/sbin/depmod', '-b', str(tree), lock['kernelRelease']], check=True)
+    # Avoid repeated source compilation inside bounded guardian/helper startup.
+    # Use the image's pinned interpreter and libraries, hash-checked caches,
+    # runtime filenames and optimization level zero (assertions stay enabled).
+    compiler_script = INPUTS / 'compile-python.py'
+    compiled = subprocess.run([str(tree / 'usr/bin/python3'), '-I', '-B', str(compiler_script), str(tree)],
+        env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'TZ': 'UTC'},
+        check=True, capture_output=True, timeout=120)
+    bytecode = json.loads(compiled.stdout)
+    bytecode['compilerScriptSHA256'] = digest(compiler_script)
+    (project / 'python-bytecode.json').write_text(json.dumps(bytecode, separators=(',', ':')) + '\n')
     # Record all embedded regular-file contents. This is a build manifest, not
     # remote attestation; firmware must cover the kernel/initrd/cmdline chain.
     manifest = [{'path':'/' + p.relative_to(tree).as_posix(), 'sha256':digest(p)} for p in sorted(tree.rglob('*')) if p.is_file() and not p.is_symlink()]
@@ -185,6 +196,7 @@ def main():
     (out / 'cmdline').write_text(cmdline + '\n')
     write_initramfs(tree, out / 'initramfs.cpio.gz', lock['sourceDateEpoch'])
     report = {'schema':'cannabis.guest-image-build.v1', 'kernelRelease':lock['kernelRelease'], 'inputsSHA256':digest(INPUTS / 'inputs.json'), 'builderSHA256':digest(Path(__file__)), 'embeddedFiles':len(manifest), 'outputs':{name:{'sha256':digest(out/name), 'bytes':(out/name).stat().st_size} for name in ['vmlinuz', 'initramfs.cpio.gz', 'cmdline']}, 'bootPurpose':'component acceptance; powers off without workload intake', 'hardwareValidated':False, 'executionAuthorized':False, 'independentReproduction':False}
+    report['pythonBytecode'] = bytecode
     (out / 'build.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report))
 

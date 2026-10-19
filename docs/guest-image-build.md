@@ -38,6 +38,21 @@ The output contains `vmlinuz`, `initramfs.cpio.gz`, `cmdline`, `build.json`, the
 
 The embedded file manifest checks regular-file contents during the boot check. This is local integrity evidence, not a hardware signature or proof against an operator controlling an ordinary VM. There is no persistent root disk or host filesystem mount. Customer execution will additionally require enforced isolation and protected temporary storage; the boot image does not establish those properties by itself.
 
+The build uses its pinned guest Python interpreter and libraries to prepare
+source-hash-validated bytecode caches. This avoids compiling the same trusted
+libraries during each bounded guardian or helper startup. Cache filenames refer
+to guest paths, optimization stays at zero so assertions remain enabled, and the
+builder validates every generated cache against its source. Caches and compiler
+metadata enter the embedded manifest and image measurement. They must reproduce
+across the two builds. No guardian, workload or cleanup deadline is increased.
+The cache mode follows Python's documented
+[source-hash invalidation](https://docs.python.org/3.12/library/compileall.html).
+
+The actual VM also imports the control modules while source compilation is
+disabled for that check, proving the caches are usable. A separate owned file
+changes content while keeping its size and timestamps; Python must reject its
+stale cache. These checks use no customer keys or workload data.
+
 Early boot copies only the embedded top-level image paths into a separate 1 GiB,
 unswappable tmpfs root, then uses the pinned BusyBox `switch_root` to release the
 original initramfs tree and start the guest initializer. The handoff is necessary

@@ -58,6 +58,10 @@ def main():
     result = json.loads(lines[0])
     if result.get('configuredEntryClosed') is not True:
         raise ValueError('Fixed configured entry did not refuse the unprepared boot')
+    if result.get('pythonChecks') != {'schema': 'cannabis.guest-python-check.v1',
+            'cachedControlImports': True, 'changedSourceInvalidatesCache': True,
+            'assertionsPreserved': True, 'customerKeysUsed': False, 'hardwareValidated': False}:
+        raise ValueError('Pinned Python cache loading and source validation did not pass')
     expected_initialization = {'schema':'cannabis.guest-initialization-check.v1',
         'profiles':[{'profile':p, 'unsupportedHardwareRejected':True, 'servicesStopped':True} for p in ['snp','tdx']],
         'cancellationRejected':True, 'changedBinaryRejected':True, 'occupiedPortRejected':True,
