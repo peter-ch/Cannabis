@@ -48,15 +48,18 @@ def main():
     if cmdline!='console=null panic=-1 quiet loglevel=0 init=/init':raise ValueError('Require the private operating console policy')
     out.mkdir(parents=True)
     checks={}
-    for mode in ['unapproved-launch','malformed-prefix','oversized-prefix','stalled-prefix','missing-port']:
+    for mode in ['unapproved-launch','malformed-prefix','oversized-prefix','stalled-prefix','missing-port','missing-network','wrong-network']:
         serial=out/(mode+'-serial.log');log=out/(mode+'-qemu.log')
         with tempfile.TemporaryDirectory(prefix='cannabis-boot-') as directory:
             sockpath=Path(directory)/'control.sock'
             qmppath=Path(directory)/'qmp.sock'
             command=[qemu,'-machine','q35,accel=tcg','-cpu','max','-smp',str(reference['cpus']),
-                '-m',str(reference['memoryMiB']),'-nodefaults','-nic','none','-display','none',
+                '-m',str(reference['memoryMiB']),'-nodefaults','-display','none',
                 '-monitor','none','-qmp','unix:'+str(qmppath)+',server=on,wait=off','-serial','file:'+str(serial),'-no-reboot',
                 '-kernel',str(image/'vmlinuz'),'-initrd',str(image/'initramfs.cpio.gz'),'-append',cmdline]
+            if mode=='missing-network':command+=['-nic','none']
+            else:command+=['-netdev','user,id=controlnet,net=10.0.2.0/24,host=10.0.2.2,dns=10.0.2.3,ipv6=off,restrict=on',
+                '-device','virtio-net-pci,netdev=controlnet,mac='+('52:54:00:ca:42:01' if mode=='wrong-network' else '52:54:00:ca:42:00')]
             if mode!='missing-port':
                 command+=['-chardev','socket,id=control,path='+str(sockpath)+',server=on,wait=on',
                     '-device','virtio-serial-pci,id=controlbus','-device','virtserialport,chardev=control,name=org.cannabis.control']
@@ -91,7 +94,7 @@ def main():
                         if row.get('id')=='observe':
                             if row.get('return')!={}:raise ValueError('QMP observation failed')
                             break
-                    if mode!='missing-port':
+                    if mode not in ['missing-port','missing-network','wrong-network']:
                         greeting=bytearray()
                         while len(greeting)<len(READY):
                             if proc.poll() is not None or time.monotonic()-started>90:raise RuntimeError('Operating guest did not become ready')
@@ -141,7 +144,7 @@ def main():
                     if peer is not None:peer.close()
                     if qmp is not None:qmp.close()
     final={'schema':'cannabis.operating-boot-refusal.v1','checkedAt':datetime.now(timezone.utc).isoformat(),
-        'image':report['outputs'],'referenceVM':reference,'checks':checks,'networkAttached':False,
+        'image':report['outputs'],'referenceVM':reference,'checks':checks,'networkAttached':True,'externalNetworkEnabled':False,
         'hostFilesystemsAttached':False,'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0],
         'qmpScope':'Private local event observation only; no VM-control or memory-read command.',
         'hardwareValidated':False,'authorizedJobCompleted':False,'customerKeysUsed':False,'realPaidJob':False}

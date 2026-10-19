@@ -19,6 +19,7 @@ import time
 
 from .guest_resources import _directory, _read, _write, _values, _verify
 from .guest_vm import image_vm_budget
+from .guest_network import configure_control_network,observe_control_network
 
 MAGIC=b'CANNABIS-BOOT\x01'
 READY=b'CANNABIS-READY\x01'
@@ -345,10 +346,15 @@ def run_pid1():
         lifetime=time.monotonic()+budget.outer.wall_seconds
         watchdog_pid,watchdog,lifeline=arm_watchdog(retire,lifetime)
         budget.verify_layout()
+        # Funding must be observed inside the measured guest over authenticated
+        # HTTPS. Workloads retain their separate network namespace and socket
+        # filter; this NIC belongs only to the trusted control plane.
+        configure_control_network()
         control=open_control_port()
         intake_deadline=min(lifetime,time.monotonic()+30)
         write_status(control,READY,min(intake_deadline,time.monotonic()+5),watchdog)
         receive_public_launch(control,LAUNCH,intake_deadline,watchdog=watchdog)
+        observe_control_network()
         with VmProcessTree(budget) as tree:
             write_status(control,STAGED,min(lifetime,time.monotonic()+5),watchdog)
             supervise_launcher(tree,['/usr/bin/python3','-I','-B',FIXED_LAUNCHER],control,control,lifetime,watchdog,watchdog_pid=watchdog_pid)

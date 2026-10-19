@@ -175,6 +175,9 @@ def main():
     (tree / 'etc/shadow').write_text('root:!:0:0:99999:7:::\ncannabis:!:0:0:99999:7:::\n')
     (tree / 'etc/shadow').chmod(0o600)
     (tree / 'etc/hosts').write_text('127.0.0.1 localhost\n::1 localhost\n')
+    (tree / 'etc/resolv.conf').unlink(missing_ok=True)
+    (tree / 'etc/resolv.conf').write_text('nameserver 10.0.2.3\noptions timeout:2 attempts:2\n')
+    (tree / 'etc/nsswitch.conf').write_text('hosts: files dns\n')
     if not (tree / 'usr/bin/sh').exists():
         (tree / 'usr/bin/sh').symlink_to('busybox')
     subprocess.run(['/usr/sbin/depmod', '-b', str(tree), lock['kernelRelease']], check=True)

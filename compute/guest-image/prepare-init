@@ -1,5 +1,5 @@
 #!/bin/busybox sh
-# No shell, host filesystem, network interface, workload or key intake at boot.
+# No interactive shell, host filesystem, workload or key intake at boot.
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/run
 export PYTHONDONTWRITEBYTECODE=1
@@ -33,5 +33,6 @@ echo 0 > /proc/sys/fs/suid_dumpable
 /usr/sbin/modprobe sev-guest >/dev/null 2>&1 || :
 /usr/sbin/modprobe tdx-guest >/dev/null 2>&1 || :
 /usr/sbin/modprobe virtio_console >/dev/null 2>&1 || :
+/usr/sbin/modprobe virtio_net >/dev/null 2>&1 || :
 echo 1 > /proc/sys/kernel/modules_disabled
 /bin/busybox ip link set lo up || fail

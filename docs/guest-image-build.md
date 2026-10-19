@@ -148,9 +148,65 @@ approve participant signatures, hardware or customer execution.
 
 `compute-guest-boot.py` requires privileged PID 1 and accepts no command-line
 override. It checks the measured layout, starts a separate key-free shutdown
-watchdog and opens exactly one nonterminal virtio port named
+watchdog, configures the measured control-plane network and opens exactly one nonterminal virtio port named
 `org.cannabis.control`. The host supplies an untrusted byte stream on this port.
 There is no disk intake, shell service or plaintext customer-work fallback.
+
+### Control-plane network
+
+Fresh funding and wallet-validity checks must run inside the guest before key
+release. The operating entry therefore requires exactly one `virtio_net` device
+named `eth0`, with MAC `52:54:00:ca:42:00`. The measured profile fixes IPv4
+`10.0.2.15/24`, gateway `10.0.2.2` and resolver `10.0.2.3`; DHCP, IPv6, forwarding
+and ICMP redirects are disabled. Startup observation refuses changed device,
+address, route, resolver or control settings. Setup never adopts an already
+configured network; these checks are not continuous network monitoring.
+
+For a QEMU provider, the corresponding control-plane device arguments are:
+
+```text
+-netdev user,id=controlnet,net=10.0.2.0/24,host=10.0.2.2,dns=10.0.2.3,ipv6=off
+-device virtio-net-pci,netdev=controlnet,mac=52:54:00:ca:42:00
+```
+
+These are networking arguments only, not a confidential launch command. The
+reviewed firmware, SNP/TDX policy, exact image and vCPU measurements, initialization
+binding and lifecycle controls remain mandatory. The addresses follow QEMU's
+[user networking model](https://www.qemu.org/docs/master/system/devices/net.html).
+There is no host port forwarding or file-sharing service in this profile.
+
+The selected RPC endpoint belongs to the signed configuration. Production uses
+HTTPS with certificate and hostname validation inside the guest, followed by the
+existing chain, genesis, runtime-code, hash-bound funding and wallet checks. A
+host-controlled DNS/router cannot replace TLS verification. The current RPC trust
+model remains explicit; routing and TLS are not local consensus validation.
+Network metadata, such as destination and DNS queries, is visible to the host.
+
+This network belongs to the trusted control plane. Customer processes retain
+their separate network namespace, denied IP/netlink/packet/vsock creation and
+absence of control-plane descriptors. The current native adapter still has no
+customer Internet or distributed-network access. This is not a kernel destination
+allowlist for arbitrary privileged guest programs; the measured control programs
+and existing workload isolation define the boundary. Other adapters and protected
+multi-node traffic require their separately reviewed paths.
+
+`verify-guest-network.py` creates a distinct private diagnostic image from a
+verified operating image's retained rootfs. It checks static NIC setup, changed
+configuration refusal, real DNS, TLS/hostname/redirect/timeout handling through
+loopback-hosted owned RPC fixtures, and actual workload socket refusal while the
+control network is active. The diagnostic image has a different entry and a
+public fixture CA used only by its check process. The production image and its
+trust roots remain unchanged; it has no diagnostic mode.
+
+```sh
+sudo python3 scripts/verify-guest-network.py \
+  --image /work/cannabis-operating-first \
+  --output /work/cannabis-network-check
+```
+
+These checks make no real payment or hardware-admission claim. Updated measured
+network source requires new image hashes and reference candidates; older image
+measurements cannot authorize the changed operating image.
 
 The public prefix is deliberately separate from the later encrypted protocol:
 
@@ -212,12 +268,14 @@ python3 scripts/verify-operating-boot.py \
 
 It sends only invalid owned public requests. It requires public staging followed
 by refusal, malformed/oversized prefix refusal, bounded stalled intake, and
-shutdown when the port is absent. The kernel console must remain silent. A local
+shutdown when the port or required network device is absent or the device identity
+differs. The kernel console must remain silent. A local
 QMP connection observes the
 [guest shutdown event](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html#event-SHUTDOWN);
 host termination, reset or panic does not substitute for the expected power-off.
-QMP issues no VM-control or memory-read command. No NIC, shared filesystem,
-customer key, authorized job or real payment participates in these checks.
+QMP issues no VM-control or memory-read command. The NIC uses a restricted user
+backend with external access disabled. No shared filesystem, customer key,
+authorized job or real payment participates in these refusal checks.
 
 These paths still require actual confidential hardware, reviewed production
 authorities, an integrated successful operating job, authenticated network and
