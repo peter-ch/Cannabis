@@ -1,8 +1,7 @@
 // Local requester workflow. Outputs wallet-review data or encrypted envelopes only.
 import fs from 'node:fs';
 import path from 'node:path';
-import { CapacityLedger } from '../compute/capacity.mjs';
-import { AttestationLedger, leaseAttestationBinding, marketAttestationBinding, configuredMarketAttestationBinding, requestTrusteeResult } from '../compute/attestation.mjs';
+import { AttestationLedger, configuredMarketAttestationBinding, requestTrusteeResult } from '../compute/attestation.mjs';
 import { keyDeliveryPayload, sealJobKeyDelivery, inspectKeyDelivery, recoverRequesterJobKey } from '../compute/key_delivery.mjs';
 import { validateGuestConfiguration } from '../compute/guest_configuration.mjs';
 import { createResultKeyCustody, recoverRequesterResultKey } from '../compute/result_keys.mjs';
@@ -17,23 +16,19 @@ let capacity, attestations;
 try {
   if (!['challenge', 'appraise', 'prepare', 'seal', 'inspect', 'create-result-key'].includes(action) || !configFile || !inputFile) throw Error('Usage: node scripts/compute-key-delivery.mjs ACTION private-config.json private-input.json');
   const config = read(configFile), input = read(inputFile);
-  if (config.marketProofFile) {
-    if (config.capacityLedger) throw Error('Select the market proof without a legacy capacity database');
-    capacity = { schema: config.launchConfigurationFile?'cannabis.market-requester.v2':'cannabis.market-requester.v1',
-      context: config.context, proof: read(config.marketProofFile),
-      ...(config.launchConfigurationFile?{configuration:read(config.launchConfigurationFile)}:{}) };
-  } else {
-    if (!fs.existsSync(config.capacityLedger)) throw Error('Existing funded capacity ledger required');
-    capacity = new CapacityLedger(config.capacityLedger, config.context);
+  // Journal inspection and result-key creation do not depend on a provider's
+  // current consent, a still-active order or historic source files remaining available.
+  if (!['inspect','create-result-key'].includes(action)) {
+    if (config.capacityLedger || !config.marketProofFile || !config.launchConfigurationFile || !config.launchConsentFile)
+      throw Error('New key delivery requires marketProofFile, launchConfigurationFile and launchConsentFile without a legacy capacity database');
+    capacity = { schema: 'cannabis.market-requester.v3', context: config.context,
+      proof: read(config.marketProofFile), configuration: read(config.launchConfigurationFile), consent: read(config.launchConsentFile) };
   }
-  attestations = new AttestationLedger(config.attestationLedger, read(config.attestationPolicyFile));
+  if (action !== 'create-result-key') attestations = new AttestationLedger(config.attestationLedger, read(config.attestationPolicyFile));
   let result;
   if (action === 'create-result-key') result = await createResultKeyCustody(input);
-  else if (action === 'challenge') result = attestations.challenge(config.marketProofFile
-    ? config.launchConfigurationFile?configuredMarketAttestationBinding(capacity.proof,config.context,input.reservationId,input.run,
-        validateGuestConfiguration(capacity.configuration).configurationSHA256)
-      :marketAttestationBinding(capacity.proof,config.context,input.reservationId,input.run)
-    : leaseAttestationBinding(capacity, input.leaseId, input.reservationId, input.run));
+  else if (action === 'challenge') result = attestations.challenge(configuredMarketAttestationBinding(
+    capacity.proof,config.context,input.reservationId,input.run,validateGuestConfiguration(capacity.configuration).configurationSHA256));
   else if (action === 'appraise') result = await requestTrusteeResult(attestations, config.trusteeEndpoint, input.nonce, input.channelJwk, input.evidence);
   else if (action === 'prepare') result = keyDeliveryPayload(capacity, attestations, input);
   else if (action === 'inspect') result = inspectKeyDelivery(attestations, input.releaseId);

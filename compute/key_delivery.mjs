@@ -13,22 +13,35 @@ import { resultKeyCommitment } from './result_keys.mjs';
 import { validateGuestConfiguration } from './guest_configuration.mjs';
 import { guestInitialization } from './guest_initialization.mjs';
 import { nativeServiceCommitment } from './guest_execution.mjs';
+import { inspectLaunchConsent } from './guest_consent.mjs';
 
 const hash = data => createHash('sha256').update(data).digest('hex');
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 const recipient = value => typeof value === 'string' && /^age1[0-9a-z]{58}$/.test(value);
-const marketSource=source=>['cannabis.market-requester.v1','cannabis.market-requester.v2'].includes(source?.schema);
+const marketSource=source=>['cannabis.market-requester.v1','cannabis.market-requester.v2','cannabis.market-requester.v3'].includes(source?.schema);
 function agreement(source, leaseId) {
   if (!marketSource(source)) return inspectLease(source, leaseId);
-  const configured=source.schema==='cannabis.market-requester.v2';
-  exact(source, ['schema', 'context', 'proof',...(configured?['configuration']:[])]);
+  // Saved approvals/results remain readable without issuing new keys from an
+  // obsolete configuration-only source. Never silently drop consent on downgrade.
+  if(source.schema==='cannabis.market-requester.v2')throw Error('Configured key delivery requires bilateral launch consent (market-requester.v3)');
+  const configured=source.schema==='cannabis.market-requester.v3';
+  exact(source, ['schema', 'context', 'proof',...(configured?['configuration','consent']:[])]);
   const checked=configured?validateGuestConfiguration(source.configuration):{};
   if(configured&&(checked.configuration.schema!=='cannabis.guest-launch-configuration.v3'||
     canonical(checked.configuration.context)!==canonical(source.context)))throw Error('Require a locally reviewed market launch configuration');
+  if(configured&&canonical(source.consent?.configuration)!==canonical(checked.configuration))
+    throw Error('Launch consent differs from the independently reviewed configuration');
   const lease = verifyMarketLeaseProof(source.proof, source.context);
   if (lease.digest !== leaseId) throw Error('Requester market group differs from approval');
   return { ...lease, ...checked, leaseId: lease.digest, agreement: { request: { job: lease.job } },
     reservations: lease.reservations.map(r => ({ ...r, id: r.reservationId })) };
+}
+
+function consentApprovals(source, lease, binding, now) {
+  if(!lease.configuration)return undefined; // Explicit historical unconfigured helpers only.
+  const initialization={schema:'cannabis.guest-initialization.v2',tee:lease.configuration.attestationPolicyTemplate.tee,
+    requester:lease.requester,jobId:lease.job.id,binding};
+  return inspectLaunchConsent(source.consent,initialization,lease.proof,now).approvals;
 }
 
 // Source paths/executables are trusted local requester configuration, never worker
@@ -124,6 +137,7 @@ export function keyDeliveryPayload(capacity, attestations, request, now = nowSec
     if(canonical(policy)!==canonical(attestations.policy))throw Error('Requester appraisal policy differs from reviewed configuration and assignment');
   }
   if (canonical(expected) !== canonical(b)) throw Error('Challenge and funded lease differ');
+  consentApprovals(capacity,lease,b,now); // Offline party/assignment checks; no chain authorization.
   const c = custody(request.descriptor, lease.agreement.request.job);
   trusteeRuntimeData(challenge, request.channelJwk); // Strict public-key schema; no private key accepted.
   integer(request.notBefore, Math.max(reservation.start, challenge.issuedAt), reservation.end - 1);
@@ -193,9 +207,11 @@ export async function sealJobKeyDelivery(capacity, attestations, signed, token, 
   const challenge = attestations.pending(request.nonce), lease = agreement(capacity, request.leaseId);
   if (BigInt(network.chainId) !== BigInt(payload.domain.chainId) || getAddress(network.escrow) !== getAddress(payload.domain.verifyingContract)) throw Error('Key-delivery network mismatch');
   if(lease.configuration&&canonical(network)!==canonical(lease.configuration.network))throw Error('Funding network differs from requester-reviewed launch configuration');
+  const approvals=consentApprovals(capacity,lease,challenge.binding,clock());
+  const observationOptions=approvals?{launchApprovals:approvals}:{};
   const appraisal = await verifyTrusteeResult(token, attestations.policy, challenge, request.channelJwk, clock());
   const marketBased=marketSource(capacity);
-  const finalized = marketBased ? await readMarketLeaseState(lease.proof, network, clock)
+  const finalized = marketBased ? await readMarketLeaseState(lease.proof, network, clock, observationOptions)
     : await readFinalizedEscrow({ ...network, orderId: payload.value.orderId }, clock);
   if (!marketBased) activeSnapshot(finalized, lease, network);
   const head = marketBased ? finalized : await readCurrentEscrow({ ...network, orderId: payload.value.orderId, finalizedAnchor: finalized.finalizedBlock }, clock);
@@ -230,7 +246,7 @@ export async function sealJobKeyDelivery(capacity, attestations, signed, token, 
   } finally { cleartext?.fill(0);resultKey?.fill(0); } // Best effort only; strings/crypto internals may retain copies.
   // Reobserve after local key recovery/wrapping; neither a saved lease nor an
   // earlier active snapshot authorizes a later delivery after state changes.
-  const finalHead = marketBased ? await readMarketLeaseState(lease.proof, network, clock)
+  const finalHead = marketBased ? await readMarketLeaseState(lease.proof, network, clock, observationOptions)
     : await readCurrentEscrow({ ...network, orderId: payload.value.orderId, finalizedAnchor: finalized.finalizedBlock }, clock);
   if (!marketBased) activeSnapshot(finalHead, lease, network);
   if (finalHead.headBlock.number < head.headBlock.number || finalHead.headBlock.timestamp >= request.expiresAt) throw Error('Latest funding view regressed or delivery window ended');

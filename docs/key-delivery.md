@@ -6,16 +6,16 @@ This is a local requester-side integration. It creates and journals encrypted de
 
 ## Checks before a key is wrapped
 
-`compute/key_delivery.mjs` combines [per-job custody](job-key-custody.md), [Trustee appraisals](trustee-attestation.md), [funded leases](capacity-commitments.md) and escrow state inspection:
+`compute/key_delivery.mjs` combines [per-job custody](job-key-custody.md), [Trustee appraisals](trustee-attestation.md), [on-chain bookings](decentralized-compute.md) and escrow state inspection:
 
-1. Derive workload, policy, reservation and booking-group bindings from the complete activated market proof, independently verified against the chain. The current requester path retains the full locally reviewed launch configuration, hashes it into the assignment and verifies the booked resource/service and derived appraisal policy. Older local-capacity utilities remain for historical checks. The requester supplies the approved runtime, task, attempt, rank and world size when creating the challenge.
-2. Prepare an EIP-712 `JobKeyDelivery` approval. The wallet-review payload commits the release ID, lease/order/reservation, package and policy, attestation-policy digest, runtime and task, key capsule, input recipient, guest channel key, challenge nonce, rank/attempt/world size and validity interval. Its domain binds chain ID and escrow address. The requester must sign it using the funded order's EOA. No wallet is unlocked or signed by this tool; contract-wallet signatures are not implemented.
+1. Compare bilateral launch consent with the independently retained full configuration and reconstruct the initialized assignment from the actual challenge. Refuse missing consent, configuration-only source v2 or any substituted configuration. Derive workload, policy, reservation and booking-group bindings from the complete activated market proof, independently verified against the chain. The current requester path retains the full locally reviewed launch configuration, hashes it into the assignment and verifies the booked resource/service and derived appraisal policy. Older local-capacity utilities remain for historical checks. The requester supplies the approved runtime, task, attempt, rank and world size when creating the challenge.
+2. Prepare an EIP-712 `JobKeyDelivery` approval. The wallet-review payload commits the release ID, lease/order/reservation, package and policy, attestation-policy digest, runtime and task, key capsule, input recipient, guest channel key, challenge nonce, rank/attempt/world size and validity interval. Its domain binds chain ID and escrow address. The requester must sign it using the funded order's EOA. No wallet is unlocked or signed by this tool; requester contract-wallet signatures are not implemented. Provider launch consent supports ERC-1271 wallets.
 3. Verify the requester signature, fresh Trustee result and every challenge binding. Current integrated profiles are SNP/TDX CPU only. Unsupported accelerators have no fallback to CPU-only approval.
-4. Read accepted funding at an RPC-reported finalized block, pinned by block hash, genesis, token and escrow runtime code. Confirm the original signed settlement terms and every provider's acceptance.
+4. Read accepted funding at an RPC-reported finalized block, pinned by block hash, genesis, token and escrow runtime code. Confirm the original signed settlement terms and every provider's acceptance. Observe both launch signatures at the same canonical block as the escrow state; an invalid or revoked provider approval stops before local custody opens.
 5. Independently inspect the canonical latest head and require the order to remain Active. This catches a delivered or otherwise changed order even when an earlier finalized snapshot still shows Active. Latest-state observation supplements finality; it does not replace it and can be reorganized later. The RPC remains a configured trust boundary.
 6. Only then recover the approved job key through the local Python custody helper. The requester identity remains in that helper; only the per-job input identity enters the local encryptor's anonymous pipe. Derive the input public recipient again using `age-keygen` and compare it with the signed approval.
 7. Encrypt the job key and requester approval with standard JOSE `ECDH-ES+A256KW` and `A256GCM`, using the attested P-256 public key. A fresh JWE ephemeral key and encryption material come from the JOSE library. The protected header binds the approval digest and public-key thumbprint. The encrypted payload's expiry is the earlier of approval and appraisal expiry.
-8. Recheck latest escrow state after recovery/wrapping. Recheck challenge cancellation, expiry, lease binding and requester window while holding the local write lock. Atomically journal the encrypted envelope and consume the nonce.
+8. Recheck fresh finalized/current escrow state and both launch signatures after input/result-key recovery and wrapping. A consent revocation during recovery refuses publication of the envelope. Recheck challenge cancellation, expiry, lease binding and requester window while holding the local write lock. Atomically journal the encrypted envelope and consume the nonce.
 
 The local journal permits one delivery per signed release and per `(lease, task, attempt, rank)`. Concurrent requests cannot both commit. The journal contains ciphertext, commitments and block references, not plaintext keys or full hardware reports. A failed attempt does not publish an envelope. Explicit challenge cancellation consumes that challenge. Keep both ledgers private and do not restore an old snapshot to reuse challenges or deliveries.
 
@@ -29,8 +29,8 @@ Use `scripts/compute-key-delivery.mjs`. Its private configuration contains:
 | --- | --- |
 | `context` | Market `chainId`, `market` address and payment `token` |
 | `marketProofFile` | Complete activated booking group and original finalized anchor |
-| `launchConfigurationFile` | Full locally reviewed unsigned configuration v3, matching the protected guest; produces requester source v2 and approval v3 |
-| `capacityLedger` | Historical local-lease utilities only; cannot be combined with `marketProofFile` |
+| `launchConfigurationFile` | Full independently reviewed unsigned configuration v3, matching the protected guest |
+| `launchConsentFile` | Ordered requester/provider consent for the exact configuration, assignment and booking; required with the above files for requester source v3 and approval v3 |
 | `attestationPolicyFile` | Requester-pinned Trustee policy file |
 | `attestationLedger` | Private challenge/delivery SQLite path |
 | `network` | Reviewed RPC, chain/genesis/code pins, token/escrow, `finality: rpc-finalized`, `maxFinalizedAgeSeconds`, `maxHeadAgeSeconds` |
@@ -38,7 +38,7 @@ Use `scripts/compute-key-delivery.mjs`. Its private configuration contains:
 | `resultKeySource` | Local `python`, `age`, `identity`, `custody` paths for reopening the encrypted per-release result secret; required for version-2 and version-3 approvals |
 | `trusteeEndpoint` | Requester-controlled AS `/attestation` URL used by `appraise`; never taken from a worker's message |
 
-These paths and executable choices are requester configuration, never worker-supplied protocol fields. For the operating market path, use both `marketProofFile` and `launchConfigurationFile`. The complete `network` object must exactly match that reviewed configuration before any key-recovery callback runs. Do not copy a host-proposed configuration into the approved slot without independent review. Python 3.12+, Node 22.22+ and the pinned age/age-keygen installation are required.
+These paths and executable choices are requester configuration, never worker-supplied protocol fields. For the operating market path, require `marketProofFile`, `launchConfigurationFile` and `launchConsentFile`. The CLI refuses a legacy capacity database or any missing file; it does not fall back to an older source. `inspect` only needs the existing journal and its pinned policy, while `create-result-key` does not need booking or consent files. The complete `network` object must exactly match that reviewed configuration before any key-recovery callback runs. Do not copy a host-proposed configuration into the approved slot without independent review. Python 3.12+, Node 22.22+ and the pinned age/age-keygen installation are required.
 
 ```sh
 node scripts/compute-key-delivery.mjs challenge ../private/delivery-config.json ../private/run-binding.json
@@ -51,10 +51,10 @@ node scripts/compute-key-delivery.mjs inspect ../private/delivery-config.json ..
 
 - `challenge` input: `{leaseId, reservationId, run}`. `run` contains `runtimeSHA256`, `taskSHA256`, `attempt`, `rank`, `worldSize`, `acceleratorClass`. Values must come from the approved workload and placement. The challenge must be created close enough to the reserved service window to remain fresh.
 - `appraise` input: the guest's `nonce`, `channelJwk` and base64url `evidence`. It calls the configured Trustee, verifies the EAR and returns `{token, appraisal, challengeConsumed: false, ...}`. Keep the response private and pass its token into `seal`; it does not recover a key or consume the challenge. This supports the [guest-held session](guest-attestation.md).
-- `prepare` input: `{releaseId, leaseId, nonce, channelJwk, descriptor, notBefore, expiresAt}`. `descriptor` is the requester's saved package-v2 descriptor. Times are integer Unix seconds and must fit inside both the reservation and challenge lifetime. The returned typed-data payload is ready for wallet review; it does not sign anything.
+- `prepare` input: `{releaseId, leaseId, nonce, channelJwk, descriptor, notBefore, expiresAt, resultKeySHA256}`. `descriptor` is the requester's saved package-v2 descriptor. Times are integer Unix seconds and must fit inside both the reservation and challenge lifetime. The returned typed-data payload is ready for wallet review; it does not sign anything.
 - `create-result-key` input: `{releaseId, recipient}` using the requester's own result recipient. Save its encrypted custody record privately and durably before delivery, with the existing requester identity backup. Add its `resultKeySHA256` to the `prepare` request. The configured market path produces a version-3 approval containing both result-key and launch-configuration commitments; historical unconfigured checks produce version 2. The result secret is never printed. The retained operating entry requires version 3. Legacy version-1 envelopes support only the earlier internal preparation path.
 - `seal` input: `{approval: {request, requesterSignature}, token}`. `token` is the Trustee EAR. Successful output reports `keyWrapped: true`, `transmitted: false`, `executionAuthorized: false` and includes the encrypted envelope. It contains no raw identity key.
-- `inspect` input: `{releaseId}`. Retrieves the original encrypted journal record after an interrupted caller. It does not renew expiry or create a new release.
+- `inspect` input: `{releaseId}`. Retrieves the original encrypted journal record after an interrupted caller. It does not renew expiry or create a new release. It does not consult a provider or require the booking/consent files to remain available.
 
 Obtain the EAR for the same pending challenge without consuming it through the standalone attestation `verify` or `attest` command first. The key-delivery operation performs that verification and consumes the challenge together with its encrypted journal record. A previously consumed challenge requires a new challenge, quote and signed approval. Both latest-head inspections also recheck that the finalized funding anchor is still canonical and has not lost its finality watermark.
 
@@ -73,6 +73,21 @@ Every rank and replacement needs its own fresh admission. A replacement must use
 Automated integration checks use actual age packages and requester recovery, actual escrow contracts on an isolated chain, real EIP-712 signatures and real JWE encryption/decryption. Disposable signed EAR fixtures exercise the result consumer; they do not establish real hardware attestation. Checks cover wrong signatures and guest keys, cross-binding, envelope tampering, expiry, cancellation, concurrent delivery, state changes during recovery, and a finalized Active order whose latest state is already Delivered. Independent review and hardware validation remain required before operational customer delivery.
 
 The JOSE implementation is the pinned [jose library](https://github.com/panva/jose/tree/v6.2.12); its [compact JWE API](https://github.com/panva/jose/blob/v6.2.12/docs/jwe/compact/encrypt/classes/CompactEncrypt.md) supplies the standard encryption construction.
+
+## Consent and historical recovery
+
+Requester source `cannabis.market-requester.v3` contains exactly `schema`, `context`,
+`proof`, the independently reviewed `configuration` and the bilateral `consent`.
+The encryptor retains these inputs before asynchronous work and derives approval
+digests from the actual challenge assignment. Both pre-custody and post-wrapping
+market reads check those same parties and signatures. Offline payload preparation
+is not fresh chain verification or permission to run a job.
+
+Previously issued approval versions and encrypted result records keep their
+authenticated recovery format. Opening a saved result does not require later
+provider consent, a still-active order or a new key delivery. New configuration-only
+source-v2 issuance is refused; historical unconfigured library helpers cannot
+authorize the current configured guest.
 
 ## Configuration-bound approval
 

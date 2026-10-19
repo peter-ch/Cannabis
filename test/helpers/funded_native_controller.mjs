@@ -117,13 +117,13 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
   attestationPolicy.measurements.initData=guestInitialization(initialization).digest;
   attestations=new AttestationLedger(':memory:',attestationPolicy);
   const challenge=attestations.challenge(binding);
-  capacity={schema:'cannabis.market-requester.v2',context,proof,configuration};
   const consents=[];
   for(const [role,signer,address] of [['requester',requester,account],['provider',worker,workerAccount]]) {
     const p=launchConsentPayload(configuration,initialization,proof,role);
     consents.push({role,signer:address,signature:await signer.signTypedData(p.domain,p.types,p.value)});
   }
   const signedConfiguration={schema:'cannabis.guest-launch-consent.v1',configuration,consents};
+  capacity={schema:'cannabis.market-requester.v3',context,proof,configuration,consent:signedConfiguration};
   await wire.writeJSON({signedConfiguration,initialization,request:{proof:funding.proof,challenge}});
   const inputTransfer=await sendEncryptedInput(wire,{source:input.inputCiphertext,
     packageSHA256:input.descriptor.ciphertextSHA256,maxCiphertextBytes:input.execution.profile.ciphertext.inputBytes});

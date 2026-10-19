@@ -2,6 +2,8 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import http from 'node:http';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { AbiCoder, ContractFactory, formatUnits, keccak256, ZeroAddress } from 'ethers';
 import { compile } from '../scripts/compile.mjs';
@@ -17,7 +19,7 @@ import { nativeServiceCommitment } from '../compute/guest_execution.mjs';
 import { launchFixture } from './helpers/launch_fixture.mjs';
 import { GuestFunding } from '../compute/guest_funding.mjs';
 import { guestInitialization } from '../compute/guest_initialization.mjs';
-import { keyDeliveryPayload, sealJobKeyDelivery } from '../compute/key_delivery.mjs';
+import { keyDeliveryPayload, sealJobKeyDelivery, openJobKeyDelivery, inspectKeyDelivery } from '../compute/key_delivery.mjs';
 import { sealResultDelivery, openResultDelivery } from '../compute/result_delivery.mjs';
 import { resultKeyCommitment } from '../compute/result_keys.mjs';
 import { launchConsentPayload, inspectLaunchConsent, readLaunchConsentState } from '../compute/guest_consent.mjs';
@@ -286,7 +288,9 @@ async function configuredFixture(t,{contractProvider=false,transportTimeoutMs=60
   const initialization={schema:'cannabis.guest-initialization.v2',tee:'snp',requester:lease.requester,jobId:lease.job.id,binding};
   const policy=structuredClone(configuration.attestationPolicyTemplate);policy.measurements.initData=guestInitialization(initialization).digest;
   const attestations=new AttestationLedger(':memory:',policy,d.clock);t.after(()=>attestations.close());
-  const challenge=attestations.challenge(binding),source={schema:'cannabis.market-requester.v2',context:d.context,proof:d.proof,configuration};
+  const challenge=attestations.challenge(binding);
+  const source={schema:'cannabis.market-requester.v3',context:d.context,proof:d.proof,configuration:structuredClone(configuration),
+    consent:(await bookedConsent({...d,configuration,initialization,lease,r})).signed};
   const descriptor={schema:'cannabis.package.v2',id:lease.job.id,ciphertextSHA256:lease.job.packageSHA256,policySHA256:lease.job.policySHA256,
     recipient:'age1'+'a'.repeat(58),keyCustody:{schema:'cannabis.job-key.custody.v1',format:'age-v1+json',ciphertextSHA256:h(96).slice(2),ciphertextBytes:100}};
   const request={releaseId:h(97),leaseId:lease.digest,nonce:challenge.nonce,channelJwk:key.publicKey.export({format:'jwk'}),descriptor,
@@ -329,6 +333,7 @@ test('requester independently binds full configuration, appraisal policy and res
     assert.throws(()=>keyDeliveryPayload(changed,x.attestations,x.request,x.clock()));
   }
   const changed=structuredClone(x.source);changed.configuration.transport.timeoutMs--;
+  changed.consent.configuration=structuredClone(changed.configuration);
   const binding={...x.binding,configurationSHA256:validateGuestConfiguration(changed.configuration).configurationSHA256};
   const otherChallenge=x.attestations.challenge(binding);
   assert.throws(()=>keyDeliveryPayload(changed,x.attestations,{...x.request,nonce:otherChallenge.nonce},x.clock()),/appraisal policy/);
@@ -355,6 +360,79 @@ async function bookedConsent(x) {
   const signed={schema:'cannabis.guest-launch-consent.v1',configuration:x.configuration,consents};
   return {signed,...inspectLaunchConsent(signed,x.initialization,x.proof,x.clock())};
 }
+
+async function requesterDelivery(x) {
+  const ageKeygen=process.env.CANNABIS_AGE
+    ? path.join(path.dirname(process.env.CANNABIS_AGE),process.platform==='win32'?'age-keygen.exe':'age-keygen') : 'age-keygen';
+  // Disposable identity exists only in this test process, never owner custody.
+  const generated=spawnSync(ageKeygen,[],{encoding:'utf8',windowsHide:true,stdio:['ignore','pipe','ignore']});
+  assert.equal(generated.status,0,'Disposable age key generation failed');
+  const identity=generated.stdout.match(/^AGE-SECRET-KEY-1[A-Z0-9]{58}$/m)?.[0]+'\n';
+  const derived=spawnSync(ageKeygen,['-y'],{input:identity,encoding:'utf8',windowsHide:true,stdio:['pipe','pipe','ignore']});
+  assert.equal(derived.status,0,'Disposable age public key derivation failed');
+  const request=structuredClone(x.request);request.descriptor.recipient=derived.stdout.trim();
+  const payload=keyDeliveryPayload(x.source,x.attestations,request,x.clock());
+  const signed={request,requesterSignature:await owner.signTypedData(payload.domain,payload.types,payload.value)};
+  const token=syntheticEAR(x.key,x.policy,x.challenge,request.channelJwk,x.clock());
+  const load=async()=>({identity,jobId:x.lease.job.id,packageSHA256:x.lease.job.packageSHA256,
+    policySHA256:x.lease.job.policySHA256,inputRecipient:request.descriptor.recipient,resultRecipient:'age1'+'b'.repeat(58)});
+  const options={clock:x.clock,ageKeygen,loadResultKey:async()=>Buffer.alloc(32,7)};
+  return {request,payload,signed,token,load,options};
+}
+
+test('requester refuses missing, substituted or downgraded launch consent before any key recovery',async t=>{
+  const x=await configuredFixture(t),d=await requesterDelivery(x);let loads=0;
+  for(const alter of [s=>delete s.consent,s=>s.consent.consents.pop(),s=>s.consent.consents.reverse(),
+    s=>s.consent.consents[0].signature=s.consent.consents[1].signature,
+    s=>s.consent.configuration.transport.timeoutMs--,
+    s=>{s.schema='cannabis.market-requester.v2';delete s.consent;},
+    s=>{s.schema='cannabis.market-requester.v1';delete s.configuration;delete s.consent;}]) {
+    const source=structuredClone(x.source);alter(source);
+    await assert.rejects(sealJobKeyDelivery(source,x.attestations,d.signed,d.token,x.network,()=>{loads++;},d.options));
+  }
+  assert.equal(loads,0);assert.equal(x.attestations.pending(x.challenge.nonce).nonce,x.challenge.nonce);
+});
+
+test('requester observes contract-provider consent before custody and again after result-key recovery',async t=>{
+  const x=await configuredFixture(t,{contractProvider:true}),d=await requesterDelivery(x);
+  const digest=inspectLaunchConsent(x.source.consent,x.initialization,x.proof,x.clock()).approvals[1].digest;
+  const allow=async value=>(await contractWorker.connect(workers[0]).approveDigest(digest,value)).wait();
+  let loads=0,resultLoads=0;
+  const load=async()=>{loads++;return d.load();};
+  await assert.rejects(sealJobKeyDelivery(x.source,x.attestations,d.signed,d.token,x.network,load,d.options),/signature is not valid/);
+  assert.equal(loads,0);
+  await allow(true);
+  await assert.rejects(sealJobKeyDelivery(x.source,x.attestations,d.signed,d.token,x.network,load,
+    {...d.options,loadResultKey:async()=>{resultLoads++;await allow(false);return Buffer.alloc(32,7);}}),/signature is not valid/);
+  assert.equal(loads,1);assert.equal(resultLoads,1);
+  assert.throws(()=>inspectKeyDelivery(x.attestations,d.request.releaseId),/Unknown/);
+  assert.equal(x.attestations.pending(x.challenge.nonce).nonce,x.challenge.nonce);
+  await allow(true);
+  const record=await sealJobKeyDelivery(x.source,x.attestations,d.signed,d.token,x.network,load,d.options);
+  const opened=await openJobKeyDelivery(record.envelope,x.key.privateKey,d.payload,d.options);
+  assert.equal(opened.jobId,x.lease.job.id);assert.equal(resultKeyCommitment(opened.resultKey),d.request.resultKeySHA256);
+  opened.resultKey.fill(0);assert.equal(loads,2);assert.equal(record.transmitted,false);
+});
+
+test('requester retains reviewed consent across recovery and historical result opening needs no later approval',async t=>{
+  const x=await configuredFixture(t,{contractProvider:true}),d=await requesterDelivery(x);
+  const digest=inspectLaunchConsent(x.source.consent,x.initialization,x.proof,x.clock()).approvals[1].digest;
+  await (await contractWorker.connect(workers[0]).approveDigest(digest,true)).wait();
+  const record=await sealJobKeyDelivery(x.source,x.attestations,d.signed,d.token,x.network,async()=>{
+    x.source.consent.consents[1].signature='0x1234';x.source.configuration.network.rpc='https://unreviewed.invalid/';
+    return d.load();
+  },d.options);
+  const opened=await openJobKeyDelivery(record.envelope,x.key.privateKey,d.payload,d.options);
+  const receipt={schema:'cannabis.result.v1',jobId:x.lease.job.id,packageSHA256:x.lease.job.packageSHA256,
+    attempt:1,rank:0,worldSize:1,taskId:'work',recipient:opened.resultRecipient,ciphertextSHA256:h(98).slice(2),ciphertextBytes:100};
+  const envelope=await sealResultDelivery(receipt,opened.resultKey,d.payload);
+  await (await contractWorker.connect(workers[0]).approveDigest(digest,false)).wait();
+  await x.workerCall(0,x.escrow,'deliver',[x.orderId,h(95)]);
+  await x.setTime(x.end+1);
+  assert.equal(inspectKeyDelivery(x.attestations,d.request.releaseId).envelope,record.envelope);
+  assert.equal((await openResultDelivery(envelope,opened.resultKey,record.expectedApproval)).receiptAuthenticated,true);
+  opened.resultKey.fill(0);
+});
 
 test('booked EOA consent is observed with finalized and current active funding, without offline authorization',async t=>{
   const x=await configuredFixture(t),c=await bookedConsent(x),options={launchApprovals:c.approvals};
