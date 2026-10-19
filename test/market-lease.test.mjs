@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
+import { connect as connectTLS } from 'node:tls';
 import http from 'node:http';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -26,6 +27,8 @@ import { launchConsentPayload, inspectLaunchConsent, readLaunchConsentState } fr
 import { peerChannelPayload, readPeerChannelState, authenticatePeerChannel, claimPeerChannel } from '../compute/peer_channel.mjs';
 import { relayAuthenticatedSession } from '../operator/session-relay.mjs';
 import { peerTLSPair } from './helpers/peer_tls.mjs';
+import { connectBookedPeer, listenBookedPeers, peerRouteId } from '../compute/peer_network.mjs';
+import tlsFixture from './helpers/peer-tls-fixture.json' with {type:'json'};
 
 const h = n => '0x' + n.toString(16).padStart(64, '0');
 const utc = n => new Date(n * 1000).toISOString().replace('.000Z', 'Z');
@@ -476,7 +479,7 @@ test('peer channel cancels stalled user signing and closes both sockets without 
   const x=await configuredFixture(t),pair=await peerTLSPair(t);let attempts=0;
   const result=await Promise.allSettled(['requester','provider'].map(role=>authenticatePeerChannel(pair[role],peerOptions(x,pair,role,{
     timeoutMs:150,signApproval:()=>{attempts++;return new Promise(()=>{});}
-  }))));assert.equal(attempts,2);assert.ok(result.every(r=>r.status==='rejected'));
+  }))));assert.equal(attempts,1);assert.ok(result.every(r=>r.status==='rejected'));
   assert.ok(pair.requester.destroyed&&pair.provider.destroyed);
 });
 
@@ -531,6 +534,112 @@ test('peer channel refuses an order that leaves active funding while the wallets
       return normal.signApproval(p);
     }});
   }));assert.ok(result.every(r=>r.status==='rejected'));assert.ok(pair.requester.destroyed&&pair.provider.destroyed);
+});
+
+const later=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
+const localPeerRoute=(x,handle,signApproval=peerOptions(x,{},'provider').signApproval)=>({signed:x.source.consent,
+  initialization:x.initialization,proof:x.proof,signApproval,handle});
+const localListener=(x,routes,extra={})=>listenBookedPeers({origin:'https://localhost:0',listenHost:'127.0.0.1',
+  tlsCredentials:{key:tlsFixture.key,cert:tlsFixture.cert},routes,clock:x.clock,...extra});
+const localConnect=(x,listener,extra={})=>connectBookedPeer({...peerOptions(x,listener,'requester'),ca:tlsFixture.cert,...extra});
+async function closedSocket(socket) {
+  if(socket.destroyed)return;
+  await new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(Error('Owned socket did not close')),3000);
+    socket.once('close',()=>{clearTimeout(timer);resolve();});
+  });
+}
+async function directTLS(listener) {
+  const socket=connectTLS({host:'127.0.0.1',port:listener.address.port,servername:'localhost',ca:tlsFixture.cert,
+    rejectUnauthorized:true,minVersion:'TLSv1.3',maxVersion:'TLSv1.3',ALPNProtocols:['cannabis-peer/1']});
+  socket.on('error',()=>{});
+  await new Promise((resolve,reject)=>{socket.once('secureConnect',resolve);socket.once('error',reject);});return socket;
+}
+
+test('peer listener and requester connect directly to a retained assignment and consume its local route once',async t=>{
+  const x=await configuredFixture(t),done=later();let signatures=0,handled=0;
+  const route=localPeerRoute(x,async(channel,local)=>{
+    handled++;assert.equal(local.routeId,peerRouteId(x.source.consent,x.initialization,x.proof));
+    claimPeerChannel(channel,'provider',local.signed,local.initialization,local.proof);
+    assert.deepEqual(await channel.readJSON(1024),{operation:'owned-opaque-handoff'});
+    await channel.writeJSON({operation:'ready'});const bytes=await channel.readChunk();
+    await channel.writeChunk(bytes);done.resolve();
+  },async p=>{signatures++;return peerOptions(x,{},'provider').signApproval(p);});
+  const listener=await localListener(x,[route]);t.after(()=>listener.close());
+  // Registration retains public bytes instead of rereading caller-owned objects.
+  route.signed=structuredClone(route.signed);route.signed.configuration.network.rpc='https://unreviewed.invalid';
+  const channel=await localConnect(x,listener);t.after(()=>channel.close());
+  assert.equal(channel.report.channelAuthenticated,true);assert.equal(channel.report.binding.origin,listener.origin);
+  await channel.writeJSON({operation:'owned-opaque-handoff'});assert.deepEqual(await channel.readJSON(1024),{operation:'ready'});
+  await channel.writeChunk(Buffer.from('already encrypted fixture'));
+  assert.equal((await channel.readChunk()).toString(),'already encrypted fixture');await done.promise;
+  await assert.rejects(localConnect(x,listener));assert.equal(handled,1);assert.equal(signatures,1);
+  assert.equal(listener.snapshot().admittedChannels,1);assert.equal(listener.snapshot().hardwareValidated,false);
+  const closed=await listener.close();assert.equal(closed.liveSockets,0);assert.equal(closed.pendingTasks,0);
+});
+
+test('peer listener refuses unknown routes, malformed prefaces and slow TLS/header clients before wallet callbacks',async t=>{
+  const x=await configuredFixture(t);let signed=0,handled=0;
+  const listener=await localListener(x,[localPeerRoute(x,()=>{handled++;},()=>{signed++;})],{timeoutMs:250});t.after(()=>listener.close());
+  for(const mode of ['unknown','malformed','partial','tcp']) {
+    const socket=mode==='tcp'?net.connect(listener.address.port,'127.0.0.1'):await directTLS(listener);
+    socket.on('error',()=>{});t.after(()=>socket.destroy());
+    if(mode==='unknown')socket.write(Buffer.concat([Buffer.from('CANPEER1'),Buffer.alloc(32,9)]));
+    if(mode==='malformed')socket.write(Buffer.alloc(40,7));
+    if(mode==='partial')socket.write(Buffer.from('CAN'));
+    await closedSocket(socket);
+  }
+  assert.equal(signed,0);assert.equal(handled,0);assert.equal(listener.snapshot().pendingHandshakes,0);
+  assert.equal(listener.snapshot().routes[0].attempts,0);
+});
+
+test('peer listener caps pending connections and shuts down uncompleted TLS handshakes',async t=>{
+  const x=await configuredFixture(t),listener=await localListener(x,[localPeerRoute(x,()=>{})],
+    {maxConnections:2,maxHandshakes:1,timeoutMs:1000});t.after(()=>listener.close());
+  const first=net.connect(listener.address.port,'127.0.0.1');first.on('error',()=>{});t.after(()=>first.destroy());
+  await new Promise(resolve=>first.once('connect',resolve));
+  const second=net.connect(listener.address.port,'127.0.0.1');second.on('error',()=>{});t.after(()=>second.destroy());
+  await closedSocket(second);assert.equal(listener.snapshot().pendingHandshakes,1);
+  assert.equal(listener.snapshot().rejectedConnections,1);
+  const result=await listener.close();await closedSocket(first);
+  assert.deepEqual(result,{closed:true,liveSockets:0,pendingHandlers:0,pendingTasks:0});
+});
+
+test('peer listener never prompts provider signing for a false requester and bounds per-route retries',async t=>{
+  const x=await configuredFixture(t);let prompts=0,handled=0;
+  const listener=await localListener(x,[localPeerRoute(x,()=>{handled++;},()=>{prompts++;})],{maxAttemptsPerRoute:2});
+  t.after(()=>listener.close());
+  for(let i=0;i<2;i++)await assert.rejects(localConnect(x,listener,{signApproval:p=>judge.signTypedData(p.domain,p.types,p.value)}));
+  await assert.rejects(localConnect(x,listener));assert.equal(prompts,0);assert.equal(handled,0);
+  assert.equal(listener.snapshot().routes[0].attempts,2);assert.equal(listener.snapshot().routes[0].state,'exhausted');
+});
+
+test('peer listener blocks simultaneous assignment handoff and reports an uncooperative handler at shutdown',async t=>{
+  const x=await configuredFixture(t),entered=later(),release=later();let calls=0;
+  const listener=await localListener(x,[localPeerRoute(x,async()=>{calls++;entered.resolve();await release.promise;})]);
+  t.after(async()=>{release.resolve();await listener.close();});
+  const channel=await localConnect(x,listener);t.after(()=>channel.close());await entered.promise;
+  await assert.rejects(localConnect(x,listener));assert.equal(calls,1);
+  const report=await listener.close(50);assert.equal(report.closed,true);assert.equal(report.liveSockets,0);
+  assert.equal(report.pendingHandlers,1);assert.equal(report.pendingTasks,1);
+  release.resolve();for(let i=0;i<20&&listener.snapshot().connections;i++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(listener.snapshot().connections,0);assert.equal(listener.snapshot().routes[0].state,'failed');
+});
+
+test('peer requester cancellation and total connect budget close stalled TLS before signing',async t=>{
+  const x=await configuredFixture(t),sockets=new Set();let signed=0;
+  const server=net.createServer(socket=>{sockets.add(socket);socket.on('error',()=>{});socket.on('close',()=>sockets.delete(socket));});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(async()=>{for(const s of sockets)s.destroy();await new Promise(resolve=>server.close(resolve));});
+  const origin=`https://localhost:${server.address().port}`;
+  for(const cancel of [false,true]) {
+    const controller=new AbortController(),started=performance.now();
+    const pending=localConnect(x,{origin},{timeoutMs:300,signal:controller.signal,signApproval:()=>{signed++;}});
+    const timer=cancel?setTimeout(()=>controller.abort(),75):null;
+    try{await assert.rejects(pending);}finally{clearTimeout(timer);}
+    assert.ok(performance.now()-started<1500);
+  }
+  assert.equal(signed,0);
 });
 
 async function requesterDelivery(x) {

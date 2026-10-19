@@ -83,7 +83,7 @@ export async function readPeerChannelState(signed,initialization,proof,binding,s
   const channelApprovals=approvals(d,binding,signatures,start);
   check(integer(timeoutMs,1,60000)&&(!signal||signal instanceof AbortSignal));
   const controller=new AbortController(),abort=()=>controller.abort();let last=start;
-  const timer=setTimeout(abort,timeoutMs);signal?.addEventListener('abort',abort,{once:true});
+  const timer=setTimeout(abort,Math.max(1,timeoutMs-(performance.now()-began)));signal?.addEventListener('abort',abort,{once:true});
   const active=()=>{
     const now=clock();check(!signal?.aborted&&!controller.signal.aborted&&performance.now()-began<timeoutMs&&
       integer(now,last,binding.validUntil-1));last=now;return now;
@@ -114,8 +114,8 @@ function cancellable(action,signal) {
 // One authentication instance per TLS connection; close disposes that connection.
 // Browser APIs do not expose this exporter: this adapter is explicitly Node-only.
 export async function authenticatePeerChannel(socket,{role,origin,signed,initialization,proof,signApproval,
-  timeoutMs=60000,signal,clock=seconds}={}) {
-  let wire,timer,controller,stop;let complete=false;
+  timeoutMs=60000,sessionTimeoutMs,signal,clock=seconds}={}) {
+  const began=performance.now();let wire,timer,controller,stop;let complete=false;
   try {
     check(socket instanceof TLSSocket&&!socket.destroyed&&!usedSockets.has(socket));usedSockets.add(socket);
     const url=endpoint(origin);check(roles.includes(role)&&typeof signApproval==='function'&&integer(timeoutMs,1,60000)&&
@@ -128,18 +128,20 @@ export async function authenticatePeerChannel(socket,{role,origin,signed,initial
     // public connection binding, never a content key or bearer credential.
     const channelBinding='0x'+socket.exportKeyingMaterial(32,'EXPORTER-Channel-Binding',Buffer.alloc(0)).toString('hex');
     signed=structuredClone(signed);initialization=structuredClone(initialization);proof=structuredClone(proof);
-    const start=clock(),d=inspectLaunchConsent(signed,initialization,proof,start),began=performance.now();let last=start,expiresAt=d.reservation.end;
-    const totalMs=Math.min(d.configuration.transport.timeoutMs,(d.reservation.end-start)*1000);
-    check(integer(totalMs,1,3600000));controller=new AbortController();
-    wire=new GuestWire(socket,socket,{timeoutMs:totalMs,signal:controller.signal});
+    const start=clock(),d=inspectLaunchConsent(signed,initialization,proof,start);let last=start,expiresAt=d.reservation.end;
+    check(sessionTimeoutMs===undefined||integer(sessionTimeoutMs,1,d.configuration.transport.timeoutMs));
+    const totalMs=Math.min(sessionTimeoutMs??d.configuration.transport.timeoutMs,(d.reservation.end-start)*1000);
+    const wireBudget=Math.floor(totalMs-(performance.now()-began));check(integer(wireBudget,1,3600000));controller=new AbortController();
+    wire=new GuestWire(socket,socket,{timeoutMs:wireBudget,signal:controller.signal});
     stop=()=>{clearTimeout(timer);signal?.removeEventListener('abort',stop);socket.off('close',stop);controller.abort();wire.fail();wire.close();};
     signal?.addEventListener('abort',stop,{once:true});socket.once('close',stop);
     const active=()=>{
-      const now=clock();if(signal?.aborted||socket.destroyed||!integer(now,last,expiresAt-1)||
-        performance.now()-began>=totalMs){stop();throw failure();}
-      wire.assertActive();last=now;return now;
+      try {
+        const now=clock();check(!signal?.aborted&&!socket.destroyed&&integer(now,last,expiresAt-1)&&performance.now()-began<totalMs);
+        wire.assertActive();last=now;return now;
+      } catch {stop();throw failure();}
     };
-    active();timer=setTimeout(stop,Math.min(timeoutMs,totalMs));
+    active();timer=setTimeout(stop,Math.max(1,Math.min(timeoutMs,totalMs)-(performance.now()-began)));
     const own={protocol,operation:'hello',role,nonce:'0x'+randomBytes(32).toString('hex'),
       issuedAt:start,expiresAt:Math.min(d.reservation.end,start+Math.ceil(totalMs/1000))};
     await wire.writeJSON(own);const other=await wire.readJSON(2048);active();
@@ -150,12 +152,24 @@ export async function authenticatePeerChannel(socket,{role,origin,signed,initial
     const binding={origin,channelBinding,requesterNonce:hello[0].nonce,providerNonce:hello[1].nonce,
       validFrom:Math.max(own.issuedAt,other.issuedAt),validUntil:Math.min(own.expiresAt,other.expiresAt)};
     expiresAt=binding.validUntil;
+    const receive=async()=>{
+      const received=await wire.readJSON(18000);active();exact(received,['protocol','operation','role','signature']);
+      check(received.protocol===protocol&&received.operation==='approval'&&received.role===other.role);
+      return received;
+    };
+    // A network client cannot prompt the provider signer until it proves the
+    // booked requester EOA on this exact connection. Provider contract approval
+    // still needs the later canonical chain observations on both sides.
+    let received;
+    if(role==='provider') {
+      received=await receive();const requester=payload(d,binding,'requester',active());
+      check(verifyTypedData(requester.domain,requester.types,requester.value,received.signature)===requester.signer);
+    }
     const p=payload(d,binding,role,active());
     const signature=await cancellable(()=>signApproval(structuredClone(p),{signal:wire.signal}),wire.signal);active();
     check(typeof signature==='string'&&/^0x(?:[0-9a-fA-F]{2}){1,8192}$/.test(signature));
     await wire.writeJSON({protocol,operation:'approval',role,signature});
-    const received=await wire.readJSON(18000);active();exact(received,['protocol','operation','role','signature']);
-    check(received.protocol===protocol&&received.operation==='approval'&&received.role===other.role);
+    if(role==='requester')received=await receive();
     const ownSignature={role,signature},peerSignature={role:other.role,signature:received.signature};
     const signatures=role==='requester'?[ownSignature,peerSignature]:[peerSignature,ownSignature];
     const remaining=()=>Math.floor(Math.min(timeoutMs,totalMs)-(performance.now()-began));

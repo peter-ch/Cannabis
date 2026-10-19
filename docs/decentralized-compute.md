@@ -135,8 +135,10 @@ These public binding bytes are not a content key. A new TLS connection requires
 new approvals; signatures cannot authorize another connection or role.
 
 `authenticatePeerChannel` takes the established socket and a user-controlled
-`signApproval` callback. It exchanges only bounded public authentication frames
-until both parties' signatures and active funding are observed. Requester EOA
+`signApproval` callback. The requester signs first; the provider verifies that
+booked EOA proof on the actual connection before prompting its own signer. It
+exchanges only bounded public authentication frames until both parties'
+signatures and active funding are observed. Requester EOA
 and provider EOA/ERC-1271 signatures are checked alongside launch consent at the
 same canonical finalized and current block hashes. Contract-wallet revocation,
 inactive funding, changed commitments, clock rollback, cancellation and a stalled
@@ -153,12 +155,52 @@ Copying a report or setting an authentication flag cannot create that capability
 The protected guest and requester still independently verify funding, consent and
 attestation before any key use. Closing the session disposes the TLS connection.
 
-This is a source-level Node transport adapter under review. A provider listener,
-requester connection/signing UI, complete relay workflow and independent operation
-still need integration and acceptance. Browser APIs do not expose this TLS
+This is a Node transport under review. The provider listener and requester
+connector described below retain user-controlled signing callbacks; a signing UI,
+durable restart reconciliation and independent operating acceptance remain work.
+Browser APIs do not expose this TLS
 exporter; no browser authentication fallback is enabled. The offline payload and
 state readers explicitly do not claim to authenticate a live socket. Channel
 authentication alone is not hardware admission, paid-job acceptance or mainnet.
+
+## Independent listener and requester connection
+
+`compute/peer_network.mjs` provides `listenBookedPeers` and `connectBookedPeer`.
+The provider registers an explicit, bounded local catalog of signed configuration,
+initialization and booking proofs, plus its signing and session-handling callbacks.
+A caller-selected HTTPS origin and local TLS certificate identify the listener.
+The requester retains the same reviewed commitments and selects its own endpoint
+and TLS trust store. No project website is needed to establish the connection.
+
+The first encrypted application bytes are a fixed 40-byte preface: `CANPEER1`
+followed by the 32-byte initialized assignment hash. It selects a retained route;
+it cannot upload a configuration, RPC URL, command or runtime path. The subsequent
+wallet authentication commits that exact assignment to the actual TLS channel.
+The route catalog is limited to 64 entries and 16 MiB of retained public data.
+Connection and pending-handshake limits cover clients that never finish TLS or
+the preface. Retry counts are bounded per route, with no automatic renewal.
+
+Only one authentication/handoff may occupy an assignment within a listener.
+After its handler starts, the route stays consumed even if delivery fails.
+Failed authentication may retry within its configured attempt limit. Restart or
+re-execution requires reconciliation with protected guest/requester replay and
+recovery state; this in-memory catalog is not a durable exactly-once guarantee.
+It is also not a physical capacity reservation or shared network scheduler.
+
+`connectBookedPeer` validates the selected certificate/hostname, sends the fixed
+preface and performs booked-party authentication. TCP/TLS setup, selection,
+wallet signing and RPC share one handshake deadline; setup time also reduces
+the remaining service transport budget. Cancellation remains attached after
+handoff. The connector does not redirect, try unselected endpoints or unlock a
+wallet. A replacement route requires an explicit selection and fresh signatures.
+
+The operator's session callback can use `relayAuthenticatedSession` with its
+retained prepared launch and sealed guest channel. Closing the listener stops
+intake and destroys connections. Its bounded shutdown report distinguishes closed
+sockets from handlers still pending cleanup; such a report cannot claim that a
+worker, VM or customer keys have been retired. Resource/VM guardians and checked
+cleanup remain required. The visible signing workflow, aggregate encrypted
+storage and durable independent operation remain release requirements.
 
 ## Protected booking and key-delivery binding
 

@@ -193,9 +193,12 @@ def main():
             assert operator_proc.wait(timeout=5)==0,'Separate operator did not complete'
             report=json.loads(report_file.read_text())
             assert report['signatureForwarded'] and report['requesterStorageSignatureVerified']
+            assert report['bookedTLSPeerAuthenticated'] and report['peerListenerDisposed']
+            assert report['peerAssignmentSHA256']==report['peerRouteId']
             assert not report['guestCompletionObserved'] and not report['paymentAuthorized'] and not report['hardwareValidated']
             assert Path(report['sourceFile']).is_file() and Path(report['directory']).parent==spool
-            result['checks'].update(separateSessionOperator=True,hostedSignatureForwarded=True,completeEncryptedSpoolRetained=True)
+            result['checks'].update(separateSessionOperator=True,hostedSignatureForwarded=True,completeEncryptedSpoolRetained=True,
+                                   bookedTLSProviderAuthenticated=True,bookedAssignmentRouted=True,peerListenerDisposed=True)
         assert not list(parent.glob('job-*'))
         assert owner_secret.strip() not in raw
         result['wholeTreeCleanup']=True
