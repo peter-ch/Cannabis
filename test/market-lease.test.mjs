@@ -34,7 +34,7 @@ import { PeerDispatchJournal } from '../compute/peer_dispatch.mjs';
 import tlsFixture from './helpers/peer-tls-fixture.json' with {type:'json'};
 import {ProviderApprovals} from '../operator/provider-approvals.mjs';
 import {validateProviderReview} from '../operator/provider-wallet.js';
-import {sendLaunchHandoff,receiveLaunchHandoff,consumeLaunchHandoff} from '../compute/launch_handoff.mjs';
+import {sendLaunchHandoff,receiveLaunchHandoff,consumeLaunchHandoff,inspectLaunchHandoff} from '../compute/launch_handoff.mjs';
 import {stageOperatingGuest,relayOperatingGuest} from '../operator/guest-boot-channel.mjs';
 import {operatingBootFixture} from './helpers/operating_boot_fixture.mjs';
 
@@ -1006,6 +1006,11 @@ async function handoffTicket(t,x) {
 
 test('launch handoff retains exact public boot files and refuses copied or reused capabilities',async t=>{
   const x=await configuredFixture(t),{ticket,provider}=await handoffTicket(t,x);
+  const selected=inspectLaunchHandoff(ticket);
+  assert.equal(selected.request.initData,guestInitialization(x.initialization).digest);
+  assert.equal(selected.request.expectedLaunchDigest,x.policy.measurements.launch);
+  assert.equal(selected.signal,provider.signal);assert.ok(selected.request.timeoutMs<=x.configuration.transport.timeoutMs);
+  assert.throws(()=>inspectLaunchHandoff({...ticket}));
   assert.throws(()=>consumeLaunchHandoff(structuredClone(ticket)));
   const fixture=await operatingBootFixture({...handoffLocal(x),request:{proof:x.proof,challenge:x.challenge}});
   t.after(()=>fixture.close());

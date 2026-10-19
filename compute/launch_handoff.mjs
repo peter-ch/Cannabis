@@ -111,3 +111,15 @@ export function consumeLaunchHandoff(ticket) {
     bootRemaining:()=>Math.min(t.life.remaining(),Math.floor((t.request.challenge.expiresAt-t.clock())*1000)),
     publicFiles:[t.local.signed,t.local.initialization,t.request].map(v=>Buffer.from(encodeLaunchJSON(v)))};
 }
+
+// Read only the retained VM selection before starting its owned process. This
+// does not consume boot intake or grant hardware/key-release authority.
+export function inspectLaunchHandoff(ticket) {
+  const t=tickets.get(ticket);check(t&&!t.consumed&&!t.signal?.aborted);
+  challengeChecked(t.local,t.request.challenge,t.life.active());
+  inspectPeerChannel(t.channel,'provider',t.local.signed,t.local.initialization,t.local.proof);
+  const init=guestInitialization(t.local.initialization);check(init.assignment.tee==='snp');
+  return {request:{schema:'cannabis.host-vm-request.v1',initialization:init.canonical,initData:init.digest,
+    expectedLaunchDigest:t.launch.policy.measurements.launch,serviceStart:t.launch.interval.start,
+    serviceEnd:t.launch.interval.end,timeoutMs:t.life.remaining()},signal:t.channel.signal};
+}

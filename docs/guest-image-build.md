@@ -608,6 +608,53 @@ enforcement must dispose of the guest. No physical-erasure claim is made.
 
 ## Connect these artifacts to measured launch
 
+### Owned SNP host launcher
+
+The host adapter in `operator/snp-vm.mjs` connects the retained booked challenge
+to a fixed Python/QEMU process, then to the existing encrypted session relay.
+`runSnpBookedSession` is suitable for the provider's retained route handler; it
+waits for checked local VM termination before returning. This source is under
+integration, with no successful hardware launch or paid-worker admission claimed.
+
+The first host profile supports EPYC-Milan SNP, at least four vCPUs and 4096 MiB
+guest memory. It pins QEMU, stateless OVMF, kernel, initramfs, command line and the
+matching measurement candidate. Root-owned artifacts and parent directories are
+required. QEMU's [SNP object](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html#object-SevSnpGuestProperties)
+requires a supporting build; the adapter also checks the actual KVM/SEV devices
+and enabled host SNP parameter. It offers no TCG, ordinary KVM or remote-program
+fallback. Host observations are never a replacement for requester attestation.
+
+After installing reviewed artifacts privately, prepare a profile with
+`scripts/prepare-host-vm.py --qemu /path/to/qemu-system-x86_64 --firmware /path/to/OVMF.fd
+--image /path/to/image --reference /path/to/reference.json --machine pc-q35-VERSION
+--cbitpos HOST_VALUE --reduced-phys-bits HOST_VALUE --cgroup-parent /sys/fs/cgroup/PROVIDER_SLOT
+--output /private/root-owned/profile.json`. Select the actual reviewed machine
+version and hardware parameters; the tool does not guess or create infrastructure.
+Preparation does not start work or validate the reference on hardware.
+
+The slot is an existing empty cgroup-v2 domain, with CPU/memory/PID controllers,
+finite limits covering the selected host profile, and zero swap. The adapter
+locks its actual inode for one VM at a time and refuses residual child groups.
+It neither creates nor resizes ancestors or moves unrelated processes. Its own
+VM leaf enforces the configured limits. Boot/executable snapshots are copied and
+sealed only after joining that leaf. The default preparation reserves a 6 GiB
+VM-process ceiling, including the 4 GiB guest, boot copies and QEMU headroom.
+
+The VM receives only fixed devices, the measured control-plane network, inherited
+local control sockets and public initialization `HOST_DATA`. No customer-content
+keys enter the host launcher. An independent cgroup guardian and owner pidfds
+cover owner death and the immutable deadline; heartbeat loss also cancels a
+stalled operator. QMP is limited to configuration queries and shutdown-event
+observation. Successful completion requires QEMU exit, guest-originated shutdown
+and checked empty-tree removal. Cancellation does not become successful work.
+
+The Node owner, supervisor, shared page cache, dispatch metadata and result HTTP
+service still need complete aggregate operator accounting. Process cleanup does
+not prove hostile-host snapshot destruction, protected key retirement or rollback
+resistance. Uncertain execution and complete ciphertext retain their existing
+recovery rules. These limits, actual SNP hardware acceptance and independent
+review remain requirements before admitting paid customer jobs.
+
 For SNP, the reviewed launch chain must cover firmware, kernel, initramfs, kernel arguments and initial vCPU state. QEMU's [SNP launch controls](https://www.qemu.org/docs/master/system/i386/amd-memory-encryption.html#launching-sev-snp) include initialization host data; the [sev-snp-measure tool](https://github.com/virtee/sev-snp-measure) calculates expected digests using the corresponding firmware, kernel, initrd and CPU configuration. Pin and review the actual firmware, VMM and measurement-tool revisions before using their outputs as trusted reference values.
 
 For TDX, firmware and runtime measurement registers must cover the entire boot chain. [Contrast's reference-value documentation](https://docs.edgeless.systems/contrast/1.22/architecture/components/manifest) illustrates this distinction, including binding an external root filesystem through its integrity root in measured kernel arguments. Cannabis's current image has its userspace inside the initramfs; it does not yet have a reviewed firmware/TDX measurement calculation. Do not substitute a firmware-only measurement or an ordinary SHA256 file digest for that evidence.
