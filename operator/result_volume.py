@@ -112,7 +112,7 @@ def inspect_volume(home,entries=None):
         require(m['device']==f'{os.major(dev.st_rdev)}:{os.minor(dev.st_rdev)}')
         root=directory(mount/'spool');r=root.stat();require(r.st_dev==dev.st_rdev)
         require(not any(x['mount'].startswith(str(mount)+'/') for x in mount_entries()))
-        f=os.statvfs(root);b=v['limits'];require(f.f_frsize==4096 and f.f_blocks*4096<=s.st_size)
+        f=os.statvfs(root);b=v['limits'];require(not f.f_flag&os.ST_RDONLY and f.f_frsize==4096 and f.f_blocks*4096<=s.st_size)
         require(f.f_blocks*4096>=b['requiredBytes'] and f.f_files>=b['requiredInodes'])
         report={'schema':'cannabis.result-volume-observation.v1','limits':b,'mountId':m['id'],
                 'rootDevice':r.st_dev,'rootInode':r.st_ino,'imageDevice':s.st_dev,'imageInode':s.st_ino,

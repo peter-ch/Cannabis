@@ -14,6 +14,10 @@ assert.equal(process.platform,'linux');assert.equal(process.geteuid(),0);
 const root=fs.mkdtempSync('/run/cannabis-operator-check-'),id='a'.repeat(64),routeId='0x'+id;
 const marked=new WeakSet();let scenario='refuse',listener,inspectRelease,checks=0;
 const observed=[];
+mock.module('../../operator/boundary.mjs',{namedExports:{openOperatorBoundary:async()=>({
+  check:async()=>{observed.push('boundary-check');if(scenario==='boundary-refuse')throw Error('Private boundary diagnostic');},
+  monitor:()=>{},snapshot:()=>({state:'explicit-fixture'}),close:async()=>{}
+})}});
 const ok=value=>{assert.ok(value);checks++;};
 async function until(predicate){for(let i=0;i<200;i++){if(predicate())return;await delay(10);}throw Error('Fixture stage timeout');}
 async function freePort(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
@@ -46,25 +50,28 @@ mock.module('../../compute/peer_network.mjs',{namedExports:{listenBookedPeers:as
   observed.push('listen');assert.equal(options.maxConnections,1);assert.equal(options.maxHandshakes,1);
   let closed=false,active=0,task;
   listener={trigger:()=>{const consumed=options.dispatchJournal.consume(routeId,Date.now()+120000);active++;
-    task=options.routes[0].handle({},{}).then(()=>consumed.finish('completed'),()=>consumed.finish('failed')).finally(()=>active--);return task;},
+    task=options.routes[0].handle({},{signed:{configuration:{transport:{maxCiphertextBytes:256}}}}).then(()=>consumed.finish('completed'),()=>consumed.finish('failed')).finally(()=>active--);return task;},
     close:async()=>{closed=true;observed.push('listener-close');await task;return {closed:true,liveSockets:0,pendingHandlers:0,pendingTasks:0};},
     snapshot:()=>({closed,connections:active,pendingHandshakes:0,admittedChannels:active,routes:[]})};return listener;
 }}});
 const {openOperatorService,readOperatorConfiguration}=await import('../../operator/service.mjs');
 async function fixture(name){
   const directory=path.join(root,name);fs.mkdirSync(directory,{mode:0o700});const p=n=>path.join(directory,n);
-  for(const f of ['profile','catalog','key','cert'])fs.writeFileSync(p(f),'{}',{mode:0o600});
+  for(const f of ['profile','catalog','key','cert','resources'])fs.writeFileSync(p(f),'{}',{mode:0o600});
   fs.mkdirSync(p('approvals'),{mode:0o700});fs.mkdirSync(p('spool'),{mode:0o700});
   new PeerDispatchJournal(p('dispatch'),{create:true}).close();
   new WorkStore(p('orders'),'https://results.invalid').close();new ResultRelay(p('results')).close();
   for(const f of ['orders','results'])fs.chmodSync(p(f),0o600);
-  const config={schema:'cannabis.operator-service.v1',profile:p('profile'),catalog:p('catalog'),approvals:p('approvals'),spool:p('spool'),dispatch:p('dispatch'),
+  const config={schema:'cannabis.operator-service.v1',resources:p('resources'),profile:p('profile'),catalog:p('catalog'),approvals:p('approvals'),spool:p('spool'),dispatch:p('dispatch'),
     peer:{origin:'https://peer.invalid:4443',listenHost:'127.0.0.1',cert:p('cert'),key:p('key')},
     relay:{origin:'https://results.invalid',port:await freePort(),orders:p('orders'),results:p('results')}};
   fs.writeFileSync(p('config'),JSON.stringify(config),{mode:0o600});
   return {config,file:p('config'),opened:await openOperatorService(p('config'))};
 }
 try {
+  scenario='boundary-refuse';const denied=(await fixture('boundary-refusal')).opened.service;denied.start();
+  await until(()=>denied.snapshot().state==='failed');ok(!observed.includes('inspect')&&!observed.includes('listen'));await denied.close();
+  scenario='refuse';
   const f=await fixture('refuse'),s=f.opened.service;ok(s.snapshot().canStart);s.start();assert.throws(()=>s.start());
   await until(()=>s.snapshot().state==='failed');ok(!observed.includes('listen'));ok(!s.snapshot().relayListening);
   ok(!JSON.stringify(s.snapshot()).includes(root));await s.close();ok(observed.includes('spool-closed'));
@@ -78,6 +85,7 @@ try {
   await until(()=>service.snapshot().state==='listening');ok(service.snapshot().relayListening);const task=listener.trigger();
   await until(()=>service.snapshot().sessions[0]?.phase==='relaying-encrypted-session');
   const report=service.snapshot();ok(report.hardwareValidated===false&&report.paidAcceptanceVerified===false&&report.protectedKeyRetirementVerified===false);
+  ok(report.resourceBoundary.state==='explicit-fixture'&&observed.filter(v=>v==='boundary-check').length>=4);
   service.stop();await task;await until(()=>service.snapshot().state==='stopped');ok(service.snapshot().sessions[0].localTreeStopped);
   ok(service.snapshot().relayListening);ok(!service.snapshot().canStart);await service.close();
   const reopened=await openOperatorService(live.file);ok(!reopened.service.snapshot().canStart);await reopened.service.close();

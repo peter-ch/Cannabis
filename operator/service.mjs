@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isIP } from 'node:net';
+import { createHash } from 'node:crypto';
 import { ProviderApprovals,readProviderCatalog } from './provider-approvals.mjs';
 import { PhysicalResultSpool } from './physical-spool.mjs';
 import { ResultConsole } from './storage-console.mjs';
@@ -10,6 +11,7 @@ import { PeerDispatchJournal } from '../compute/peer_dispatch.mjs';
 import { listenBookedPeers } from '../compute/peer_network.mjs';
 import { createWorkServer } from '../service/work-server.mjs';
 import { inspectSnpHost,runSnpBookedSession } from './snp-vm.mjs';
+import { openOperatorBoundary } from './boundary.mjs';
 
 const check=v=>{if(!v)throw Error('Operator configuration or lifecycle unavailable; retain recovery state');};
 const exact=(v,keys)=>check(v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join()===[...keys].sort().join());
@@ -29,25 +31,26 @@ function read(file,options) {protectedPath(file,options);const fd=fs.openSync(fi
 
 export function readOperatorConfiguration(file) {
   check(process.platform==='linux'&&process.geteuid()===0);
-  const c=JSON.parse(read(file,{privateFile:true,limit:16384}));
-  exact(c,['schema','profile','catalog','approvals','spool','dispatch','peer','relay']);
+  const raw=read(file,{privateFile:true,limit:16384}),c=JSON.parse(raw);
+  exact(c,['schema','resources','profile','catalog','approvals','spool','dispatch','peer','relay']);
   check(c.schema==='cannabis.operator-service.v1');
   exact(c.peer,['origin','listenHost','cert','key']);exact(c.relay,['origin','port','orders','results']);
   origin(c.peer.origin);origin(c.relay.origin);check(c.peer.origin!==c.relay.origin&&isIP(c.peer.listenHost));
   const peerPort=Number(new URL(c.peer.origin).port||443);
   check(peerPort>=1024&&peerPort<=65535&&Number.isSafeInteger(c.relay.port)&&c.relay.port>=1024&&c.relay.port<=65535&&peerPort!==c.relay.port);
-  for(const key of ['profile','catalog','dispatch'])protectedPath(c[key],{privateFile:key!=='catalog'});
+  for(const key of ['resources','profile','catalog','dispatch'])protectedPath(c[key],{privateFile:key!=='catalog'});
   for(const key of ['approvals','spool'])protectedPath(c[key],{directory:true});
   for(const key of ['orders','results'])protectedPath(c.relay[key],{privateFile:true,limit:512*1024*1024});
   check(new Set([c.dispatch,c.relay.orders,c.relay.results]).size===3);
-  return {configuration:structuredClone(c),tlsCredentials:{key:read(c.peer.key,{privateFile:true,limit:262144}),cert:read(c.peer.cert,{limit:262144})}};
+  return {configuration:structuredClone(c),configurationSHA256:createHash('sha256').update(raw).digest('hex'),
+    tlsCredentials:{key:read(c.peer.key,{privateFile:true,limit:262144}),cert:read(c.peer.cert,{limit:262144})}};
 }
 
 class OperatorService {
   #c;#tls;#provider;#spool;#journal;#results;#relay;#listener;#controller;#operation;#stopTask;
   #phase='stopped';#reason='Select Start booked listener after reviewing the retained provider approvals.';#sessions=new Map();#closed=false;
-  #hostObserved=false;#cleanupUnknown=false;#closeTask;
-  constructor(c,tls,provider,spool,journal,results) {this.#c=c;this.#tls=tls;this.#provider=provider;this.#spool=spool;this.#journal=journal;this.#results=results;}
+  #hostObserved=false;#cleanupUnknown=false;#closeTask;#boundary;
+  constructor(c,tls,provider,spool,journal,results,boundary) {this.#c=c;this.#tls=tls;this.#provider=provider;this.#spool=spool;this.#journal=journal;this.#results=results;this.#boundary=boundary;}
   snapshot() {
     const listener=this.#listener?.snapshot();
     if(this.#phase==='listening'&&listener?.closed)this.stop();
@@ -60,7 +63,8 @@ class OperatorService {
       canStop:['starting','listening','failed'].includes(this.#phase),assignments,sessions:[...this.#sessions.values()].map(r=>({...r})),
       listener:listener?{closed:listener.closed,connections:listener.connections,pendingHandshakes:listener.pendingHandshakes,
         authenticatedChannels:listener.admittedChannels,routes:listener.routes}:null,
-      cleanupUnknown:this.#cleanupUnknown,hardwareValidated:false,paidAcceptanceVerified:false,protectedKeyRetirementVerified:false};
+      resourceBoundary:this.#boundary.snapshot(),cleanupUnknown:this.#cleanupUnknown,
+      hardwareValidated:false,paidAcceptanceVerified:false,protectedKeyRetirementVerified:false};
   }
   start() {
     check(this.snapshot().canStart);this.#phase='starting';this.#reason='Checking the selected SNP host and retained assignments.';
@@ -70,12 +74,14 @@ class OperatorService {
     return {state:this.#phase};
   }
   async #start(controller) {
+    await this.#boundary.check();check(!controller.signal.aborted);
     await inspectSnpHost(this.#c.profile,{signal:controller.signal});check(!controller.signal.aborted);this.#hostObserved=true;
     this.#spool.checkCapacity();const now=Math.floor(Date.now()/1000);
     const ids=this.#provider.snapshot().assignments.filter(r=>r.consentRetained&&r.validUntil>now&&!this.#journal.status('0x'+r.id)).map(r=>r.id);
     check(ids.length>0);
     const routes=ids.map(id=>{check(this.#provider.retainedOrigin(id)===this.#c.peer.origin);
       return this.#provider.peerRoute(id,async(channel,local)=>{
+        await this.#boundary.check({minimumFreeBytes:4*local.signed.configuration.transport.maxCiphertextBytes+32*1024**2});
         check(!controller.signal.aborted&&![...this.#sessions.values()].some(r=>r.active));
         const row={assignmentId:id,phase:'awaiting-requester',active:true,startedAt:Date.now(),endedAt:null,
           localTreeStopped:false,hardwareValidated:false,paidAcceptanceVerified:false};this.#sessions.set(id,row);
@@ -136,18 +142,20 @@ class OperatorService {
       if(this.#listener?.snapshot().connections||[...this.#sessions.values()].some(r=>r.active))throw Error('Operator session cleanup remains pending');
       await this.#results.close();await this.#provider.close();
       if(this.#relay){this.#relay.server.closeAllConnections();await new Promise(resolve=>this.#relay.server.close(resolve));}
-      this.#spool.close();this.#journal.close();this.#tls=undefined;
+      this.#spool.close();this.#journal.close();await this.#boundary.close();this.#tls=undefined;
     })();return this.#closeTask;
   }
 }
 
 export async function openOperatorService(file) {
-  const {configuration:c,tlsCredentials}=readOperatorConfiguration(file);let provider,spool,journal,results;
+  const {configuration:c,configurationSHA256,tlsCredentials}=readOperatorConfiguration(file);let provider,spool,journal,results,boundary;
   try {
+    boundary=await openOperatorBoundary(c.resources,configurationSHA256);
     provider=new ProviderApprovals(readProviderCatalog(c.catalog),c.approvals);
     check(provider.snapshot().assignments.length>0&&provider.snapshot().assignments.every(r=>provider.retainedOrigin(r.id)===c.peer.origin));
     spool=new PhysicalResultSpool(c.spool);journal=new PeerDispatchJournal(c.dispatch);
     results=new ResultConsole(spool,{relayOrigins:[c.relay.origin]});
-    return {service:new OperatorService(c,tlsCredentials,provider,spool,journal,results),provider,results};
-  }catch(error){await results?.close();await provider?.close();spool?.close();journal?.close();throw error;}
+    const service=new OperatorService(c,tlsCredentials,provider,spool,journal,results,boundary);boundary.monitor();
+    return {service,provider,results};
+  }catch(error){await results?.close();await provider?.close();spool?.close();journal?.close();await boundary?.close();throw error;}
 }

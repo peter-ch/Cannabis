@@ -140,8 +140,10 @@ signatures, wallet keys or local paths. Review them before sharing.
 ## Configure the booked service
 
 The review branch supports a single independently operated provider service on
-a root-managed Linux SNP host. Start its loopback console with
-`node operator/server.mjs --operator-config /absolute/operator.json`.
+a root-managed Linux SNP host with systemd 254 or newer and cgroup v2. The selected
+systemd unit starts its loopback console through the fixed resource bootstrap.
+Invoking `node operator/server.mjs --operator-config /absolute/operator.json`
+outside that unit is refused. Observation-only consoles still work independently.
 This mode owns the provider manager, existing dispatch journal and physical
 result store together. Do not combine it with the separate result/provider flags
 or run another console against the same stores. Nothing starts listening for
@@ -152,11 +154,12 @@ The private configuration uses this shape (replace every example path/origin):
 ```json
 {
   "schema": "cannabis.operator-service.v1",
+  "resources": "/var/lib/cannabis/operator-boundary.json",
   "profile": "/var/lib/cannabis/host-profile.json",
   "catalog": "/var/lib/cannabis/provider-catalog.json",
-  "approvals": "/var/lib/cannabis/approvals",
+  "approvals": "/var/lib/cannabis/operator-state/mount/state/approvals",
   "spool": "/var/lib/cannabis/result-volume/mount/spool",
-  "dispatch": "/var/lib/cannabis/dispatch.sqlite",
+  "dispatch": "/var/lib/cannabis/operator-state/mount/state/dispatch.sqlite",
   "peer": {
     "origin": "https://peer.example:4443",
     "listenHost": "0.0.0.0",
@@ -166,8 +169,8 @@ The private configuration uses this shape (replace every example path/origin):
   "relay": {
     "origin": "https://results.example",
     "port": 4210,
-    "orders": "/var/lib/cannabis/orders.sqlite",
-    "results": "/var/lib/cannabis/results.sqlite"
+    "orders": "/var/lib/cannabis/operator-state/mount/state/orders.sqlite",
+    "results": "/var/lib/cannabis/operator-state/mount/state/results.sqlite"
   }
 }
 ```
@@ -204,10 +207,102 @@ The status report excludes local paths, TLS keys, signatures, result grants and
 customer content. It includes selected origins, assignment identifiers, session
 times and cleanup state. The report can contain scheduling metadata.
 
-Whole-operator CPU/memory/PID limits and disk quotas for the Node process,
-supervisor, HTTP relay and SQLite/WAL overhead still need integration. The VM
-leaf and result volume alone do not bound the whole service. This composition
-has not completed an actual SNP deployment or genuine paid acceptance.
+### Prepare the operator resource boundary
+
+Install the reviewed source and pinned Node runtime beneath root-owned paths.
+Select a private empty directory on ext4 for the operator's metadata volume. This
+is separate from the retained ciphertext volume. The following commands create
+new local state only; they do not provision hardware or start a service:
+
+```sh
+sudo python3 -I -B scripts/operator-state-volume.py create /var/lib/cannabis/operator-state
+sudo /path/to/pinned/node scripts/prepare-operator-state.mjs /var/lib/cannabis/operator-state https://results.example
+```
+
+The default preallocated metadata image is 1 GiB with a finite inode allocation.
+Half of that image is a protected recovery reserve, leaving the other half,
+less filesystem overhead, for normal metadata. This spare space permits SQLite
+to replay committed WAL data after the ordinary writable area fills.
+`--bytes` and `--inodes` select explicit initial limits. It contains approvals,
+dispatch, work/relay databases, SQLite sidecars and temporary files. Existing or
+partially initialized state is refused rather than reset. Retain its manifest and
+backing image. `mount`, `inspect` and `unmount` act only on that selected image;
+unmount preserves all stored state. The image cannot grow as the filesystem fills.
+
+Choose a unit name such as `cannabis-operator-primary.service`. The SNP profile's
+`cgroupParent` must be `/sys/fs/cgroup/system.slice/cannabis-operator-primary.service/vm`.
+After writing the operator configuration above, prepare new resource and unit files:
+
+```sh
+sudo python3 -I -B scripts/prepare-operator-boundary.py \
+  --configuration /var/lib/cannabis/operator.json \
+  --node /path/to/pinned/node \
+  --state-volume /var/lib/cannabis/operator-state \
+  --unit cannabis-operator-primary.service \
+  --output /var/lib/cannabis/operator-boundary.json \
+  --unit-output /var/lib/cannabis/cannabis-operator-primary.service
+```
+
+Review the generated profile/unit and installation before enabling it. Preparation
+does not install, start or enable the unit. The profile pins the configuration and
+Node executable, reserves control-plane capacity in addition to the selected VM
+limits, and fixes the console port. The default extra reservation is one CPU,
+1 GiB RAM and 128 tasks. It is an explicit ceiling, not evidence of purchased
+capacity, useful utilization or billable work.
+
+The bootstrap configures a control leaf and one VM pool beneath the unit's finite
+aggregate CPU, memory and PID ceilings, with swap disabled. Node, Python supervisors,
+guardians and VM descendants remain within that aggregate. Kernel accounting
+covers charges made to the tree, including its charged page cache; shared pages
+already charged elsewhere are not independent billing evidence. PID 1 supervises
+the unit from outside this tree. Automatic restart is disabled. Main-process death
+or shutdown invokes whole-group termination, with a 45-second stop ceiling.
+
+The unit permits filesystem writes only in the two selected volume mounts and its
+delegated cgroup subtree. SQLite temporary files use the bounded metadata volume;
+core dumps and application stdout/stderr logging are disabled. The runtime checks
+actual manager identity, executable, mount/cgroup objects and limits at startup,
+before intake and before session handoff. A five-second monitor requests shutdown
+if those observations fail or metadata headroom is exhausted. A session also needs
+additional free metadata space before VM startup. Changing kernel limits or replacing
+the mounted volume cannot silently renew the original observation.
+
+The generated unit explicitly lists the installation's read-only mount points;
+an ancestor setting alone does not cover every nested mount. Its device policy
+allows the selected SNP/KVM devices and read-only observation of the two selected
+loop devices, read-only clock access and standard pseudo devices. Startup verifies that opening those
+loop devices for raw writes is denied without writing any data. If a remount changes
+loop-device numbers, prepare and review the unit again before starting it.
+
+A full metadata volume refuses further writes; it does not authorize deletion of
+dispatch history, approvals or unacknowledged ciphertext. Relay failure still leaves
+the separate local result spool available for recovery. These controls bound local
+resources; they do not guarantee available throughput or delivery under every disk
+failure, and they cannot constrain a malicious privileged host. Requester attestation
+and protected execution remain mandatory. Actual SNP operation, its device access
+under the selected service restrictions and genuine paid acceptance still require
+hardware verification.
+
+For metadata disk-full recovery, stop the exact selected unit and preserve all
+database and WAL files. The explicit administrative commands are:
+
+```sh
+sudo python3 -I -B scripts/operator-state-volume.py release-reserve /var/lib/cannabis/operator-state --profile /var/lib/cannabis/operator-boundary.json
+# Reopen and verify the retained databases with the pinned SQLite runtime.
+# Reconcile permitted expired relay data and other owned temporary metadata.
+sudo python3 -I -B scripts/operator-state-volume.py restore-reserve /var/lib/cannabis/operator-state --profile /var/lib/cannabis/operator-boundary.json
+```
+
+Release changes only the zero-content reserve file. The command verifies the
+selected unit is stopped and requires an exclusive reserve lock. The fixed
+bootstrap passes a shared lock to the actual Node owner, excluding concurrent
+recovery. Startup is refused while the reserve is released; restore must fully
+preallocate it again. No browser control releases this space, deletes databases
+or resets dispatch history. Stop/recovery never establishes output acceptance.
+
+The boundary follows [systemd resource delegation](https://www.freedesktop.org/software/systemd/man/latest/systemd.resource-control.html),
+[unit shutdown semantics](https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html)
+and the [Linux cgroup v2 model](https://docs.kernel.org/admin-guide/cgroup-v2.html).
 
 ## Before a paid worker can start
 
