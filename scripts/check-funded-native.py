@@ -149,7 +149,12 @@ def main():
                 scope=GuestJobScope(parent,admitted.total,admitted.control,deadline=deadline)
                 proc=scope.start(str(tools/'node'),fixture.sha(tools/'node'),str(guest_controller),fixture.sha(guest_controller),launch_fd=snapshot.fd)
                 assert relay_guest(scope,proc,to_guest,from_guest,max_ciphertext_bytes=transport['maxCiphertextBytes'])['reason']=='finished'
-        raw,_=requester_proc.communicate(timeout=30)
+        # After encrypted delivery, five fresh result-CLI processes each retain
+        # their own 30-second bound, followed by local settlement checks. A
+        # single CLI's limit cannot also bound this whole sequential phase.
+        # Guest/service/transport deadlines have already enforced execution;
+        # this fixture-only wait grants no additional worker reservation time.
+        raw,_=requester_proc.communicate(timeout=5*30+30)
         code=requester_proc.returncode
         assert code==0, f'Owned funded controller exited {code}'
         assert proc.wait(timeout=5)==0, 'Separate guarded guest did not acknowledge delivery and exit'
