@@ -194,6 +194,14 @@ export class ResultSpool {
       requesterAcknowledgedStorage:r.ack!==null,qualityAccepted:false,paymentAuthorized:false};});
   }
   list() {return this.#transaction(()=>{this.#time();return this.#db.prepare('SELECT id,digest AS approvalDigest,state,charge AS reservedBytes FROM results ORDER BY id').all();});}
+  snapshot() {
+    return this.#transaction(()=>{
+      const observedAt=this.#time(),records=this.#db.prepare(`SELECT id,digest AS approvalDigest,state,
+        charge AS reservedBytes,max_bytes AS maxCiphertextBytes,received AS receivedBytes,
+        retry_end AS retryUntil,ack_at AS acknowledgedAt FROM results ORDER BY id`).all();
+      return {observedAt,limits:{...this.#settings},reservedBytes:records.reduce((n,r)=>n+r.reservedBytes,0),records};
+    });
+  }
   usage() {return this.#transaction(()=>{this.#time();const row=this.#db.prepare('SELECT count(*) AS records,coalesce(sum(charge),0) AS reservedBytes FROM results').get();
     return {...row,...this.#settings};});}
   cleanup() {

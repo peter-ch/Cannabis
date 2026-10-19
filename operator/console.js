@@ -1,3 +1,4 @@
+import {initializeStorage,renderStorage,setStorageConnected} from './results.js';
 const $ = id => document.getElementById(id);
 let paused = false, report = null, pending = false, timer;
 const gib = bytes => (bytes / 2 ** 30).toFixed(1);
@@ -20,6 +21,7 @@ function render(value) {
     title.textContent = item.name; description.textContent = item.detail; li.append(title, description); return li;
   }));
   $('download').disabled = false;
+  renderStorage(value.resultStorage);
 }
 function connection(text, state = 'ok') { $('connection').textContent = text; $('connection').dataset.state = state; }
 function lastObservation() { return report ? new Date(report.observedAt).toLocaleTimeString() : 'none'; }
@@ -34,8 +36,10 @@ async function refresh() {
     if (value.schema !== 'cannabis.worker-console.v1' || !Number.isFinite(age) || age < -5000 || age > 15000 ||
         value.worker?.admitted !== false || value.worker?.acceptingJobs !== false) throw Error('Unsupported report');
     render(value);
+    setStorageConnected(true);
     connection(`${paused ? 'Monitoring paused. Snapshot' : 'Local monitor connected. Observed'} at ${lastObservation()}. Activity belongs to the whole computer.`);
   } catch {
+    setStorageConnected(false);
     connection(`Local monitor unavailable. Last observation: ${lastObservation()}. Displayed readings are stale; worker intake remains unavailable.`, 'error');
     $('download').disabled = true;
   } finally { pending = false; $('refresh').disabled = false; }
@@ -54,4 +58,4 @@ $('download').addEventListener('click', () => {
   const link = document.createElement('a'); link.href = url; link.download = 'cannabis-worker-readiness.json'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
-await refresh(); schedule();
+await initializeStorage(refresh);await refresh(); schedule();

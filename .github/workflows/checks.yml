@@ -41,6 +41,8 @@ jobs:
         run: sudo /usr/bin/python3 -I -B scripts/check-guest-ciphertext.py
       - name: Check bounded result volume and restart recovery
         run: sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-result-volume.py
+      - name: Exercise retained-result console and explicit replacement delivery
+        run: sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-result-volume.py --console
       - name: Verify reviewed launch file ownership and path refusals
         run: sudo env PATH="$PATH" node --test --test-name-pattern='reviewed launch files' test/guest-launch.test.mjs
       - name: Exercise kernel CPU, memory, process and deadline limits

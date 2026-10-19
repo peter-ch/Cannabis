@@ -298,6 +298,12 @@ own approval/recovery material. Retries are bounded by the configured retention
 window and each relay's expiry. Neither a successful upload nor route replacement
 is requester storage acknowledgement, output acceptance or payment approval.
 
+The [worker console](worker-console.md#connect-retained-results) can open the
+existing physical store, show capacity and retained attempts, verify recovery,
+and review a replacement upload. Its locally configured relay origins, distinct
+read/upload grants and one-use confirmation constrain that operation. The GUI
+does not expose deletion, job re-execution, requester keys or settlement signing.
+
 Complete unacknowledged results remain charged even after retries expire, preserving
 the sole recoverable copy and refusing new work when capacity is exhausted. Only a
 verified requester storage signature starts the deletion retention period (seven

@@ -21,6 +21,8 @@ def refused(action):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--node',default=shutil.which('node'))
+    parser.add_argument('--console',action='store_true',help='Exercise the retained-result console and replacement delivery instead of filesystem pressure cases')
+    parser.add_argument('--browser-config',type=Path);parser.add_argument('--stop-file',type=Path)
     args=parser.parse_args();assert args.node and os.geteuid()==0
     libc=ctypes.CDLL(None,use_errno=True)
     assert libc.unshare(0x20000)==0
@@ -30,6 +32,17 @@ def main():
     try:
         initial=volume.create_volume(home,32*1024**2,2);mounted=True
         assert initial['backingAllocatedBytes']>=initial['limits']['imageBytes']
+        if args.console:
+            command=[args.node,'--disable-warning=ExperimentalWarning',str(ROOT/'test/helpers/worker_recovery_workflow.mjs'),str(home)]
+            if args.browser_config:
+                assert args.stop_file and args.browser_config.is_absolute() and args.stop_file.is_absolute()
+                command.extend([str(args.browser_config),str(args.stop_file)])
+            run=subprocess.run(command,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
+                               timeout=360 if args.browser_config else 120)
+            assert run.returncode==0,run.stderr[-4096:]
+            result=json.loads(run.stdout);assert all(result['checks'].values())
+            volume.unmount_volume(home);mounted=False;result['checks']['ownedVolumeUnmounted']=True
+            print(json.dumps(result));return
         def node(mode):
             run=subprocess.run([args.node,'--disable-warning=ExperimentalWarning',
                 str(ROOT/'test/helpers/physical_spool_workflow.mjs'),mode,str(home),str(base/'record.json')],
