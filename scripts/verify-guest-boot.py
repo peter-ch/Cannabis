@@ -50,7 +50,7 @@ def main():
     # No disks, shared filesystem, NIC, monitor, QMP, GDB or incoming migration.
     # TCG intentionally cannot provide confidential-hardware acceptance evidence.
     command = [qemu, '-machine', 'q35,accel=tcg', '-cpu', 'max', '-smp', str(reference['cpus']), '-m', str(reference['memoryMiB']), '-nodefaults', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-serial', 'stdio', '-no-reboot', '-kernel', str(image / 'vmlinuz'), '-initrd', str(image / 'initramfs.cpio.gz'), '-append', cmdline]
-    refusals={}
+    capacity_refusals={}
     for name,option,value in [('insufficientMemory','-m',min(2048,budget.minimum_memory//1024**2-128)),
                               ('insufficientCPUs','-smp',budget.minimum_cpus-1)]:
         changed=list(command);changed[changed.index(option)+1]=str(value)
@@ -65,7 +65,7 @@ def main():
         if (code!=0 or 'Measured VM capacity refused' not in text or 'CANNABIS_BOOT_CHECK root_handoff_failure' not in text
                 or 'CANNABIS_CHECK_PHASE' in text or 'CANNABIS_BOOT_RESULT' in text or 'Traceback' in text):
             raise ValueError('Early capacity refusal was not verified')
-        refusals[name]={'refusedBeforeRootCopy':True,'poweredOff':True,'setting':{option:value}}
+        capacity_refusals[name]={'refusedBeforeRootCopy':True,'poweredOff':True,'setting':{option:value}}
     with log.open('xb') as stream:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
         try:
@@ -175,7 +175,7 @@ def main():
         raise ValueError('Protected channel requester reconstruction did not pass')
     if result['schema'] != 'cannabis.guest-boot-check.v1' or result['kernel'] != report['kernelRelease'] or result['imageFilesVerified'] != report['embeddedFiles'] or result['tee'] != 'sample' or result['profileChecks'] != [{'profile':p, 'unsupportedHardwareRejected':True} for p in ['snp','tdx']] or any(result[k] is not False for k in ['requestedEvidence','acceptedJobKeys','launchedCustomerWork','hardwareValidated']):
         raise ValueError('Unexpected guest result')
-    final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'referenceVM':reference, 'earlyCapacityRefusals':refusals, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}
+    final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'referenceVM':reference, 'earlyCapacityRefusals':capacity_refusals, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}
     (out / 'verification.json').write_text(json.dumps(final,indent=2)+'\n')
     print(json.dumps(final))
 
