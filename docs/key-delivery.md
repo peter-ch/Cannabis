@@ -218,6 +218,14 @@ open; they and read-access tokens are not added to its persistent recovery cache
 Retrieval alone never marks an output verified or authorizes payment. See the
 [delivery controls and limits](website-orders.md#encrypted-result-relay).
 
+The [operator upload tool](website-orders.md#uploading-an-encrypted-result) can
+resume delivery of an already encrypted age archive and compact encrypted receipt.
+It checks local bytes against the declared hash and bounds retries, but it holds
+no result key and cannot authenticate that private receipt. Its completion report
+is only the relay's assertion. It never produces the requester's signed storage
+acknowledgement, marks output verified or authorizes payment. Connecting the admitted
+guest handoff and requester acknowledgement to hosted storage remains required.
+
 Operational encrypted delivery and acknowledgement, protected hardware
 and live settlement remain required before paid intake can open. Local tests use
 disposable custody, an isolated chain and synthetic attestation; they do not count

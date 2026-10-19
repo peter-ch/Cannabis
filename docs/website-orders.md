@@ -91,7 +91,7 @@ when publishing decrypted files or downloading them. A retrieval check cannot
 mark an unfinished result verified. Another tab's retirement prevents publication.
 
 The relay and retrieval controls are implemented in source but not enabled on the
-public service. Admitted-worker publication, an operational upload/retry client,
+public service. Admitted-worker publication and requester acknowledgement,
 live quotes, wallet checkout and payment-state reconciliation remain unfinished.
 Local verification or relay storage does not approve a payment.
 
@@ -176,6 +176,60 @@ limits. Two concurrent body/large-response transfers are allowed, each with a
 30-second total deadline. Existing per-source and global request limits also bound
 chunk throughput; clients must resume later after a rate or busy response. No
 automatic signing, payment, content-key release or admission follows a successful
-upload. The website has bounded download/retry controls. Admitted-worker
-publication, an operational upload/retry client and reviewed host deployment
-remain required before this can serve admitted jobs.
+upload. The website has bounded download/retry controls. An ordinary-host upload
+tool is described below. Admitted-worker publication, requester acknowledgement
+and reviewed host deployment remain required before this can serve admitted jobs.
+
+## Uploading an encrypted result
+
+The operator tool sends an already encrypted archive and encrypted receipt to an
+existing reservation. It opens no identity, content key or wallet, and neither
+runs customer code nor admits a worker. Keep the upload access and source files
+private. Independently configure the expected HTTPS origin; do not take it from
+an untrusted access file. HTTP is allowed only at `127.0.0.1` for local checks.
+
+```sh
+node scripts/upload-result.mjs private-upload-config.json upload.json encrypted-source.json
+```
+
+The standalone service artifact includes `upload.mjs` and its notices; run
+`node upload.mjs` with the same arguments outside the source tree. The config
+contains exactly `origin` and `timeoutMs` (a positive integer, at most 3,600,000).
+An example timeout of 1,800,000 allows 30 minutes; the reservation expiry can end
+the operation sooner. An upload timeout does not extend any signed job interval.
+Rate limits can make a large transfer take minutes, so budget its full duration
+before admitting execution.
+
+The source JSON contains exactly these fields:
+
+| Field | Value |
+| --- | --- |
+| `approvalDigest` | The approval already bound to the upload reservation |
+| `resultEnvelope` | The unchanged compact encrypted result receipt |
+| `ciphertextSHA256` | The expected lowercase SHA-256 of the complete encrypted archive |
+| `ciphertextBytes` | Its exact byte length, at most 64 MiB |
+| `ciphertext` | The absolute local path to that binary age archive |
+
+The uploader checks the entire file's length and hash before making a request.
+It checks the age prefix and the encrypted receipt's framing and approval header;
+these format checks do not authenticate the receipt or prove that arbitrary
+operator-supplied bytes protect a real workload. Only the requester can authenticate
+the private receipt and decrypt/reconstruct their result. The operator must receive
+these encrypted artifacts through the reviewed guest handoff; that integration
+remains unfinished.
+
+The tool retains the original file and rechecks each chunk against its initial
+scan, refusing source changes. It sends the fixed manifest and only missing chunks.
+Each request has a 15-second deadline and at most three attempts; busy or rate
+responses have bounded waits within the operation deadline. Redirects, encoded or
+oversized responses and mismatched acknowledgements fail closed. After interruption,
+rerun with the same config, access and source files before expiry. Previously stored
+immutable chunks are reused. A changed manifest or archive requires separate review
+and a new reservation, not an overwrite. Stop signals cancel the active request.
+
+The JSON report says `relayReportedComplete: true` only when the relay reports a
+complete matching upload. Remote durability and honesty remain unproven by this
+response. `requesterAcknowledgedStorage`, `outputVerified`, `qualityAccepted` and
+`paymentAuthorized` all remain false. Preserve the encrypted source until the
+requester's authenticated storage acknowledgement and the applicable retention
+policy permit removal. Never turn a relay response into the requester's signature.
