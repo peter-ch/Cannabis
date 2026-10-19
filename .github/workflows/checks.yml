@@ -53,6 +53,16 @@ jobs:
         run: sudo python3 -I -B scripts/check-guest-job.py
       - name: Verify immutable launch snapshots and guarded transport cleanup
         run: sudo python3 -I -B scripts/check-guest-launcher.py
+      - name: Verify the bounded operator unit and metadata recovery
+        run: sudo /usr/bin/python3 -I -B scripts/check-operator-boundary.py --node "$(command -v node)"
+      - name: Verify operator service composition on the supported Node version
+        run: sudo env PATH="$PATH" node --experimental-test-module-mocks test/helpers/operator_service_workflow.mjs
+      - name: Install QEMU for owned host lifecycle checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86
+      - name: Verify owned VM cleanup with explicitly non-confidential fixtures
+        run: sudo /usr/bin/python3 -I -B scripts/check-host-vm.py
       - name: Install pinned tools for disposable Linux isolation checks
         run: |
           python3 - <<'PY'
