@@ -19,7 +19,7 @@ jobs:
       - name: Reproduce the reviewed browser wallet adapter
         run: |
           npm run build:operator
-          git diff --exit-code -- operator/market-wallet.js
+          git diff --exit-code -- operator/market-wallet.js operator/market-wallet.js.LEGAL.txt
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

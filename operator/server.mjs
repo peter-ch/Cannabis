@@ -24,6 +24,7 @@ const files = new Map([
   ['/service.css', ['service.css', 'text/css; charset=utf-8']],
   ['/market.js', ['market.js', 'text/javascript; charset=utf-8']],
   ['/market-wallet.js', ['market-wallet.js', 'text/javascript; charset=utf-8']],
+  ['/market-wallet.js.LEGAL.txt', ['market-wallet.js.LEGAL.txt', 'text/plain; charset=utf-8']],
   ['/market.css', ['market.css', 'text/css; charset=utf-8']],
   ['/compute-engine.webp', ['../web/assets/editorial/compute-engine-small.webp', 'image/webp']]
 ]);
