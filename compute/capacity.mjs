@@ -1,5 +1,5 @@
 // Signed capacity offers and atomic local reservations. Funded leases share this inventory.
-import { DatabaseSync } from 'node:sqlite';
+import { openDurableDatabase } from './sqlite_runtime.mjs';
 import { getAddress, TypedDataEncoder, verifyTypedData, ZeroAddress } from 'ethers';
 
 const hash = value => typeof value === 'string' && /^0x[0-9a-f]{64}$/.test(value) && value !== '0x'+'0'.repeat(64);
@@ -49,7 +49,7 @@ export function reservationPayload(context,reservation) {
 export class CapacityLedger {
   constructor(file,context) {
     this.context=structuredClone(context);domain(context);
-    this.db=new DatabaseSync(file,{timeout:5000});
+    this.db=openDurableDatabase(file,{timeout:5000});
     this.db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), context TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS resources (provider TEXT NOT NULL, resource TEXT NOT NULL, service TEXT NOT NULL, units INTEGER NOT NULL, PRIMARY KEY(provider,resource)) STRICT;

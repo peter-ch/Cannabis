@@ -44,7 +44,7 @@ The current escrow supports up to 128 payment recipients per order. The generic 
 
 ## Tools
 
-Requires Node.js 22.22.0 or later in the supported 22.x environment; Node's built-in SQLite API is still marked as in active development. No additional database package is installed.
+The guest and CI pin Node.js 22.23.3; the Windows setup pins Node.js 24.22.0. A database runtime check refuses the documented [SQLite WAL-reset bug](https://sqlite.org/wal.html#the_wal_reset_bug) before opening persistent data. SQLite 3.51.3 or later, or the documented 3.50.7/3.44.6 backport lines, is required. An engine-version warning alone is not this protection. No additional database package is installed.
 
 ```sh
 node scripts/compute-capacity.mjs offer-payload context.json offer.json
@@ -69,4 +69,4 @@ Promotion input has two objects:
 
 Inspection input is `{leaseId}`. It returns the persisted agreement, booking intervals, code/genesis pins and observed finalized block. This is historical evidence, not fresh launch authorization. Store any RPC credentials privately; the persisted record excludes the RPC URL.
 
-The implementation uses [ethers typed-data verification](https://docs.ethers.org/v6/api/hashing/#verifyTypedData), [Node's SQLite interface](https://nodejs.org/download/release/v22.22.0/docs/api/sqlite.html) and Ethereum's [JSON-RPC finality tags](https://ethereum.org/developers/docs/apis/json-rpc/). Automated checks exercise real contract deployments on an isolated verification chain, plus controlled RPC failure/reorganization cases, altered signatures and terms, concurrent promotion, expiry races, offer/resource overbooking, exact prices and persistence. Independent review and real provider integration remain required.
+The implementation uses [ethers typed-data verification](https://docs.ethers.org/v6/api/hashing/#verifyTypedData), [Node's SQLite interface](https://nodejs.org/docs/v22.23.3/api/sqlite.html) and Ethereum's [JSON-RPC finality tags](https://ethereum.org/developers/docs/apis/json-rpc/). Automated checks exercise real contract deployments on an isolated verification chain, plus controlled RPC failure/reorganization cases, altered signatures and terms, concurrent promotion, expiry races, offer/resource overbooking, exact prices and persistence. Independent review and real provider integration remain required.

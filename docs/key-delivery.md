@@ -139,6 +139,9 @@ concurrent replacement or retirement cannot save an obsolete result. Bounded rel
 count and total encrypted-receipt storage apply; the defaults are 4,096 releases
 and 64 MiB. Preserve the database and its SQLite WAL coherently when backing it up.
 Its public approval context still contains linkable order and timing metadata.
+The inbox checks the actual SQLite library version before opening its file and
+refuses runtimes affected by the documented concurrent WAL-reset bug. Use the
+pinned Node tools; upgrading a runtime does not repair an already corrupt database.
 
 Use the local CLI with a private configuration:
 

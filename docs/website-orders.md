@@ -78,3 +78,8 @@ The result viewer currently opens requester-supplied encrypted files. Authentica
 `service/work-server.mjs` is a separate non-custodial Node service. Set `CANNABIS_WORK_DB` to a private SQLite path and `CANNABIS_WORK_ORIGIN` to the canonical HTTPS origin, then run `node service/work-server.mjs`. It listens only on `127.0.0.1:4210` by default. `CANNABIS_WORK_PORT` changes that loopback port. Only a configured Caddy proxy may use `CANNABIS_WORK_PROXY=caddy`; it must overwrite `X-Cannabis-Client-IP` and preserve the configured Host. Never expose this listener directly.
 
 The service uses bounded JSON bodies, exact schemas, same-origin writes, request timeouts, per-connection-source/global request limits, persistent single-use challenges and bounded record counts. Store the SQLite database and its backups outside the static web root, with a dedicated unprivileged service identity and restricted permissions. Restarting the service preserves orders and invalidates no unexpired session unnecessarily. Do not upload custody vaults or workload keys. The website host is not a confidential compute worker.
+
+The service checks its actual SQLite library version before opening the database,
+refusing versions affected by the [concurrent WAL-reset bug](https://sqlite.org/wal.html#the_wal_reset_bug).
+Use the pinned patched Node runtime and keep coherent database backups. The runtime
+check prevents use of the known affected library; it is not a corruption repair.

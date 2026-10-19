@@ -1,6 +1,6 @@
 // Requester-side appraisal of Trustee v0.22.0 EAR results. No secrets or key release.
 import { createHash, randomBytes } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { openDurableDatabase } from './sqlite_runtime.mjs';
 import { importJWK, jwtVerify } from 'jose';
 import { getAddress } from 'ethers';
 import { inspectLease } from './leases.mjs';
@@ -213,7 +213,7 @@ export async function verifyTrusteeResult(token, policy, challenge, channelJwk, 
 export class AttestationLedger {
   constructor(file, policy, clock = seconds) {
     this.policy = structuredClone(policy); this.policyDigest = validateAttestationPolicy(this.policy); this.clock = clock;
-    this.db = new DatabaseSync(file, { timeout: 5000 });
+    this.db = openDurableDatabase(file, { timeout: 5000 });
     this.db.exec(`PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS attestation_settings (id INTEGER PRIMARY KEY CHECK(id=1), policyDigest TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS attestation_challenges (nonce TEXT PRIMARY KEY, body TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0, tokenSHA256 TEXT) STRICT;`);

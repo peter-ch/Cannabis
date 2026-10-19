@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import { openDurableDatabase } from '../compute/sqlite_runtime.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { getAddress, verifyMessage } from 'ethers';
 
@@ -40,7 +40,7 @@ export function validateDraft(body) {
 export class WorkStore {
   constructor(file, origin, { now = Date.now, maxRecords = 5000 } = {}) {
     this.now = now; this.origin = origin; this.maxRecords = maxRecords;
-    this.db = new DatabaseSync(file, { timeout: 2000 });
+    this.db = openDurableDatabase(file, { timeout: 2000 });
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS accounts (address TEXT PRIMARY KEY, created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS challenges (id TEXT PRIMARY KEY, binding TEXT NOT NULL, address TEXT NOT NULL, message TEXT NOT NULL, expires INTEGER NOT NULL);

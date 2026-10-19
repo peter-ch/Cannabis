@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Cannabis: efficient community claims with zero-knowledge eligibility privacy and founder vesting.",
   "engines": {
-    "node": ">=22.22.0"
+    "node": ">=22.23.3"
   },
   "scripts": {
     "compile": "node scripts/compile.mjs",

@@ -1,7 +1,7 @@
 // Requester-local durable attempt selection and encrypted receipt retrieval.
 // Never run this ledger on the untrusted worker/operator or accept its expected
 // approvals from a server response. It neither executes work nor approves payment.
-import { DatabaseSync } from 'node:sqlite';
+import { openDurableDatabase } from './sqlite_runtime.mjs';
 import { createHash } from 'node:crypto';
 import { TypedDataEncoder, getAddress, verifyTypedData, ZeroAddress } from 'ethers';
 import { deliveryTypesV2 } from './key_delivery.mjs';
@@ -55,7 +55,7 @@ export class ResultInbox {
     this.#context=contextValue(context);
     if(!integer(maxReleases,1,100000)||!integer(maxReceiptBytes,1024,1024**3))fail('Invalid requester inbox limits');
     this.#maxReleases=maxReleases;this.#maxReceiptBytes=maxReceiptBytes;
-    this.#db=new DatabaseSync(file,{timeout:5000});
+    this.#db=openDurableDatabase(file,{timeout:5000});
     try {
       this.#db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS inbox_context(id INTEGER PRIMARY KEY CHECK(id=1),body TEXT NOT NULL) STRICT;
