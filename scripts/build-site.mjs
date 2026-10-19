@@ -70,7 +70,7 @@ for (const entry of fs.readdirSync(path.join(root, 'media/series'), { withFileTy
   }
 }
 const pages = fs.readdirSync(out, { recursive: true }).map(name => name.split(path.sep).join('/')).filter(name => name.endsWith('.html')).sort();
-const assetVersions = new Map(['style.css', 'site.js', 'docs.js', 'work.js', 'work.css'].map(name => [name, createHash('sha256').update(fs.readFileSync(path.join(out, name))).digest('hex').slice(0, 12)]));
+const assetVersions = new Map(['style.css', 'site.js', 'donate.js', 'docs.js', 'work.js', 'work.css'].map(name => [name, createHash('sha256').update(fs.readFileSync(path.join(out, name))).digest('hex').slice(0, 12)]));
 for (const name of pages) {
   let html = fs.readFileSync(path.join(out, name), 'utf8');
   const prefix = '../'.repeat(name.split('/').length - 1) || './';
