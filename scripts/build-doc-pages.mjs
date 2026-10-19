@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import MarkdownIt from 'markdown-it';
 import { page } from './build-media-pages.mjs';
-import { artName, editorialArt } from './editorial-art.mjs';
+import { artName, editorialArt, companionArt } from './editorial-art.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -123,7 +123,7 @@ export function buildDocPages(out) {
       <div class="guide-layout"><article class="guide-article"><header class="guide-header"><p class="eyebrow">${group.title.toUpperCase()} <span aria-hidden="true">/</span> ${guide.minutes} MIN READ</p><h1>${escape(guide.title)}</h1><p class="guide-deck">${escape(guide.summary)}</p></header>
       ${editorialArt(artName(guide.source), 'editorial-art guide-art', 'eager')}
       ${toc ? `<details class="guide-mobile-toc"><summary>On this page</summary><nav aria-label="Sections on this page">${toc}</nav></details>` : ''}
-      <div class="guide-prose">${guide.html}</div><div class="guide-end"><a class="text-link" href="/docs/index.html">← All guides</a><a class="text-link" href="https://github.com/peter-ch/Cannabis/blob/main/${guide.source}">View source on GitHub ↗</a></div></article>
+      <div class="guide-prose">${guide.html}</div>${companionArt(guide.source, group.id)}<div class="guide-end"><a class="text-link" href="/docs/index.html">← All guides</a><a class="text-link" href="https://github.com/peter-ch/Cannabis/blob/main/${guide.source}">View source on GitHub ↗</a></div></article>
       <aside class="guide-sidebar">${toc ? `<div><p class="eyebrow">ON THIS PAGE</p><nav aria-label="Sections on this page">${toc}</nav></div>` : ''}<div><p class="eyebrow">${group.title.toUpperCase()}</p><nav aria-label="Related guides">${related}</nav></div><a class="guide-sidebar-all" href="/docs/index.html">Browse all guides <span aria-hidden="true">↗</span></a></aside></div>`;
     const target = path.join(out, guide.target);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -133,6 +133,6 @@ export function buildDocPages(out) {
   const search = `<div class="guide-search" data-guide-search hidden><label for="guide-query">Find a guide</label><div><input id="guide-query" type="search" placeholder="Try privacy, payments or Windows" autocomplete="off"><span data-guide-count role="status" aria-live="polite">${routes.size} guides</span></div></div>`;
   const categories = `<nav class="guide-categories" aria-label="Guide topics">${catalog.map(group => `<a href="#${group.id}">${group.title}</a>`).join('')}</nav>`;
   const sections = catalog.map((group, index) => `<section class="guide-group" id="${group.id}" data-guide-group><div class="guide-group-heading"><span class="eyebrow">0${index + 1}</span><div><h2>${group.title}</h2><p>${group.description}</p></div></div><div class="guide-grid">${group.guides.map(guide => `<a class="guide-card" href="/${guide.target}" data-guide-card><span class="guide-card-arrow" aria-hidden="true">↗</span><h3>${escape(guide.label)}</h3><p>${escape(guide.summary)}</p><span class="guide-card-meta">${guide.minutes} min read</span></a>`).join('')}</div></section>`).join('');
-  fs.writeFileSync(path.join(out, 'docs/index.html'), page('Guides', 'Explore Cannabis: community participation, useful computing, privacy and technical guides.', hero + search + categories + sections + '<p class="guide-no-results" data-guide-empty hidden>No matching guides. Try a different word or clear the search.</p>', { mainClass: 'documentation guide-home', showIntro: false, script: '/docs.js' }));
+  fs.writeFileSync(path.join(out, 'docs/index.html'), page('Guides', 'Explore Cannabis: community participation, useful computing, privacy and technical guides.', hero + search + categories + editorialArt("shared-ideas", "editorial-art inline-people") + sections + '<p class="guide-no-results" data-guide-empty hidden>No matching guides. Try a different word or clear the search.</p>', { mainClass: 'documentation guide-home', showIntro: false, script: '/docs.js' }));
   return routes;
 }
