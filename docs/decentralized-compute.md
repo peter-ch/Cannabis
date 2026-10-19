@@ -25,7 +25,7 @@ The intended settlement network uses Ethereum proof of stake. There is no proof-
 
 One market references two immutable reviewed `ComputeEscrow` deployments: native ETH and Cannabis. Both payment assets consume the same resource inventory. Separate offers for a provider's registered resource cannot reserve more than that resource's declared capacity within this market. Each offer also has its own limit. Intervals are half-open: a booking ending at a given instant does not overlap one starting then.
 
-The public manifest must be available through independently usable, content-addressed distribution and provide provider contact, service terms and compatible runtime details. The current contract commits its hash; it does not supply a peer-discovery transport, guarantee manifest availability or automatically fetch an arbitrary URL. Do not place customer code, arguments, inputs, output contents or secret keys in public manifests or transaction data.
+The public manifest supplies provider contact, public service terms and declared runtime details. The direct client retrieves it from independently selected mirrors and checks its exact content hash and offer/resource bindings against fresh chain observations. The contract does not guarantee availability or automatically fetch an arbitrary URL. Do not place customer code, arguments, inputs, output contents or secret keys in public manifests or transaction data.
 
 A reservation contains a requester-scoped nonce, offer ID, requester, escrow order ID, exact settlement-terms digest, interval, units, total gross amount and hold expiry. The provider signs its [EIP-712](https://eips.ethereum.org/EIPS/eip-712) payload; the requester submits it directly. The domain includes chain ID and market address. Provider contract wallets use [ERC-1271 signature validation](https://docs.openzeppelin.com/contracts/5.x/api/utils#SignatureChecker). A third party cannot submit another requester's booking or consume their nonce through its own booking. Used nonces remain consumed after expiry. The stored booking ID is the complete typed-data digest, not the nonce alone.
 
@@ -66,6 +66,56 @@ Offline preparation is not verification of a deployed contract. Inspect the pinn
 Offer ranges contain `fromBlock` and `toBlock`, at most 256 blocks per request. A range with more than 128 offer events must be split. Booking selections contain `bookingIds`, up to 64 unique digests. Reads bind contract state to the same finalized canonical block through [EIP-1898](https://eips.ethereum.org/EIPS/eip-1898), check offer events against stored terms and recheck canonicality afterward. Unsupported hash queries, stale state and changed deployment pins fail closed. Results report their block and never claim key-release authorization.
 
 RPC-reported finality is still trust in that RPC, not a locally verified consensus proof. The production client needs an independently validated consensus view or an explicitly reviewed RPC arrangement; a founder RPC cannot be the mandatory trust root. A log scan can be censored by an untrusted endpoint even when returned offers pass state checks. Indexers are discovery aids, never booking authorities.
+
+## Provider manifests and mirrors
+
+`cannabis.provider-manifest.v1` commits public metadata to the offer. It contains
+the chain ID, genesis hash, market and offer ID; the complete resource declaration;
+the exact offer terms except its own `manifestHash`; public terms; HTTPS origins
+for booking/session contacts and optional result routes; and declared runtime,
+architecture, operating system, accelerator and confidential-hardware identifiers.
+Runtime declarations are not measured execution evidence. Adapters and accelerator
+identifiers are extensible; an unsupported confidential path still cannot run work.
+
+The provider prepares the offer ID from its wallet and nonce before encoding the
+manifest, then uses the returned hash in the offer transaction. This avoids a hash
+depending on itself. The byte format is sorted compact UTF-8 JSON followed by one
+line feed, limited to 64 KiB. Its SHA-256 digest, including that line feed, is the
+on-chain `manifestHash`. Ambiguous encodings, duplicate fields, altered terms,
+unknown fields and mismatched providers/resources are refused.
+
+```sh
+node scripts/compute-provider-manifest.mjs encode public-manifest-input.json canonical-manifest.json
+node scripts/compute-provider-manifest.mjs inspect canonical-manifest.json observed-offers.json OFFER_ID
+node scripts/compute-provider-manifest.mjs fetch network.json manifest-selection.json downloaded-manifest.json
+```
+
+`encode` prepares bytes and a hash without signing or publishing. `inspect` compares
+against a supplied observation and explicitly does not claim fresh chain verification.
+`fetch` independently reads the selected offer before and after retrieval. Its
+selection contains `offerId`, `fromBlock`, `toBlock` and one to eight `mirrors` chosen
+by the requester. Each mirror is an exact HTTPS origin; loopback HTTP is available
+for isolated checks. No project mirror, account or founder website is required.
+Output files are created exclusively; existing files are preserved.
+
+Mirrors serve the identical canonical bytes at:
+
+```text
+/.well-known/cannabis/manifests/sha256/LOWERCASE_HASH_WITHOUT_0X.json
+```
+
+The client can try another selected mirror for the same hash. It sends no cookies
+or bearer credentials, refuses redirects/compression, bounds received bytes and
+keeps one cancellation/time budget across RPC reads and download. RPC replies are
+limited to 1 MiB for this discovery operation. A withdrawn or expired offer, changed
+canonical observation, wrong network or changed commitment refuses the result.
+RPC-reported finality retains the trust boundary described above.
+
+Success proves that the retrieved public bytes match the provider's on-chain
+commitment at the observed state. It does not guarantee a booking, authenticate a
+live peer's wallet or admit physical hardware. Advertised contact origins are not
+automatically contacted by manifest retrieval. Authenticated session transport,
+aggregate relay storage and end-to-end independent operation remain release work.
 
 ## Protected booking and key-delivery binding
 

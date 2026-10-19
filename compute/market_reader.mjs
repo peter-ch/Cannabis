@@ -1,3 +1,4 @@
+import { boundedDiscoveryRPC } from './discovery_rpc.mjs';
 // Direct RPC discovery/inspection. Optional indexers cannot authorize bookings.
 import { FetchRequest, Interface, JsonRpcProvider, getAddress, keccak256 } from 'ethers';
 import abi from './market-abi.json' with { type: 'json' };
@@ -8,7 +9,7 @@ const integer = n => Number.isSafeInteger(n) && n >= 0;
 const plain = value => JSON.parse(JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v));
 const object = tuple => tuple.toObject(true);
 
-async function snapshot(options, inspect, clock, selection = {}) {
+async function snapshot(options, inspect, clock, selection = {}, runtime) {
   const mode = selection.mode ?? 'finalized', anchored = mode === 'anchor';
   if (!['anchor', 'finalized', 'latest'].includes(mode)) throw Error('Invalid market snapshot selector');
   const anchors = [selection.anchor, selection.finalizedAnchor, selection.fundingAnchor].filter(Boolean);
@@ -25,6 +26,8 @@ async function snapshot(options, inspect, clock, selection = {}) {
     throw Error('Pin the chain, genesis, market runtime and bounded finalized policy');
   const address = getAddress(options.market), request = new FetchRequest(endpoint.href);
   request.timeout = 15000;
+  const transport=runtime?boundedDiscoveryRPC(runtime):null;
+  if(transport){request.getUrlFunc=transport.getUrl;request.setThrottleParams({maxAttempts:1});}
   const provider = new JsonRpcProvider(request, undefined, { cacheTimeout: -1 });
   const send = (method, params) => provider.send(method, params);
   try {
@@ -68,7 +71,7 @@ async function snapshot(options, inspect, clock, selection = {}) {
       ...value, executionAuthorized: false, keyReleaseAuthorized: false,
       finality: mode==='latest'?'rpc-latest':'rpc-finalized',
       note: 'RPC-reported '+(mode==='latest'?'latest-head':'finalized')+' state, not a local consensus proof or physical capacity attestation.' });
-  } finally { provider.destroy(); }
+  } finally { provider.destroy();transport?.close(); }
 }
 
 async function readOffer(call, id) {
@@ -78,7 +81,7 @@ async function readOffer(call, id) {
   return { offerId: id, offer: object(offer), resource: object(resource), withdrawn: withdrawn[0] };
 }
 
-export async function readMarketOffers(options, { fromBlock, toBlock }, clock = () => Math.floor(Date.now() / 1000)) {
+export async function readMarketOffers(options, { fromBlock, toBlock }, clock = () => Math.floor(Date.now() / 1000), runtime) {
   if (!integer(fromBlock) || !integer(toBlock) || toBlock < fromBlock || toBlock - fromBlock >= 256)
     throw Error('Scan an explicit range of at most 256 blocks');
   return snapshot(options, async ({ call, send, address, block }) => {
@@ -101,7 +104,7 @@ export async function readMarketOffers(options, { fromBlock, toBlock }, clock = 
         expiredAtSnapshot: BigInt(current.offer.expiresAt) <= BigInt(block.timestamp) });
     }
     return { fromBlock, toBlock, offers };
-  }, clock);
+  }, clock, {}, runtime);
 }
 
 export async function readMarketBookings(options, query, clock = () => Math.floor(Date.now() / 1000)) {
