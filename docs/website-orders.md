@@ -71,7 +71,11 @@ export per job; larger workloads use the streaming requester client.
 
 The browser supports result sets up to 64 MiB and 128 archives. Larger sets use the streaming desktop client. **Clear decrypted results** removes download links and private file inputs, including an in-progress opening; it preserves the encrypted recovery cache. **Retire selected attempts** removes the selected encrypted records while retaining the local history needed to refuse replay. It does not cancel remote execution or revoke previously disclosed keys. Downloaded plaintext remains on your device. Browser decryption is subject to the security of the delivered website and your browser; use a reviewed local client for stronger separation from the web host.
 
-The result viewer currently opens requester-supplied encrypted files. Authenticated worker delivery, hosted ciphertext retrieval, live quotes, wallet checkout and payment-state reconciliation still require integration with the admitted worker service. A local file verification does not create a hosted delivery or approve a payment.
+The result viewer currently opens requester-supplied encrypted files. The source
+includes an optional bounded ciphertext relay described below; browser retrieval
+and admitted-worker publication still need integration. Live quotes, wallet
+checkout and payment-state reconciliation remain unavailable. A local file
+verification or relay upload does not approve a payment.
 
 ## Operating the order service
 
@@ -83,3 +87,71 @@ The service checks its actual SQLite library version before opening the database
 refusing versions affected by the [concurrent WAL-reset bug](https://sqlite.org/wal.html#the_wal_reset_bug).
 Use the pinned patched Node runtime and keep coherent database backups. The runtime
 check prevents use of the known affected library; it is not a corruption repair.
+
+## Encrypted result relay
+
+The optional relay stores encrypted archives and encrypted receipts on an ordinary
+host. It receives no identity, content key, private workload or plaintext output.
+It can observe approval identifiers, network addresses, timing and ciphertext
+sizes. The requester must authenticate the encrypted receipt against their own
+selected signed approval, check the complete archive hash and reconstruct locally.
+The relay's `complete` flag means its stored bytes match the supplied manifest;
+it does not prove execution, protected hardware, output quality or payment.
+
+Set `CANNABIS_RESULT_DB` to a separate private local SQLite file to enable the relay
+in the order service. Keep it and coherent backups outside the web root. Deploying
+this option still requires reviewed artifacts and host resource checks. It is not
+currently enabled on the public service. Public callers cannot create reservations.
+The operator provisions each approved delivery locally:
+
+```sh
+node scripts/reserve-result-storage.mjs private-relay-config.json reservation.json /absolute/private/new-access-directory
+```
+
+The standalone service artifact includes the same tool as `reserve.mjs`, together
+with its dependency notices; use `node reserve.mjs` with the same arguments there.
+
+The config contains `database` (the absolute private database path) and `origin`
+(the canonical HTTPS website origin). The reservation contains `approvalDigest`,
+`maxCiphertextBytes` and `expiresAt` (Unix milliseconds, at most seven days ahead).
+The command creates a new directory containing separate `upload.json` and
+`read.json` access files. Existing files are never overwritten. Distribute only
+the corresponding role file through an authenticated private channel; these are
+bearer credentials, not content-decryption keys. They are hashed in the relay
+database and must never appear in URLs, logs or public files. A failed provisioning
+attempt can leave partial files or a reservation until expiry; retain them for
+operator recovery. Reserving space incurs no payment and grants no execution.
+
+All routes use `/api/work/results/{id}` and the matching `Authorization: Bearer`
+token. Writes require the configured `Origin`. The existing host, rate, request
+timeout, no-cache and cross-origin restrictions also apply.
+
+| Method and suffix | Role | Behavior |
+| --- | --- | --- |
+| `POST /manifest` | Upload | Fix `{resultEnvelope, ciphertextSHA256, ciphertextBytes}` as JSON |
+| `GET /status` | Upload | Return received chunk indices and completion state |
+| `POST /chunks/{index}` | Upload | Store one uncompressed `application/octet-stream` chunk |
+| `POST /finish` | Upload | Send `{}`; check every stored byte and the complete SHA-256 |
+| `GET /manifest` | Read | Retrieve the encrypted receipt and archive metadata after completion |
+| `GET /chunks/{index}` | Read | Retrieve one encrypted chunk after completion |
+| `DELETE` | Read | Revoke access and remove the stored object and chunks |
+
+Chunks are 65,536 bytes except the exact final remainder, indexed from zero.
+Missing chunks can be uploaded in any order after restart. Exact retries are
+idempotent; conflicting manifests or chunks cannot overwrite the chosen result.
+If chosen bytes are wrong, create a new reservation. Partial objects cannot be
+downloaded. Expiry is checked again during mutations and denies reads immediately;
+periodic cleanup removes expired rows. Deletion does not erase prior copies or
+backups or revoke content keys already disclosed elsewhere.
+
+The default limits are 64 MiB per archive, 6 MiB per encrypted receipt, 128 slots
+and 128 MiB of total reserved archive-plus-receipt capacity. Reservations count
+their full allowances before upload. Limits are persisted and cannot be changed
+on an existing database without reviewed migration. A database page ceiling is
+additional protection; WAL, filesystem overhead and backups still need host disk
+limits. Two concurrent body/large-response transfers are allowed, each with a
+30-second total deadline. Existing per-source and global request limits also bound
+chunk throughput; clients must resume later after a rate or busy response. No
+automatic signing, payment, content-key release or admission follows a successful
+upload. Operational retry clients and the website retrieval controls remain to
+be connected before this can serve admitted jobs.
