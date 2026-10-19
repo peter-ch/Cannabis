@@ -92,7 +92,9 @@ def actor(parent, base, mode):
                 + 'if os.fork()==0:\n os.setsid()\n time.sleep(120)\n'
                 + 'time.sleep(120)\n')
             (fake / 'age').chmod(0o755)
-            age, wall = str(fake / 'age'), 3
+            # Include interpreter/key-check startup under slow CPU emulation.
+            # This owned fixture still expires long before its 120-second stall.
+            age, wall = str(fake / 'age'), 15
         else:
             age, wall = AGE, 30
         class Cancellation:
@@ -153,7 +155,10 @@ def main():
                     expiry = time.monotonic() + 30
                     while not (base / mode / 'started').exists():
                         if proc.poll() is not None or time.monotonic() >= expiry:
-                            raise AssertionError('Helper did not start: ' + proc.stderr.read(8192).decode())
+                            if proc.poll() is None:
+                                proc.kill()
+                            _, error = proc.communicate(timeout=5)
+                            raise AssertionError('Helper did not start: ' + error[-8192:].decode())
                         time.sleep(0.05)
                     # Track the exact directories created by this actor. Their
                     # mounts are private and die after its last namespace user.

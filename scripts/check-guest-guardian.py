@@ -153,6 +153,33 @@ def run(parent):
         finish(work)
         for handle in handles:
             os.close(handle)
+    # A long purchased interval must never become the timeout for cancellation
+    # when the independent guardian itself is stopped.
+    long_limits = ResourceLimits(1000, 64 * 1024**2, 16, 3600)
+    guard = GuardedResources(parent, long_limits)
+    work = spawn(['worker', str(guard.path), json.dumps(asdict(long_limits))])
+    state = line(work)
+    handles = [os.pidfd_open(state[k]) for k in ['worker', 'detached']]
+    try:
+        os.kill(guard._process.pid, signal.SIGSTOP)
+        started = time.monotonic()
+        try:
+            guard.wait(action='cancel')
+        except TimeoutError:
+            pass
+        else:
+            raise AssertionError('Stopped guardian acknowledged cancellation')
+        assert 9 <= time.monotonic() - started < 25
+        assert not guard.path.exists() and guard._process.poll() is not None
+        for handle in handles:
+            ended(handle)
+        cases['stoppedGuardianCancelBounded'] = True
+    finally:
+        if guard._process.poll() is None:
+            guard._fallback()
+        finish(work)
+        for handle in handles:
+            os.close(handle)
     with GuardedResources(parent, ResourceLimits(1000, 64 * 1024**2, 16, 5)) as guard:
         result = guard.wait()
         assert result['reason'] == 'deadline' and result['removed']

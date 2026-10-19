@@ -48,7 +48,7 @@ python3 scripts/verify-guest-boot.py \
   --output /work/cannabis-image-first-boot
 ```
 
-This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default boot-check deadline is ten minutes, allowing CPU emulation of all component checks; individual workload deadlines remain enforced separately. Failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private.
+This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default boot-check deadline is fifteen minutes, allowing CPU emulation of all component checks; individual workload deadlines remain enforced separately. Failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private. The owned entry point emits bounded phase names so slow or stalled checks can be distinguished without customer content.
 
 Inside the VM, the entry point mounts ephemeral runtime storage, disables core dumps and further kernel-module loading, checks embedded files, exercises the Python extensions and age executable, and starts the actual attestation agent and REST bridge on loopback. Both production CPU probes must reject the unsupported sample profile with their exact structured refusal. Import errors, missing libraries and unexpected success fail the check. No hardware evidence, channel key, job key or customer computation is requested. The services are terminated and the VM powers off.
 
@@ -134,9 +134,14 @@ checks actual kernel removal before accepting a terminal response. If the guardi
 unexpectedly dies, the owner uses its retained group descriptors for cleanup and
 raises a fatal error instead of restarting protection around an uncertain job.
 
-Ten kernel checks cover normal finish, cancellation, refused busy finish, owner
+Explicit finish and cancellation wait at most ten seconds for the guardian's
+acknowledgement before invoking retained-object fallback cleanup. This bound does
+not grow with the purchased job duration. Fallback failure remains fatal.
+
+Eleven kernel checks cover normal finish, cancellation, refused busy finish, owner
 SIGKILL, owner exit without finalizers, a stopped owner's deadline, a deliberately
-leaked control socket, guardian failure, independent expiry and late finish. The
+leaked control socket, guardian failure, bounded cancellation of a stopped guardian,
+independent expiry and late finish. The
 same checks run in CI and in the pinned boot image:
 
 ```sh

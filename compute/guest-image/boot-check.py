@@ -10,18 +10,26 @@ import urllib.request
 
 PHASE = 'start'
 
-def main():
+
+def phase(name):
     global PHASE
+    PHASE = name
+    # This entry point runs owned checks only. Bounded phase markers distinguish
+    # slow emulation from a stalled check without any customer/evidence content.
+    print('CANNABIS_CHECK_PHASE ' + name, flush=True)
+
+
+def main():
     os.umask(0o077)
     processes = []
     try:
-        PHASE = 'ephemeral_root'
+        phase('ephemeral_root')
         root_mounts = [line.split() for line in Path('/proc/self/mountinfo').read_text().splitlines() if line.split()[4] == '/']
         if (len(root_mounts) != 1 or root_mounts[0][-3] != 'tmpfs'
                 or 'noswap' not in root_mounts[0][-1].split(',')
                 or not {'nosuid', 'nodev'} <= set(root_mounts[0][5].split(','))):
             raise RuntimeError('Guest root was not handed off to protected memory storage')
-        PHASE = 'embedded_files'
+        phase('embedded_files')
         manifest = json.loads(Path('/opt/cannabis/image-files.json').read_text())
         for entry in manifest:
             path = Path(entry['path'])
@@ -29,12 +37,12 @@ def main():
                 raise RuntimeError('embedded component changed')
         # These imports exercise the actual image's interpreter and extension
         # libraries; no customer package or participant custody is consulted.
-        PHASE = 'python_runtime'
+        phase('python_runtime')
         import ctypes, ssl, sqlite3, lzma, bz2  # noqa: F401
-        PHASE = 'age_runtime'
+        phase('age_runtime')
         subprocess.run(['/usr/local/bin/age', '--version'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         processes.append(subprocess.Popen(['/usr/local/bin/ttrpc-aa', '--attestation_sock', 'unix:///run/confidential-containers/attestation-agent/check.sock'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
-        PHASE = 'agent_socket'
+        phase('agent_socket')
         sock = Path('/run/confidential-containers/attestation-agent/check.sock')
         deadline = time.monotonic() + 20
         while not sock.exists():
@@ -42,7 +50,7 @@ def main():
                 raise RuntimeError('agent unavailable')
             time.sleep(0.1)
         processes.append(subprocess.Popen(['/usr/local/bin/api-server-rest', '--features', 'attestation', '--aa_addr', 'unix://' + str(sock), '--bind', '127.0.0.1:8006'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
-        PHASE = 'bridge_info'
+        phase('bridge_info')
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         while True:
             try:
@@ -60,7 +68,7 @@ def main():
                 time.sleep(0.1)
         checks = []
         for tee in ['snp', 'tdx']:
-            PHASE = tee + '_production_probe'
+            phase(tee + '_production_probe')
             result = subprocess.run(['/usr/local/bin/node', '/opt/cannabis/scripts/compute-guest-probe.mjs', tee], capture_output=True, timeout=20)
             # Do not mistake a missing runtime/import failure for the intended
             # production-profile refusal. Require its exact structured error.
@@ -76,10 +84,10 @@ def main():
                 # separate acceptance run; never report this as authorization.
                 raise RuntimeError('protected hardware requires its reviewed acceptance run')
             checks.append({'profile': tee, 'unsupportedHardwareRejected': True})
-        PHASE = 'initialization_gate'
+        phase('initialization_gate')
         initialized = subprocess.run(['/usr/local/bin/node', '/opt/cannabis/scripts/check-guest-initialization.mjs'], capture_output=True, timeout=90, check=True)
         initialization_checks = json.loads(initialized.stdout)
-        PHASE = 'resource_enforcement'
+        phase('resource_enforcement')
         resources = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-resources.py'], capture_output=True, timeout=90)
         if resources.returncode:
             # This command runs only checked-in owned programs. Its bounded
@@ -87,20 +95,20 @@ def main():
             print('CANNABIS_RESOURCE_FAILURE ' + resources.stderr.decode(errors='replace')[-4096:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Kernel resource acceptance failed')
         resource_checks = json.loads(resources.stdout)
-        PHASE = 'guardian_cleanup'
+        phase('guardian_cleanup')
         guardian = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-guardian.py'], capture_output=True, timeout=180)
         if guardian.returncode:
             print('CANNABIS_GUARDIAN_FAILURE ' + guardian.stderr.decode(errors='replace')[-4096:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Guardian acceptance failed')
         guardian_checks = json.loads(guardian.stdout)
-        PHASE = 'runtime_isolation'
+        phase('runtime_isolation')
         sandbox = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-sandbox.py'], capture_output=True, timeout=180)
         if sandbox.returncode:
             print('CANNABIS_SANDBOX_FAILURE ' + sandbox.stderr.decode(errors='replace')[-8192:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Runtime isolation acceptance failed')
         sandbox_checks = json.loads(sandbox.stdout)
-        PHASE = 'encrypted_native_execution'
-        native = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-native.py'], capture_output=True, timeout=240)
+        phase('encrypted_native_execution')
+        native = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-native.py'], capture_output=True, timeout=360)
         if native.returncode:
             print('CANNABIS_NATIVE_FAILURE ' + native.stderr.decode(errors='replace')[-8192:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Encrypted native execution acceptance failed')

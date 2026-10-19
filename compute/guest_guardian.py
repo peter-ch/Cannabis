@@ -245,7 +245,10 @@ class GuardedResources:
         if self._broken or self._channel is None:
             raise RuntimeError('Guest guardian is unavailable; retire the guest')
         try:
-            self._channel.settimeout(max(1, self._group.deadline - time.monotonic()) + 10)
+            # An explicit finish/cancel must not inherit a long job's remaining
+            # wall time if the guardian itself stalls. Cleanup has a fixed
+            # acknowledgement budget; timeout invokes retained-object fallback.
+            self._channel.settimeout(10 if action is not None else max(1, self._group.deadline - time.monotonic()) + 10)
             if action is not None:
                 try:
                     _send(self._channel, {'action': action})

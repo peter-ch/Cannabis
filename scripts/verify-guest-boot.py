@@ -16,12 +16,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--timeout', type=int, default=600)
+    parser.add_argument('--timeout', type=int, default=900)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     image, out = args.image.resolve(), args.output.resolve()
-    if sys.platform != 'linux' or not 30 <= args.timeout <= 600:
-        raise ValueError('Use Linux and a 30..600 second boot deadline')
+    if sys.platform != 'linux' or not 30 <= args.timeout <= 900:
+        raise ValueError('Use Linux and a 30..900 second boot deadline')
     if out.exists() or root == out or root in out.parents:
         raise ValueError('Require a new private output directory')
     qemu = shutil.which('qemu-system-x86_64')
@@ -80,7 +80,7 @@ def main():
     guardian = result.get('guardianChecks', {})
     guardian_cases = {'normalFinish', 'cancelTree', 'busyFinishRefused', 'ownerSIGKILL', 'stoppedOwnerDeadline',
                       'leakedSocketOwnerDeath', 'ownerExitWithoutFinalizer', 'guardianFailureRefusedAndCleaned',
-                      'independentDeadline', 'lateFinishRefused'}
+                      'independentDeadline', 'lateFinishRefused', 'stoppedGuardianCancelBounded'}
     if (guardian.get('schema') != 'cannabis.guest-guardian-check.v1' or guardian.get('kernel') != report['kernelRelease']
             or guardian.get('customerCodeExecuted') is not False or guardian.get('hardwareValidated') is not False
             or guardian.get('checks') != {name: True for name in guardian_cases}):
