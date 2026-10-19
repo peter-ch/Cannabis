@@ -15,7 +15,7 @@ const digest=value=>typeof value==='string'&&/^0x[0-9a-f]{64}$/.test(value);
 const fields=(value,names)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join()===names.sort().join();
 const check=(ok,message)=>{if(!ok)throw Error(message);};
 const sameFile=(a,b)=>['dev','ino','size','mtimeNs','ctimeNs','nlink'].every(k=>a[k]===b[k]);
-function accessValue(value,origin) {
+export function validateUploadAccess(value,origin) {
   const url=new URL(origin);
   check(url.origin===origin&&!url.username&&!url.password&&(url.protocol==='https:'||url.protocol==='http:'&&url.hostname==='127.0.0.1'),
     'Require the configured HTTPS relay origin');
@@ -51,7 +51,7 @@ function delay(ms,signal) {
 }
 export async function uploadEncryptedResult({source,access,origin,timeoutMs=1800000,signal,onProgress=()=>{},fetchImpl=globalThis.fetch,wait=delay}) {
   check(integer(timeoutMs,1,3600000)&&(!signal||signal instanceof AbortSignal),'Invalid encrypted upload deadline');
-  access=accessValue(access,origin);source=sourceValue(source,access.approvalDigest);
+  access=validateUploadAccess(access,origin);source=sourceValue(source,access.approvalDigest);
   const wall=Date.now(),started=performance.now(),end=Math.min(access.expiresAt,wall+timeoutMs);
   const remaining=()=>Math.floor(Math.min(end-Date.now(),timeoutMs-(performance.now()-started)));
   const active=()=>{

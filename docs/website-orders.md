@@ -91,7 +91,7 @@ when publishing decrypted files or downloading them. A retrieval check cannot
 mark an unfinished result verified. Another tab's retirement prevents publication.
 
 The relay and retrieval controls are implemented in source but not enabled on the
-public service. Admitted-worker publication and requester acknowledgement,
+public service. Production admitted-worker publication and requester acknowledgement,
 live quotes, wallet checkout and payment-state reconciliation remain unfinished.
 Local verification or relay storage does not approve a payment.
 
@@ -177,8 +177,10 @@ limits. Two concurrent body/large-response transfers are allowed, each with a
 chunk throughput; clients must resume later after a rate or busy response. No
 automatic signing, payment, content-key release or admission follows a successful
 upload. The website has bounded download/retry controls. An ordinary-host upload
-tool is described below. Admitted-worker publication, requester acknowledgement
-and reviewed host deployment remain required before this can serve admitted jobs.
+tool is described below. A [hosted streaming handoff](key-delivery.md#hosted-streaming-handoff)
+connects it to local requester storage and signature checks. Production session
+composition and reviewed host deployment remain required before this can serve
+admitted jobs.
 
 ## Uploading an encrypted result
 
@@ -215,8 +217,9 @@ It checks the age prefix and the encrypted receipt's framing and approval header
 these format checks do not authenticate the receipt or prove that arbitrary
 operator-supplied bytes protect a real workload. Only the requester can authenticate
 the private receipt and decrypt/reconstruct their result. The operator must receive
-these encrypted artifacts through the reviewed guest handoff; that integration
-remains unfinished.
+these encrypted artifacts through the reviewed guest handoff. The result-phase
+bridge is implemented; production session admission and composition remain
+unfinished.
 
 The tool retains the original file and rechecks each chunk against its initial
 scan, refusing source changes. It sends the fixed manifest and only missing chunks.

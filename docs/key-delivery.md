@@ -223,8 +223,9 @@ resume delivery of an already encrypted age archive and compact encrypted receip
 It checks local bytes against the declared hash and bounds retries, but it holds
 no result key and cannot authenticate that private receipt. Its completion report
 is only the relay's assertion. It never produces the requester's signed storage
-acknowledgement, marks output verified or authorizes payment. Connecting the admitted
-guest handoff and requester acknowledgement to hosted storage remains required.
+acknowledgement, marks output verified or authorizes payment. The hosted handoff
+below connects that upload to the existing requester acknowledgement; production
+session admission and deployment remain unfinished.
 
 Operational encrypted delivery and acknowledgement, protected hardware
 and live settlement remain required before paid intake can open. Local tests use
@@ -268,3 +269,70 @@ from that machine's operator. The measured production entry, outer VM/key lifecy
 authenticated network channel, durable relay/retry operation, actual hardware and
 independent review remain required. No public transport endpoint or paid intake is
 enabled by this component.
+
+## Hosted streaming handoff
+
+`operator/result-bridge.mjs` and `requester/hosted-result.mjs` implement the result
+phase through the encrypted HTTP relay. The protected guest keeps its existing
+stream and `ResultStored` signature requirement. The bridge runs on the ordinary
+operator host and receives no requester identity, content key, read capability
+or signing key.
+
+The caller must already have an authorized guest session and authenticated
+requester channel, the locally selected signed approval, separate upload/read
+grants and enough remaining service time for upload, download and owner signing.
+These modules do not create the session, forward its earlier input/evidence/key
+exchange, admit hardware, provision storage or supply a wallet. Do not substitute
+the fixture helper for a production launcher. The original guest's signed service
+and transport limits still apply; the bridge does not extend them.
+
+The operator calls `bridgeEncryptedResult(guestWire, requesterWire, options)`.
+Options contain `expected` (the existing signed approval), `access` (upload role),
+the independently configured `origin`, an existing private absolute
+`spoolDirectory`, `maxCiphertextBytes` and `timeoutMs`. A cancellation `signal` is
+optional. The maximum archive is 64 MiB and timeout is at most one hour, shortened
+by grant expiry and the live channels. Admission must also bound the number of
+simultaneous spools and reserve host disk space; the per-transfer limit is not an
+aggregate filesystem quota.
+
+The bridge receives the exact guest byte count and end-frame hash into a new
+exclusive local directory, flushes the ciphertext, records its encrypted source
+metadata and uploads it with the bounded retry client. Incomplete streams are
+removed. A fully received and flushed archive is retained after later failure,
+including metadata-write failure; `source.json` can be absent or partial in that
+case. The local thrown error has a non-enumerable `recoveryDirectory` for operator
+recovery. Complete spools also remain after success until a reviewed retention
+policy removes them. Neither local paths nor upload capabilities are forwarded
+to the requester.
+
+The requester calls `receiveHostedResult(requesterWire, options)` with the existing
+local `inbox`, `approvalDigest`, `loadResultKey`, absolute unused `destination`,
+`maxCiphertextBytes`, `signStored`, locally obtained read `access`, configured
+`origin` and `timeoutMs`; `signal` is optional. `loadResultKey` and `signStored`
+stay on the requester device. `signStored` must present the exact storage message
+for owner-controlled signing, not silently open a wallet or approve payment.
+
+The bridge sends a bounded `cannabis.hosted-result.v1` message with operation
+`result`, `relayId`, `approvalDigest`, `resultEnvelope`, `ciphertextSHA256` and
+`ciphertextBytes`. It contains no URL or access token. The requester authenticates
+the receipt against local custody and the selected approval **before any HTTP
+request**, then verifies the relay manifest and streams bounded chunks directly
+to a local temporary file. Active selection is checked around network operations.
+The existing direct-handoff implementation checks the full hash, flushes and
+exclusively publishes the ciphertext, and only then asks for the storage signature.
+It does not decrypt application outputs or accept quality at this stage.
+
+The operator verifies the returned storage signature and forwards it unchanged;
+the protected guest independently verifies it again. The bridge report records
+signature verification and forwarding, with `guestCompletionObserved: false`.
+Only observing the guest's checked completion can establish that later step.
+Cancellation, expiry or either failed channel stops the transfer. Cancellation
+while a wallet response is pending prevents a late signature from being forwarded;
+already published requester ciphertext remains available for recovery.
+
+Owned checks exercise the full HTTP route, a separate operator process, requester
+reconstruction, lost upload responses, substituted receipts/hashes, corrupted
+chunks, retired selections, forged signatures and cancellation during signing.
+These do not establish hardware confidentiality, a deployed session controller,
+whole-VM operation or a genuine paid job. Production composition with admitted
+sessions, authenticated channels and the visible worker remains required.
