@@ -77,7 +77,7 @@ Offline proof validation only checks internal commitments. The requester and gue
 
 Requester key-delivery configuration can use `marketProofFile` and `{ chainId, market, token }` as its context. No `capacityLedger` is opened in that path. Its attestation/replay journal remains local requester state, not shared reservation authority. Key approvals and encrypted result receipts continue to bind the exact group, booking, package, policy, runtime, task, rank and attempt.
 
-The retained operating launcher requires `cannabis.guest-launch-configuration.v3`, including market address/runtime pins, and rejects older configuration and local-ledger proof formats. Its complete canonical configuration hash enters the version-2 initialized assignment and version-3 requester key approval. The requester retains the full reviewed configuration locally and independently checks its network, booked service, runtime and derived appraisal policy. Encrypted result receipts, relay checks and browser recovery retain this same approval commitment; stripping it cannot downgrade the session. Legacy utilities remain for historical component checks. The launch-authority mechanism still needs replacement with requester/provider consent before decentralized production admission. Updated measured images, actual confidential hardware, independent review and genuine paid acceptance remain release requirements.
+The retained operating launcher requires `cannabis.guest-launch-configuration.v3`, including market address/runtime pins, and rejects older configuration and local-ledger proof formats. Its complete canonical configuration hash enters the version-2 initialized assignment and version-3 requester key approval. The requester retains the full reviewed configuration locally and independently checks its network, booked service, runtime and derived appraisal policy. Encrypted result receipts, relay checks and browser recovery retain this same approval commitment; stripping it cannot downgrade the session. Legacy utilities remain for historical component checks. The fixed guest entry now requires requester/provider consent and fresh canonical observations, with no embedded global signer. Requester key-delivery tooling still needs complete consent-aware review and refresh integration. Updated measured images, actual confidential hardware, independent review and genuine paid acceptance remain release requirements.
 
 ## Booked launch consent under integration
 
@@ -99,9 +99,10 @@ back to an ordinary signature check after refusing an approval.
 
 Requester signatures currently require an EOA signing key, consistent with the
 existing key-delivery flow. Signature and funding observations do not establish
-hardware admission. The fixed operating entry still uses the earlier launch
-authority; replacing it and carrying consent through protected lifetime checks,
-participant tools and encrypted recovery remain unfinished integration work.
+hardware admission. The fixed operating entry now verifies this consent before allocation and inside
+the contained control process. Retained guest funding rechecks party approval
+before and after key opening. Requester key-delivery review and consent refresh,
+new measured images/boots and real hardware acceptance remain unfinished.
 
 ## Limits and remaining trust
 
@@ -111,4 +112,4 @@ On-chain inventory prevents conflicting recorded reservations for the same decla
 
 Blockchain makes agreement and payment state shared; public amounts, wallet activity, booking intervals and commitments remain visible. It does not conceal software running on an ordinary host. Keys must remain under requester control and reach only a correctly attested protected runtime. Attestation trust must be requester-selected or locally verified; a single founder verifier, signing service or software allowlist cannot become mandatory network admission. Hardware manufacturer roots and any chosen external verifier remain explicit trust dependencies.
 
-The existing SQLite capacity module is a legacy local coordination component. Its records do not become decentralized by being copied or renamed. The new requester/guest market path replaces that authority with direct chain verification, while historical helpers retain their original format. Finishing peer transport and manifest distribution, removing any mandatory global launch authority, integrating the visible worker GUI, admitting actual hardware and independently reviewing the complete system remain launch work. No claim of a fully decentralized operational network is made before those paths work together.
+The existing SQLite capacity module is a legacy local coordination component. Its records do not become decentralized by being copied or renamed. The new requester/guest market path replaces that authority with direct chain verification, while historical helpers retain their original format. Finishing peer transport and manifest distribution, completing requester consent integration, integrating the visible worker GUI, admitting actual hardware and independently reviewing the complete system remain launch work. No claim of a fully decentralized operational network is made before those paths work together.

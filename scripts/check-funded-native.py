@@ -47,7 +47,7 @@ def public_launch_frame(fd):
     header=read(5);size=int.from_bytes(header[1:],'big')
     assert header[0]==0 and 0<size<=256*1024
     value=json.loads(read(size))
-    assert set(value)=={'authorities','signedConfiguration','initialization','request'}
+    assert set(value)=={'signedConfiguration','initialization','request'}
     return value
 
 
@@ -134,10 +134,9 @@ def main():
         requester_proc.stdin.write(canonical(request));requester_proc.stdin.close();requester_proc.stdin=None
         public=public_launch_frame(to_guest)
         relay_read,relay_write=to_guest,from_guest
-        authority_file=base/'owned-authorities.json';authority_file.write_bytes(canonical(public['authorities'])+b'\n');authority_file.chmod(0o600)
         verifier=base/'owned-authorize.mjs'
-        verifier.write_text("import { readLaunchJSON, readRetainedLaunch, publicLaunchAdmission } from "+json.dumps((ROOT/'compute/guest_launch.mjs').as_uri())+";\n"
-            +"process.stdout.write(JSON.stringify(publicLaunchAdmission(readRetainedLaunch(readLaunchJSON("+json.dumps(str(authority_file))+",{trusted:true}))))+'\\n');\n")
+        verifier.write_text("import { readRetainedLaunch, publicLaunchAdmission } from "+json.dumps((ROOT/'compute/guest_launch.mjs').as_uri())+";\n"
+            +"process.stdout.write(JSON.stringify(publicLaunchAdmission(await readRetainedLaunch()))+'\\n');\n")
         verifier.chmod(0o600)
         snapshot_args=lambda signed:(canonical(signed)+b'\n',canonical(public['initialization'])+b'\n',canonical(public['request'])+b'\n')
         altered=copy.deepcopy(public['signedConfiguration']);altered['configuration']['transport']['maxCiphertextBytes']+=1

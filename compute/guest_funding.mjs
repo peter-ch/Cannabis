@@ -5,16 +5,21 @@ import { verifyLeaseProof } from './lease_proof.mjs';
 import { verifyMarketLeaseProof, readMarketLeaseState } from './market_lease.mjs';
 import { guestInitialization } from './guest_initialization.mjs';
 import { readFinalizedEscrow, readCurrentEscrow, readFundedEscrowAtAnchor } from './finality.mjs';
+import { inspectLaunchConsent } from './guest_consent.mjs';
+
+const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':
+  v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
 
 export class GuestFunding {
-  #lease; #reservation; #network; #clock; #last; #end; #market; #closed = false; #busy = false;
+  #lease; #reservation; #network; #clock; #last; #end; #market; #approvals; #closed = false; #busy = false;
   constructor(options, initialization, { clock = () => Math.floor(Date.now() / 1000) } = {}) {
     // All configuration except proof is independently approved measured-guest
     // configuration. A host may transport it, but must not choose its pins/RPC.
     options = structuredClone(options);
-    const keys = ['proof', 'context', 'network', 'provider', 'resourceId', 'serviceSHA256'];
-    if (!options || Object.keys(options).sort().join() !== keys.sort().join()) throw Error('Require approved guest funding configuration');
     const assignment = guestInitialization(initialization).assignment, b = assignment.binding;
+    const configured=assignment.schema==='cannabis.guest-initialization.v2';
+    const keys = ['proof', 'context', 'network', 'provider', 'resourceId', 'serviceSHA256',...(configured?['consent']:[])];
+    if (!options || Object.keys(options).sort().join() !== keys.sort().join()) throw Error('Require approved guest funding configuration');
     this.#market = options.proof?.schema === 'cannabis.market-lease.v1';
     const lease = this.#market ? verifyMarketLeaseProof(options.proof, options.context) : verifyLeaseProof(options.proof, options.context);
     const reservation = lease.reservations.find(r => r.reservationId === b.reservationId);
@@ -30,6 +35,14 @@ export class GuestFunding {
     this.#lease = lease; this.#reservation = reservation; this.#network = network; this.#clock = clock;
     const now = clock();
     if (!Number.isSafeInteger(now) || now < 1) throw Error('Invalid guest clock');
+    if(configured) {
+      const checked=inspectLaunchConsent(options.consent,assignment,options.proof,now),c=checked.configuration;
+      if(!this.#market||canonical(c.network)!==canonical(network)||canonical(c.context)!==canonical(options.context)||
+        getAddress(c.provider)!==getAddress(options.provider)||c.resourceId!==options.resourceId||
+        checked.lease.digest!==lease.digest||checked.reservation.reservationId!==reservation.reservationId)
+        throw Error('Guest funding differs from the jointly approved launch configuration');
+      this.#approvals=checked.approvals;
+    }
     this.#last = now;
     // Never restart the service interval on a later helper, refresh or key open.
     this.#end = performance.now() + Math.max(0, reservation.end - now) * 1000;
@@ -64,7 +77,8 @@ export class GuestFunding {
     try {
       this.assertWindow();
       if (this.#market) {
-        const state = await readMarketLeaseState(this.#lease.proof, this.#network, () => this.assertWindow());
+        const state = await readMarketLeaseState(this.#lease.proof, this.#network, () => this.assertWindow(),
+          this.#approvals?{launchApprovals:this.#approvals}:{});
         this.assertWindow();
         if (state.headBlock.timestamp < this.#reservation.start || state.headBlock.timestamp >= this.#reservation.end)
           throw Error('Funding head is outside the reserved service interval');

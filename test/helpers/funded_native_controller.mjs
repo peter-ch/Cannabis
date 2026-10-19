@@ -20,7 +20,7 @@ import { createResultKeyCustody, recoverRequesterResultKey } from '../../compute
 import { ResultInbox } from '../../compute/result_inbox.mjs';
 import { GuestWire, receiveGuestEvidence, sendGuestExecution, receiveEncryptedResult } from '../../compute/result_transport.mjs';
 import { validateGuestConfiguration } from '../../compute/guest_configuration.mjs';
-import { launchConfigurationPayload } from '../../compute/guest_launch.mjs';
+import { launchConsentPayload } from '../../compute/guest_consent.mjs';
 import { sendEncryptedInput } from '../../compute/input_transport.mjs';
 import { receiveSessionResultAccess } from '../../requester/session-access.mjs';
 import { receiveHostedResult } from '../../requester/hosted-result.mjs';
@@ -106,9 +106,6 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
     measurements:{launch:'11'.repeat(48),initData:null,
       minimumTCB:{bootloader:1,tee:1,snp:1,microcode:1}}};
   const funding={proof,context,network,provider:workerAccount,resourceId,serviceSHA256:service.serviceSHA256};
-  // Disposable authority for this fixture only. Production reads its public
-  // authorities from the measured image, never from the requester/host wire.
-  const authorities={schema:'cannabis.guest-launch-authorities.v1',chainId:31337,signers:[account],threshold:1,maxValiditySeconds:3600};
   const template=structuredClone(attestationPolicy);template.measurements.initData=null;
   const configuration={schema:'cannabis.guest-launch-configuration.v3',configurationId:h(9),validFrom:start-15,validUntil:end+60,
     context,network,provider:workerAccount,resourceId,execution:input.execution,attestationPolicyTemplate:template,
@@ -121,9 +118,13 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
   attestations=new AttestationLedger(':memory:',attestationPolicy);
   const challenge=attestations.challenge(binding);
   capacity={schema:'cannabis.market-requester.v2',context,proof,configuration};
-  const configPayload=launchConfigurationPayload(authorities,configuration);
-  const signedConfiguration={configuration,signatures:[{signer:account,signature:await requester.signTypedData(configPayload.domain,configPayload.types,configPayload.value)}]};
-  await wire.writeJSON({authorities,signedConfiguration,initialization,request:{proof:funding.proof,challenge}});
+  const consents=[];
+  for(const [role,signer,address] of [['requester',requester,account],['provider',worker,workerAccount]]) {
+    const p=launchConsentPayload(configuration,initialization,proof,role);
+    consents.push({role,signer:address,signature:await signer.signTypedData(p.domain,p.types,p.value)});
+  }
+  const signedConfiguration={schema:'cannabis.guest-launch-consent.v1',configuration,consents};
+  await wire.writeJSON({signedConfiguration,initialization,request:{proof:funding.proof,challenge}});
   const inputTransfer=await sendEncryptedInput(wire,{source:input.inputCiphertext,
     packageSHA256:input.descriptor.ciphertextSHA256,maxCiphertextBytes:input.execution.profile.ciphertext.inputBytes});
   assert.equal(inputTransfer.peerReportedStorage,true);assert.equal(inputTransfer.keyReleased,false);
@@ -131,8 +132,12 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
   const resultCustody=await createResultKeyCustody({releaseId:h(8),recipient:input.spec.resultRecipient});
   fs.writeFileSync(input.resultCustody,JSON.stringify(resultCustody),{flag:'wx',mode:0o600});
   const resultSource={python:input.custody.python,age:input.custody.age,identity:input.custody.identity,custody:input.resultCustody};
+  // Chain/consent admission consumes the existing challenge and service time.
+  // Never ask key delivery to restart a full minute after those observations.
+  const deliveryStart=clock(),deliveryEnd=Math.min(deliveryStart+60,challenge.expiresAt,end);
+  assert.ok(deliveryEnd>deliveryStart,'Existing delivery interval already expired');
   const delivery={releaseId:h(8),leaseId:lease.digest,nonce:challenge.nonce,channelJwk:evidence.channelJwk,
-    descriptor:input.descriptor,notBefore:clock(),expiresAt:clock()+60,resultKeySHA256:resultCustody.resultKeySHA256};
+    descriptor:input.descriptor,notBefore:deliveryStart,expiresAt:deliveryEnd,resultKeySHA256:resultCustody.resultKeySHA256};
   const payload=keyDeliveryPayload(capacity,attestations,delivery,clock());
   assert.equal(payload.domain.version,'3');assert.equal(payload.value.configurationSHA256,configurationSHA256);
   const approval={request:delivery,requesterSignature:await requester.signTypedData(payload.domain,payload.types,payload.value)};

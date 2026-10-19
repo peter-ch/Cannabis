@@ -1,6 +1,6 @@
 """Fixed outer process entry; enclosing measured boot must retire its VM.
 
-No command-line override, alternate authorities, customer-key input or sample
+No command-line override, alternate signers, customer-key input or sample
 agent. This is not installed as the component image's PID 1 / boot entry.
 """
 import json

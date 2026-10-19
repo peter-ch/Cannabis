@@ -24,16 +24,14 @@ python3 scripts/build-guest-image.py \
 
 Use fresh, separate output directories outside the public repository. An existing output is refused. Every package/download hash and the service hashes are checked before use. Package maintainer scripts and npm lifecycle scripts are not executed. The builder restores the merged `/usr` directory layout after package extraction and computes module dependencies for the pinned kernel.
 
-The optional `--launch-authorities /work/launch-authorities.json` argument embeds
-only the reviewed public configuration signers and threshold, in canonical form.
-It never embeds signing keys or chooses production authorities. A separately
-signed configuration can then bind the completed image measurement without a
-self-reference. The [fixed session entry](guest-initialization.md#fixed-session-entry-and-signed-configuration)
-requires this embedded authority file, a signed configuration and the exact funded
-assignment. Current component builds omit production authorities. Adding an
-authority file changes the image hash and requires a fresh build, boot check and
-hardware reference. Authority embedding alone does not enable intake; the separate
-`--operating` build option selects the operating entry described below.
+The image embeds fixed consent verification code with no universal signer file.
+The [fixed session entry](guest-initialization.md#fixed-session-entry-and-signed-configuration)
+requires the exact funded assignment and separate requester/provider consent over
+the complete configuration. A configuration can bind the completed image's
+measurement without changing those image bytes. The `--operating` option selects
+the operating entry; no authority-list argument is supported. Updated code changes
+the image hash and requires fresh repeated builds, boot checks and hardware
+references. Building an image does not authorize execution.
 
 The output contains `vmlinuz`, `initramfs.cpio.gz`, `cmdline`, `build.json`, the unpacked `rootfs/` and private build-tool staging. The initramfs uses a deterministic `newc` archive with fixed ownership, timestamps, ordering and gzip metadata. Compare the final kernel, initramfs and command-line file hashes across builds. The command-line file's terminating newline is removed when passing its contents to QEMU.
 
@@ -133,13 +131,12 @@ off; it does not activate the operating launcher or accept customer jobs.
 
 ## One-use operating boot
 
-The separate operating image requires an explicit public authority set:
+Build the separate operating image with bilateral booked-launch admission:
 
 ```sh
 python3 scripts/build-guest-image.py \
   --guest-services /work/cannabis-agent-build/guest-agent-artifacts-first \
   --cache /work/cannabis-image-downloads \
-  --launch-authorities /private/reviewed-launch-authorities.json \
   --operating --output /work/cannabis-operating-first
 ```
 
@@ -147,7 +144,7 @@ Repeat the same inputs into a second fresh directory and compare all artifact
 hashes. This image has a different initializer, command line and measurement from
 the component image. `operatingEntryConfigured: true` records its purpose;
 `executionAuthorized` and `hardwareValidated` remain false. Building it does not
-approve authority owners, release signatures, hardware or customer execution.
+approve participant signatures, hardware or customer execution.
 
 `compute-guest-boot.py` requires privileged PID 1 and accepts no command-line
 override. It checks the measured layout, starts a separate key-free shutdown

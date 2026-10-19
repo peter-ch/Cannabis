@@ -1,7 +1,7 @@
-// Fixed measured entry. No host-selected authority path, service executable,
+// Fixed measured entry. No universal signer, host-selected service executable,
 // configuration override, sample agent or customer-key export option.
 import { performance } from 'node:perf_hooks';
-import { readLaunchJSON, readRetainedLaunch } from '../compute/guest_launch.mjs';
+import { readRetainedLaunch } from '../compute/guest_launch.mjs';
 import { inspectNativeGuest } from '../compute/guest_execution.mjs';
 import { InitializedGuestControlPlane } from '../compute/guest_bootstrap.mjs';
 import { GuestWire, serveGuestSession } from '../compute/result_transport.mjs';
@@ -10,9 +10,9 @@ import { receiveEncryptedInput } from '../compute/input_transport.mjs';
 let control,wire;
 try {
   if(process.platform!=='linux'||process.getuid()!==0||process.argv.length!==2||process.stdin.isTTY||process.stdout.isTTY)throw Error('Entry conditions');
-  const authorities=readLaunchJSON('/opt/cannabis/launch-authorities.json',{limit:65536,trusted:true});
-  const launch=readRetainedLaunch(authorities);
-  const start=performance.now(),expires=Date.now()+launch.transport.timeoutMs;
+  const start=performance.now(),wallStart=Date.now();
+  const launch=await readRetainedLaunch();
+  const expires=wallStart+launch.transport.timeoutMs;
   const remaining=()=>Math.floor(Math.min(expires-Date.now(),launch.transport.timeoutMs-(performance.now()-start)));
   const binding=Object.fromEntries(['packageSHA256','policySHA256','runtimeSHA256','taskSHA256','attempt','rank','worldSize','acceleratorClass']
     .map(k=>[k,launch.initialization.binding[k]]));

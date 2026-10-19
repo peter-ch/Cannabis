@@ -91,9 +91,10 @@ durable result selection and browser recovery preserve that version. A separatel
 signed replacement configuration is a different session and cannot authenticate
 an older receipt. Historical v2 recovery remains available for its own records.
 
-The current launch signer still needs replacement with bilateral requester/provider
-consent. These bindings do not establish hardware admission or make a host-chosen
-measurement trustworthy.
+The fixed guest entry now requires bilateral requester/provider consent and
+rechecks it with funding before and after opening keys. The requester source v2
+still needs consent-aware review and refresh integration. Configuration bindings
+do not establish hardware admission or make a host-chosen measurement trustworthy.
 
 ## Authenticated private result return
 
@@ -367,7 +368,7 @@ evidence, sealed key delivery and the hosted result handoff. Its caller supplies
 the retained output of `prepareGuestLaunch`, already authenticated requester and
 guest channels, the independently configured storage origin, a private spool
 directory and a local storage-reservation callback. This transport module does
-not validate launch-authority signatures itself or admit protected hardware.
+not independently revalidate bilateral launch consent or admit protected hardware.
 Never expose a caller-selected launch plan through a public endpoint.
 
 Input travels directly to the guest, with its signed package hash and exact byte

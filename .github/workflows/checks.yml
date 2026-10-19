@@ -39,8 +39,8 @@ jobs:
         run: python -m unittest discover -s test -p 'test_guest_vm.py' -v
       - name: Verify encrypted input storage limits and retained admission
         run: sudo /usr/bin/python3 -I -B scripts/check-guest-ciphertext.py
-      - name: Verify embedded launch authority ownership and path refusals
-        run: sudo env PATH="$PATH" node --test --test-name-pattern='embedded authority reads' test/guest-launch.test.mjs
+      - name: Verify reviewed launch file ownership and path refusals
+        run: sudo env PATH="$PATH" node --test --test-name-pattern='reviewed launch files' test/guest-launch.test.mjs
       - name: Exercise kernel CPU, memory, process and deadline limits
         run: sudo python3 -I -B scripts/check-guest-resources.py
       - name: Verify cleanup after supervisor death and stopped supervisors

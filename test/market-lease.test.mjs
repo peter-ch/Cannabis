@@ -274,12 +274,13 @@ test('requester approval and encrypted result recovery retain the market group w
   } finally { attestations.close(); g.funding.close(); }
 });
 
-async function configuredFixture(t,{contractProvider=false}={}) {
+async function configuredFixture(t,{contractProvider=false,transportTimeoutMs=60000}={}) {
   const f=launchFixture(),d=await setup({execution:f.configuration.execution,contractProvider});await d.setTime(d.start+1);
   const lease=verifyMarketLeaseProof(d.proof,d.context),r=lease.reservations.find(r=>!contractProvider||r.provider===d.addresses[0]),key=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
   const configuration={...f.configuration,schema:'cannabis.guest-launch-configuration.v3',context:d.context,network:d.network,
     provider:r.provider,resourceId:r.resourceId,validFrom:d.start-10,validUntil:d.end+10};
   configuration.attestationPolicyTemplate.signingJwk=key.publicKey.export({format:'jwk'});
+  configuration.transport.timeoutMs=transportTimeoutMs;
   const {configurationSHA256}=validateGuestConfiguration(configuration);
   const binding=configuredMarketAttestationBinding(d.proof,d.context,r.reservationId,d.run,configurationSHA256,d.clock());
   const initialization={schema:'cannabis.guest-initialization.v2',tee:'snp',requester:lease.requester,jobId:lease.job.id,binding};
@@ -293,27 +294,26 @@ async function configuredFixture(t,{contractProvider=false}={}) {
   return {...d,f,lease,r,key,configuration,configurationSHA256,binding,initialization,policy,attestations,challenge,source,request};
 }
 
-test('re-signed launch changes cannot reuse a retained assignment with different configuration',async t=>{
-  const x=await configuredFixture(t),signed=await x.f.sign(x.configuration),request={proof:x.proof,challenge:x.challenge};
-  const prepare=(s,init=x.initialization)=>prepareGuestLaunch(x.f.authorities,s,init,request,{now:x.clock()});
-  const launch=prepare(signed);assert.equal(launch.configurationSHA256,x.configurationSHA256);
+test('bilateral launch admission binds canonical funding, exact configuration and challenge',async t=>{
+  const x=await configuredFixture(t),c=await bookedConsent(x),request={proof:x.proof,challenge:x.challenge};
+  const prepare=(signed,init=x.initialization,req=request)=>prepareGuestLaunch(signed,init,req,{clock:x.clock});
+  const launch=await prepare(c.signed);assert.equal(launch.configurationSHA256,x.configurationSHA256);
   assert.equal(publicLaunchAdmission(launch).schema,'cannabis.guest-launch-admission.v1');
-  for(const alter of [c=>c.network.rpc='https://other.invalid/',c=>c.network.genesisHash=h(99),c=>c.network.marketCodeHash=h(99),
-    c=>c.network.escrowCodeHash=h(99),c=>c.network.maxHeadAgeSeconds--,c=>c.resourceId=h(99),c=>c.provider=x.lease.requester,
-    c=>c.execution.profile.runtime.digestSHA256=h(99).slice(2),c=>c.execution.profile.tools.ageSHA256=h(99).slice(2),
-    c=>c.transport.timeoutMs--,c=>c.transport.maxCiphertextBytes--,c=>c.bootstrap.port++,
-    c=>c.attestationPolicyTemplate.measurements.launch='99'.repeat(48),c=>c.attestationPolicyTemplate.issuer='Other verifier',
-    c=>c.validUntil++]) {
-    const changed=structuredClone(x.configuration);alter(changed);
-    assert.notEqual(validateGuestConfiguration(changed).configurationSHA256,x.configurationSHA256);
-    assert.throws(()=>prepareGuestLaunch(x.f.authorities,signed,x.initialization,{...request,configuration:changed},{now:x.clock()}));
-    assert.throws(()=>prepare({...signed,configuration:changed}));
-    const resigned=await x.f.sign(changed);assert.throws(()=>prepare(resigned));
+  assert.deepEqual(launch.funding.consent,c.signed);assert.equal(Object.hasOwn(launch,'authoritySHA256'),false);
+  for(const alter of [s=>s.consents.pop(),s=>s.consents[1].signature=s.consents[0].signature,
+    s=>s.configuration.network.rpc='https://other.invalid/',s=>s.configuration.transport.timeoutMs--]) {
+    const changed=structuredClone(c.signed);alter(changed);await assert.rejects(prepare(changed));
   }
   for(const alter of [i=>i.schema='cannabis.guest-initialization.v1',i=>delete i.binding.configurationSHA256,
     i=>i.binding.configurationSHA256=h(99),i=>i.binding.rank=1]) {
-    const init=structuredClone(x.initialization);alter(init);assert.throws(()=>prepare(signed,init));
+    const init=structuredClone(x.initialization);alter(init);await assert.rejects(prepare(c.signed,init));
   }
+  for(const alter of [r=>r.challenge.expiresAt=x.clock(),r=>r.challenge.attestationPolicySHA256=h(99).slice(2),
+    r=>r.challenge.binding.configurationSHA256=h(99),r=>r.configuration=x.configuration]) {
+    const changed=structuredClone(request);alter(changed);await assert.rejects(prepare(c.signed,x.initialization,changed));
+  }
+  await (await x.escrow.connect(workers[0]).deliver(x.orderId,h(95))).wait();
+  await assert.rejects(prepare(c.signed),/fully accepted active/);
 });
 
 test('requester independently binds full configuration, appraisal policy and result channel before custody',async t=>{
@@ -457,4 +457,44 @@ test('consent reader derives exact parties and network from retained review, and
   assert.ok(reads>=4);
   await x.setTime(x.end);
   await assert.rejects(readLaunchConsentState(c.signed,x.initialization,x.proof,{clock:x.clock}));
+});
+
+test('configured guest funding requires retained consent and exact independently expected network',async t=>{
+  const x=await configuredFixture(t),c=await bookedConsent(x);
+  const funding={proof:x.proof,context:x.context,network:x.network,provider:x.r.provider,
+    resourceId:x.r.resourceId,serviceSHA256:x.r.serviceSHA256,consent:c.signed};
+  const create=(options,init=x.initialization)=>new GuestFunding(options,init,{clock:x.clock});
+  const missing={...funding};delete missing.consent;assert.throws(()=>create(missing),/approved guest funding/);
+  for(const network of [{...x.network,rpc:'https://unreviewed.invalid/'},{...x.network,maxHeadAgeSeconds:119}])
+    assert.throws(()=>create({...funding,network}),/jointly approved/);
+  const unsigned={...funding,consent:{configuration:x.configuration,signatures:[]}};
+  assert.throws(()=>create(unsigned),/consent/);
+  const retained=create(funding);t.after(()=>retained.close());
+  funding.consent.consents[1].signature='0x1234';funding.network.rpc='https://unreviewed.invalid/';
+  assert.equal((await retained.refresh()).launchSignatures.head[1].signer,x.r.provider);
+});
+
+test('guest consent revocation closes retained funding and cannot be revived by later wallet approval',async t=>{
+  const x=await configuredFixture(t,{contractProvider:true}),c=await bookedConsent(x),digest=c.approvals[1].digest;
+  const request={proof:x.proof,challenge:x.challenge};
+  await assert.rejects(prepareGuestLaunch(c.signed,x.initialization,request,{clock:x.clock}),/signature is not valid/);
+  await (await contractWorker.connect(workers[0]).approveDigest(digest,true)).wait();
+  const launch=await prepareGuestLaunch(c.signed,x.initialization,request,{clock:x.clock});
+  const retained=new GuestFunding(launch.funding,launch.initialization,{clock:x.clock});t.after(()=>retained.close());
+  assert.equal((await retained.refresh()).launchSignatures.head[1].method,'erc1271');
+  await (await contractWorker.connect(workers[0]).approveDigest(digest,false)).wait();
+  await assert.rejects(retained.refresh(),/signature is not valid/);
+  await (await contractWorker.connect(workers[0]).approveDigest(digest,true)).wait();
+  await assert.rejects(retained.refresh(),/closed/);
+});
+
+test('launch authorization cannot restart its transport clock or outlive the retained challenge',async t=>{
+  const x=await configuredFixture(t),c=await bookedConsent(x),request={proof:x.proof,challenge:x.challenge};
+  for(const next of [x.clock()-1,x.challenge.expiresAt]) {
+    let reads=0;
+    await assert.rejects(prepareGuestLaunch(c.signed,x.initialization,request,{clock:()=>++reads===1?x.clock():next}),/not authorized/);
+    assert.ok(reads>=2);
+  }
+  const short=await configuredFixture(t,{transportTimeoutMs:1}),sc=await bookedConsent(short);
+  await assert.rejects(prepareGuestLaunch(sc.signed,short.initialization,{proof:short.proof,challenge:short.challenge},{clock:short.clock}),/not authorized/);
 });

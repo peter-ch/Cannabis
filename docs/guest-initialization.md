@@ -68,20 +68,19 @@ Startup verifies both service executable hashes against the image input lock, re
 `scripts/compute-guest-launch.py` is the fixed outer process entry. It reads the
 public files below, authenticates them and allocates the contained job before
 starting `scripts/compute-guest-session.mjs`. Neither entry accepts command-line
-overrides for authorities, runtime, service binaries or agent.
+overrides for signers, runtime, service binaries or agent.
 
 | Path | Role |
 | --- | --- |
-| `/opt/cannabis/launch-authorities.json` | Public configuration signers, quorum, chain and maximum configuration lifetime, embedded in the measured image |
-| `/run/cannabis-launch/configuration.json` | Configuration and its authority signatures |
+| `/run/cannabis-launch/configuration.json` | `cannabis.guest-launch-consent.v1`: complete configuration v3 and ordered requester/provider consents |
 | `/run/cannabis-launch/initialization.json` | Canonical retained assignment prepared by the initialization tool |
 | `/run/cannabis-launch/request.json` | Exactly the complete market-lease `proof` and fresh attestation `challenge` |
 
 All inputs use compact sorted-key JSON and one trailing newline. Files
 and their ancestor directories must be root-owned and not writable by group or
 others. Reads refuse nonregular files, symlinks, oversized data, changed
-length and alternative/duplicate-key encodings. The authority file contains only
-public addresses. Customer keys, program contents, arguments and private output
+length and alternative/duplicate-key encodings. Customer keys, program contents,
+arguments and private output
 metadata do not belong in these files.
 
 The outer process retains the original three public input strings in one anonymous
@@ -90,7 +89,7 @@ The pinned public authorization helper checks that snapshot before the process
 creates `GuestJobScope`. The contained session receives the same descriptor and
 independently verifies the same signatures, assignment, challenge and service.
 Replacing an input pathname after allocation cannot replace the retained package.
-The descriptor itself supplies no authorization. The current draft still requires embedded signer roots in addition to the configuration-bound requester checks. Replacing that global gate with requester/provider consent remains necessary before decentralized operation; the configuration commitment is a prerequisite, not completion of that replacement.
+The descriptor itself supplies no authorization. Both the preallocation helper and contained entry independently check requester/provider consent against fresh canonical booking and funding state. No embedded global signer or legacy authority envelope is accepted. The guest retains the consent with its funding configuration and rechecks wallet approval at every required funding refresh, including before and after opening customer keys. Revocation or a failed observation closes that retained funding session.
 
 The outer process pins Node and both fixed entries against the measured image's
 file inventory. It validates the signed aggregate/control/helper/storage resource
@@ -118,25 +117,30 @@ session key. Native execution repeats admission before key release. The peer's
 input acknowledgement establishes neither hardware protection nor payment
 authorization. See [native execution readiness](guest-workload.md#funded-native-execution-readiness).
 
-The image builder's optional `--launch-authorities PATH` embeds a reviewed public
-authority set. No production authority set is supplied by default. Merely embedding
-keys does not establish their owners' independence, an audit or hardware admission.
-The ordinary acceptance image still runs checks and powers off without job intake.
-The separate `--operating` image uses a fixed
+The image contains the fixed consent and state-verification code, not a global
+signer list. The ordinary acceptance image still runs checks and powers off without
+job intake. The separate `--operating` image uses a fixed
 [PID-1 supervisor and public prefix](guest-image-build.md#one-use-operating-boot).
-It creates the bounded outer/job-parent groups and supervises one launcher/VM
-lifetime. Its public readiness and staging responses never authorize keys or
-replace the signed configuration, funded assignment or hardware appraisal.
+It creates bounded outer/job-parent groups and supervises one launcher/VM lifetime.
+Readiness and staging responses never replace the signed configuration, funded
+assignment or hardware appraisal.
 
-The external configuration is authorized with EIP-712 **Cannabis guest launch
-configuration** signatures. Its digest covers the exact capacity domain, funding
-RPC/genesis/escrow code pins, provider/resource, native service profile, tool/runtime
-paths, attestation policy template, evidence-service paths and transport limits.
-Distinct signers must meet the image's quorum. The signing domain also binds the
-authority set and chain. Unknown signers, duplicates, missing signatures, changed
-configuration and out-of-window approvals fail. Credentials and query parameters
-are refused in RPC URLs. Configure an appropriate public or separately mediated
-RPC endpoint; do not place API secrets in this public launch configuration.
+The external consent uses EIP-712 **Cannabis booked guest launch**, version 1, with
+chain ID and market address in its domain. Distinct requester and provider roles
+sign the full configuration SHA-256, canonical assignment SHA-256, group digest,
+selected booking, parties and booked interval. The configuration includes the
+funding RPC/genesis/contract pins, provider/resource, service profile, tool/runtime
+paths, attestation policy and transport limits. Signatures sit outside the hashes.
+Each consent entry has exactly `role`, `signer` and `signature`; requester precedes
+provider. The existing escrow prohibits a requester acting as its own worker.
+
+The requester signature uses its EOA key. Provider contract wallets use ERC-1271
+at the same canonical block as escrow state, at both fresh finalized and current
+observations; approval need not predate original funding. A failed contract call
+never falls back to EOA recovery. Missing, duplicate, wrong-party, substituted or
+expired consent fails closed. Credentials and query parameters are refused in RPC
+URLs; never put API secrets in public launch configuration. RPC-reported finality
+remains trust in the selected RPC arrangement, not local consensus verification.
 
 Keeping the signed configuration outside the image avoids a self-reference: a
 reviewer can sign the completed image's measurement without changing those image
@@ -151,15 +155,21 @@ trustworthy time or outer protection against VM rollback.
 Local review tooling never signs or starts a worker:
 
 ```sh
-node scripts/prepare-guest-launch.mjs authorities /private/launch-authorities.json
-node scripts/prepare-guest-launch.mjs prepare /private/launch-authorities.json /private/launch-configuration.json
-node scripts/prepare-guest-launch.mjs verify /private/launch-authorities.json /private/signed-launch-configuration.json
+node scripts/prepare-guest-launch.mjs prepare requester /private/configuration.json /private/initialization.json /private/market-proof.json
+node scripts/prepare-guest-launch.mjs prepare provider /private/configuration.json /private/initialization.json /private/market-proof.json
+node scripts/prepare-guest-launch.mjs inspect /private/consent.json /private/initialization.json /private/market-proof.json
+node scripts/prepare-guest-launch.mjs verify /private/consent.json /private/initialization.json /private/market-proof.json
 ```
 
-`compute/guest_launch.mjs` exports `encodeLaunchJSON` for the required canonical
-file encoding. Authority signatures acknowledge configuration authorization only;
-retain independent security/privacy review and user-controlled release approval
-as separate launch requirements.
+`prepare` emits unsigned wallet-review data; each party signs its own payload.
+`inspect` checks offline commitments and the requester signature, without claiming
+provider wallet validity or chain state. `verify` adds fresh canonical observations
+using the network in the reviewed configuration. None admits hardware or releases
+keys. `compute/guest_launch.mjs` exports `encodeLaunchJSON` for canonical files.
+Retain independent security/privacy review and user-controlled release approval.
+Asynchronous `prepareGuestLaunch` and `readRetainedLaunch` return a total transport
+budget: callers must start wall and monotonic clocks before awaiting them. The
+fixed entries charge authorization latency; waiting for RPC never restarts time.
 
 Before creating a session key, the entry invokes the pinned public admission
 helper. That helper checks the actual cgroup containment, signed resource profile,

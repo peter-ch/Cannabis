@@ -1,11 +1,9 @@
-// Disposable public configuration and signing fixture; no project custody.
+// Disposable public configuration fixture; no global authority or project custody.
 import { generateKeyPairSync } from 'node:crypto';
 import { Wallet, ZeroAddress } from 'ethers';
-import { launchConfigurationPayload } from '../../compute/guest_launch.mjs';
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
 export function launchFixture() {
   const keys=[Wallet.createRandom(),Wallet.createRandom()],pub=generateKeyPairSync('ec',{namedCurve:'prime256v1'}).publicKey.export({format:'jwk'});
-  const authorities={schema:'cannabis.guest-launch-authorities.v1',chainId:31337,signers:keys.map(k=>k.address),threshold:2,maxValiditySeconds:3600};
   const configuration={schema:'cannabis.guest-launch-configuration.v1',configurationId:h(1),validFrom:1000,validUntil:2000,
     context:{chainId:31337,registryId:h(2),token:ZeroAddress},
     network:{rpc:'http://127.0.0.1:8545',chainId:31337,token:ZeroAddress,escrow:keys[0].address,genesisHash:h(3),escrowCodeHash:h(4),
@@ -24,9 +22,5 @@ export function launchFixture() {
       tee:'snp',measurements:{launch:'aa'.repeat(48),initData:null,minimumTCB:{bootloader:1,tee:1,snp:1,microcode:1}}},
     bootstrap:{agentBinary:'/usr/local/bin/ttrpc-aa',bridgeBinary:'/usr/local/bin/api-server-rest',runtimeDirectory:'/run',port:8006},
     transport:{timeoutMs:60000,maxCiphertextBytes:4*1024*1024}};
-  async function sign(c=configuration,a=authorities) {
-    const payload=launchConfigurationPayload(a,c);
-    return {configuration:structuredClone(c),signatures:await Promise.all(keys.map(async k=>({signer:k.address,signature:await k.signTypedData(payload.domain,payload.types,payload.value)})))};
-  }
-  return {keys,authorities,configuration,sign};
+  return {keys,configuration};
 }

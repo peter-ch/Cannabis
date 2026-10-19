@@ -82,11 +82,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--cache', type=Path, required=True)
     parser.add_argument('--guest-services', type=Path, required=True)
-    parser.add_argument('--launch-authorities', type=Path, help='Optional reviewed public configuration-authority file; no signing keys')
-    parser.add_argument('--operating', action='store_true', help='Use the distinct one-use operating PID-1 entry; requires public launch authorities')
+    parser.add_argument('--operating', action='store_true', help='Use the one-use operating PID-1 entry with bilateral booked-launch consent')
     args = parser.parse_args()
-    if args.operating and not args.launch_authorities:
-        raise ValueError('Operating entry requires explicit public launch authorities')
     if sys.platform != 'linux' or os.uname().machine != 'x86_64':
         raise ValueError('Use Linux x86_64 with Python 3.12+, dpkg-deb and depmod')
     from compute.guest_vm import VmBudget
@@ -152,14 +149,6 @@ def main():
     copy_text(INPUTS / 'inputs.json', project / 'compute/guest-image/inputs.json')
     copy_text(INPUTS / 'vm-profile.json', project / 'vm-profile.json')
     shutil.copyfile(node_prefix / 'LICENSE', tree / 'usr/local/bin/node.LICENSE')
-    if args.launch_authorities:
-        # The image contains only public authorization roots. External signed
-        # configurations can pin this completed image without a self-reference.
-        authority=subprocess.run([str(node_prefix/'bin/node'),str(ROOT/'scripts/prepare-guest-launch.mjs'),
-            'authorities',str(args.launch_authorities.resolve())],check=True,capture_output=True,timeout=30)
-        if not 0<len(authority.stdout)<=65536:raise ValueError('Launch authority output bound')
-        (project/'launch-authorities.json').write_bytes(authority.stdout)
-        (project/'launch-authorities.json').chmod(0o444)
     for name in ['package.json', 'package-lock.json']:
         shutil.copyfile(INPUTS / name, project / name)
     env = {'PATH':str(node_prefix / 'bin') + ':/usr/bin:/bin', 'HOME':str(out), 'npm_config_cache':str(cache / 'npm'), 'LANG':'C.UTF-8', 'TZ':'UTC'}
