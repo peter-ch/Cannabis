@@ -7,7 +7,7 @@ import { Transform } from 'node:stream';
 import { createHash, randomBytes } from 'node:crypto';
 import { Wallet, TypedDataEncoder } from 'ethers';
 import { Encrypter, generateIdentity, identityToRecipient } from 'age-encryption';
-import { deliveryTypesV2 } from '../compute/key_delivery.mjs';
+import { deliveryApprovalTypes } from '../compute/key_delivery.mjs';
 import { resultKeyCommitment } from '../compute/result_keys.mjs';
 import { sealResultDelivery } from '../compute/result_delivery.mjs';
 import { ResultInbox } from '../compute/result_inbox.mjs';
@@ -15,15 +15,15 @@ import { GuestWire, sendEncryptedResult, receiveEncryptedResult, resultStoredPay
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
 const sha=value=>createHash('sha256').update(value).digest('hex');
-async function fixture(t) {
+async function fixture(t,version='2') {
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'cannabis-wire-'));
   const wallet=Wallet.createRandom(),identity=await generateIdentity(),recipient=await identityToRecipient(identity),key=randomBytes(32);
-  const domain={name:'Cannabis confidential key delivery',version:'2',chainId:31337,verifyingContract:'0x'+'11'.repeat(20)};
-  const value=Object.fromEntries(deliveryTypesV2.JobKeyDelivery.map(({name,type})=>[name,type==='bytes32'?h(3):type==='string'?recipient:1]));
+  const types=deliveryApprovalTypes(version),domain={name:'Cannabis confidential key delivery',version,chainId:31337,verifyingContract:'0x'+'11'.repeat(20)};
+  const value=Object.fromEntries(types.JobKeyDelivery.map(({name,type})=>[name,type==='bytes32'?h(3):type==='string'?recipient:1]));
   Object.assign(value,{rank:0,notBefore:1000,expiresAt:1060,resultKeySHA256:resultKeyCommitment(key)});
-  const expected={domain,value,digest:TypedDataEncoder.hash(domain,deliveryTypesV2,value),requester:wallet.address,jobId:'owned-transport'};
-  expected.requesterSignature=await wallet.signTypedData(domain,deliveryTypesV2,value);
-  const record={schema:'cannabis.key-delivery.record.v2',keyWrapped:true,approvalDigest:expected.digest,releaseId:value.releaseId,expectedApproval:expected};
+  const expected={domain,value,digest:TypedDataEncoder.hash(domain,types,value),requester:wallet.address,jobId:'owned-transport'};
+  expected.requesterSignature=await wallet.signTypedData(domain,types,value);
+  const record={schema:'cannabis.key-delivery.record.v'+version,keyWrapped:true,approvalDigest:expected.digest,releaseId:value.releaseId,expectedApproval:expected};
   const plain=Buffer.concat([Buffer.from('owned-private-stream-content'),randomBytes(2*1024*1024)]),encrypter=new Encrypter();encrypter.addRecipient(recipient);
   const cipher=Buffer.from(await encrypter.encrypt(plain)),file=path.join(directory,'protected-output.age');fs.writeFileSync(file,cipher);
   const receipt={schema:'cannabis.result.v1',jobId:expected.jobId,taskId:'private-task',packageSHA256:value.packageSHA256.slice(2),
@@ -48,8 +48,8 @@ async function fixture(t) {
   return {directory,wallet,identity,key,expected,record,result,receipt,cipher,plain,inbox,pair,options};
 }
 
-test('bounded encrypted handoff stores ciphertext and authenticates a distinct nonpayment acknowledgement',async t=>{
-  const f=await fixture(t),p=f.pair();
+for(const version of ['2','3'])test(`v${version} encrypted handoff stores ciphertext and authenticates a distinct nonpayment acknowledgement`,async t=>{
+  const f=await fixture(t,version),p=f.pair();
   const [sent,received]=await Promise.all([
     sendEncryptedResult(p.guest,f.result,f.expected,{maxCiphertextBytes:f.options.maxCiphertextBytes}),
     receiveEncryptedResult(p.requester,f.options)]);

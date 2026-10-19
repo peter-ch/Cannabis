@@ -150,8 +150,9 @@ pipes or unnamed Unix socket pairs. Regular files and named/network sockets are
 not accepted as key channels.
 
 The native plan consumes the same deadline for decoding, execution, sealing and
-checked cleanup. Native sessions require a version-2 approval with a fresh result
-secret commitment. The private receipt is authenticated and encrypted as described
+checked cleanup. The retained operating entry requires a version-3 approval with both the exact
+launch-configuration commitment and a fresh result-secret commitment. Historical
+component sessions can still verify their own version-2 approvals. The private receipt is authenticated and encrypted as described
 in [result return](key-delivery.md#authenticated-private-result-return); the API
 exposes its encrypted envelope and no plaintext receipt. The output path remains
 non-enumerable. Fresh funding is checked again before result sealing and the

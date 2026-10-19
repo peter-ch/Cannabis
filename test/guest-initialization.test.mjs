@@ -58,6 +58,23 @@ test('changed or missing initialization refuses key generation and evidence inta
   }
   assert.equal(keys, 0);
 });
+
+test('configuration-bound initialization changes hardware commitments and refuses version downgrade',()=>{
+  for(const tee of ['snp','tdx']) {
+    const input=fixture(tee);input.schema='cannabis.guest-initialization.v2';input.binding.configurationSHA256='0x'+hex(91);
+    const retained=guestInitialization(input),approved=expected(input);
+    assert.equal(matchGuestInitialization(input,approved).digest,retained.digest);
+    for(const alter of [v=>v.binding.configurationSHA256='0x'+hex(92),v=>{delete v.binding.configurationSHA256;v.schema='cannabis.guest-initialization.v1';}]) {
+      const changed=structuredClone(input);alter(changed);
+      assert.notEqual(guestInitialization(changed).digest,retained.digest);
+      assert.throws(()=>matchGuestInitialization(changed,approved));
+    }
+    for(const alter of [v=>v.schema='cannabis.guest-initialization.v1',v=>delete v.binding.configurationSHA256,
+      v=>v.binding.configurationSHA256='0x'+'00'.repeat(32),v=>v.binding.configurationSHA256=hex(91)]) {
+      const changed=structuredClone(input);alter(changed);assert.throws(()=>guestInitialization(changed));
+    }
+  }
+});
 test('unknown fields, invalid placement and unsupported accelerators are rejected', () => {
   for (const mutate of [v => v.extra = true, v => v.tee = 'sample', v => v.jobId = '../path',
     v => v.requester = '0x' + '00'.repeat(20), v => v.binding.rank = 2,

@@ -10,7 +10,11 @@ import { policy } from '../scripts/compute-plan.mjs';
 import { settlementTerms, termsDigest } from '../scripts/compute-escrow.mjs';
 import { bookingPayload } from '../compute/market.mjs';
 import { createMarketLeaseProof, verifyMarketLeaseProof, readMarketLeaseState } from '../compute/market_lease.mjs';
-import { marketAttestationBinding, AttestationLedger, trusteeRuntimeData } from '../compute/attestation.mjs';
+import { marketAttestationBinding, configuredMarketAttestationBinding, AttestationLedger, trusteeRuntimeData } from '../compute/attestation.mjs';
+import { validateGuestConfiguration } from '../compute/guest_configuration.mjs';
+import { prepareGuestLaunch, publicLaunchAdmission } from '../compute/guest_launch.mjs';
+import { nativeServiceCommitment } from '../compute/guest_execution.mjs';
+import { launchFixture } from './helpers/launch_fixture.mjs';
 import { GuestFunding } from '../compute/guest_funding.mjs';
 import { guestInitialization } from '../compute/guest_initialization.mjs';
 import { keyDeliveryPayload, sealJobKeyDelivery } from '../compute/key_delivery.mjs';
@@ -54,7 +58,7 @@ contract MarketLeaseAsset is ERC20 { constructor() ERC20("Isolated verification"
 });
 after(() => { provider?.destroy(); node?.child.kill(); });
 
-async function setup({ token = false, activate = true } = {}) {
+async function setup({ token = false, activate = true, execution } = {}) {
   await provider.send('evm_revert', [initial]); initial = await provider.send('evm_snapshot', []);
   let time = (await provider.getBlock('latest')).timestamp;
   await provider.send('evm_setNextBlockTimestamp', [time + 1]); await provider.send('evm_mine', []); ++time;
@@ -74,7 +78,7 @@ async function setup({ token = false, activate = true } = {}) {
   const digest = termsDigest({ chainId: 31337, escrow: network.escrow, token: network.token, founderRecipient: policy.founderRecipient, ...terms });
   const bookings = [], signatures = [], ids = [];
   for (let i = 0; i < 2; ++i) {
-    await (await market.connect(workers[i]).publishResource(h(10 + i), h(20 + i), 1)).wait();
+    await (await market.connect(workers[i]).publishResource(h(10 + i), execution?nativeServiceCommitment(execution).serviceSHA256:h(20 + i), 1)).wait();
     const resource = await market.resourceKey(addresses[i], h(10 + i));
     const offer = { resource, escrow: network.escrow, policyHash: '0x' + job.policySHA256, manifestHash: h(30 + i), start, end,
       expiresAt: time + 900, units: 1, grossPerUnitSecond: 100 };
@@ -91,7 +95,7 @@ async function setup({ token = false, activate = true } = {}) {
   time = (await provider.getBlock('latest')).timestamp;
   const input = { job, settlement, bookingIds: ids };
   const proof = activate ? await createMarketLeaseProof(network, input, clock) : null;
-  const run = { runtimeSHA256: h(73).slice(2), taskSHA256: h(74).slice(2), attempt: 1, rank: 0, worldSize: 1, acceleratorClass: 'cpu' };
+  const run = { runtimeSHA256: execution?.profile.runtime.digestSHA256??h(73).slice(2), taskSHA256: h(74).slice(2), attempt: 1, rank: 0, worldSize: 1, acceleratorClass: 'cpu' };
   const setTime = async value => { time = value; await provider.send('evm_setNextBlockTimestamp', [time]); await provider.send('evm_mine', []); };
   return { network, context, input, proof, clock, setTime, start, end, escrow, orderId, ids, run };
 }
@@ -245,4 +249,75 @@ test('requester approval and encrypted result recovery retain the market group w
     await assert.rejects(sealJobKeyDelivery(source, attestations, signed, token, d.network, () => { ++recoveries; throw Error('Must not recover'); }, { clock: d.clock }), /fully accepted active/);
     assert.equal(recoveries, 1); // A later inactive order cannot reach local custody.
   } finally { attestations.close(); g.funding.close(); }
+});
+
+async function configuredFixture(t) {
+  const f=launchFixture(),d=await setup({execution:f.configuration.execution});await d.setTime(d.start+1);
+  const lease=verifyMarketLeaseProof(d.proof,d.context),r=lease.reservations[0],key=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
+  const configuration={...f.configuration,schema:'cannabis.guest-launch-configuration.v3',context:d.context,network:d.network,
+    provider:r.provider,resourceId:r.resourceId,validFrom:d.start-10,validUntil:d.end+10};
+  configuration.attestationPolicyTemplate.signingJwk=key.publicKey.export({format:'jwk'});
+  const {configurationSHA256}=validateGuestConfiguration(configuration);
+  const binding=configuredMarketAttestationBinding(d.proof,d.context,r.reservationId,d.run,configurationSHA256,d.clock());
+  const initialization={schema:'cannabis.guest-initialization.v2',tee:'snp',requester:lease.requester,jobId:lease.job.id,binding};
+  const policy=structuredClone(configuration.attestationPolicyTemplate);policy.measurements.initData=guestInitialization(initialization).digest;
+  const attestations=new AttestationLedger(':memory:',policy,d.clock);t.after(()=>attestations.close());
+  const challenge=attestations.challenge(binding),source={schema:'cannabis.market-requester.v2',context:d.context,proof:d.proof,configuration};
+  const descriptor={schema:'cannabis.package.v2',id:lease.job.id,ciphertextSHA256:lease.job.packageSHA256,policySHA256:lease.job.policySHA256,
+    recipient:'age1'+'a'.repeat(58),keyCustody:{schema:'cannabis.job-key.custody.v1',format:'age-v1+json',ciphertextSHA256:h(96).slice(2),ciphertextBytes:100}};
+  const request={releaseId:h(97),leaseId:lease.digest,nonce:challenge.nonce,channelJwk:key.publicKey.export({format:'jwk'}),descriptor,
+    notBefore:d.clock(),expiresAt:d.clock()+60,resultKeySHA256:resultKeyCommitment(Buffer.alloc(32,7))};
+  return {...d,f,lease,r,key,configuration,configurationSHA256,binding,initialization,policy,attestations,challenge,source,request};
+}
+
+test('re-signed launch changes cannot reuse a retained assignment with different configuration',async t=>{
+  const x=await configuredFixture(t),signed=await x.f.sign(x.configuration),request={proof:x.proof,challenge:x.challenge};
+  const prepare=(s,init=x.initialization)=>prepareGuestLaunch(x.f.authorities,s,init,request,{now:x.clock()});
+  const launch=prepare(signed);assert.equal(launch.configurationSHA256,x.configurationSHA256);
+  assert.equal(publicLaunchAdmission(launch).schema,'cannabis.guest-launch-admission.v1');
+  for(const alter of [c=>c.network.rpc='https://other.invalid/',c=>c.network.genesisHash=h(99),c=>c.network.marketCodeHash=h(99),
+    c=>c.network.escrowCodeHash=h(99),c=>c.network.maxHeadAgeSeconds--,c=>c.resourceId=h(99),c=>c.provider=x.lease.requester,
+    c=>c.execution.profile.runtime.digestSHA256=h(99).slice(2),c=>c.execution.profile.tools.ageSHA256=h(99).slice(2),
+    c=>c.transport.timeoutMs--,c=>c.transport.maxCiphertextBytes--,c=>c.bootstrap.port++,
+    c=>c.attestationPolicyTemplate.measurements.launch='99'.repeat(48),c=>c.attestationPolicyTemplate.issuer='Other verifier',
+    c=>c.validUntil++]) {
+    const changed=structuredClone(x.configuration);alter(changed);
+    assert.notEqual(validateGuestConfiguration(changed).configurationSHA256,x.configurationSHA256);
+    assert.throws(()=>prepareGuestLaunch(x.f.authorities,signed,x.initialization,{...request,configuration:changed},{now:x.clock()}));
+    assert.throws(()=>prepare({...signed,configuration:changed}));
+    const resigned=await x.f.sign(changed);assert.throws(()=>prepare(resigned));
+  }
+  for(const alter of [i=>i.schema='cannabis.guest-initialization.v1',i=>delete i.binding.configurationSHA256,
+    i=>i.binding.configurationSHA256=h(99),i=>i.binding.rank=1]) {
+    const init=structuredClone(x.initialization);alter(init);assert.throws(()=>prepare(signed,init));
+  }
+});
+
+test('requester independently binds full configuration, appraisal policy and result channel before custody',async t=>{
+  const x=await configuredFixture(t),payload=keyDeliveryPayload(x.source,x.attestations,x.request,x.clock());
+  assert.equal(payload.domain.version,'3');assert.equal(payload.value.configurationSHA256,x.configurationSHA256);
+  const legacy={schema:'cannabis.market-requester.v1',context:x.context,proof:x.proof};
+  assert.throws(()=>keyDeliveryPayload(legacy,x.attestations,x.request,x.clock()),/configuration/i);
+  const noResult={...x.request};delete noResult.resultKeySHA256;
+  assert.throws(()=>keyDeliveryPayload(x.source,x.attestations,noResult,x.clock()),/result channel/);
+  for(const alter of [c=>c.transport.timeoutMs--,c=>c.network.rpc='https://other.invalid/',c=>c.resourceId=h(99),
+    c=>c.execution.profile.runtime.digestSHA256=h(99).slice(2),c=>c.attestationPolicyTemplate.measurements.launch='99'.repeat(48)]) {
+    const changed=structuredClone(x.source);alter(changed.configuration);
+    assert.throws(()=>keyDeliveryPayload(changed,x.attestations,x.request,x.clock()));
+  }
+  const changed=structuredClone(x.source);changed.configuration.transport.timeoutMs--;
+  const binding={...x.binding,configurationSHA256:validateGuestConfiguration(changed.configuration).configurationSHA256};
+  const otherChallenge=x.attestations.challenge(binding);
+  assert.throws(()=>keyDeliveryPayload(changed,x.attestations,{...x.request,nonce:otherChallenge.nonce},x.clock()),/appraisal policy/);
+  const signed={request:x.request,requesterSignature:await owner.signTypedData(payload.domain,payload.types,payload.value)};
+  const token=syntheticEAR(x.key,x.policy,x.challenge,x.request.channelJwk,x.clock());let recoveries=0;
+  const recover=()=>{recoveries++;throw Error('Reached owned key callback');};
+  for(const change of [{rpc:'https://other.invalid/'},{maxHeadAgeSeconds:119},{genesisHash:h(99)}])
+    await assert.rejects(sealJobKeyDelivery(x.source,x.attestations,signed,token,{...x.network,...change},recover,{clock:x.clock}),/reviewed launch configuration/);
+  assert.equal(recoveries,0);
+  await assert.rejects(sealJobKeyDelivery(x.source,x.attestations,signed,token,x.network,recover,{clock:x.clock}),/Reached owned key callback/);
+  assert.equal(recoveries,1);
+  await (await x.escrow.connect(workers[0]).deliver(x.orderId,h(95))).wait();
+  await assert.rejects(sealJobKeyDelivery(x.source,x.attestations,signed,token,x.network,recover,{clock:x.clock}),/fully accepted active/);
+  assert.equal(recoveries,1);
 });

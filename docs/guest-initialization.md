@@ -6,11 +6,11 @@ Each confidential guest must retain the same assignment the requester approved. 
 
 ## Prepare the commitment
 
-Start with the approved funded-lease binding, produced by `leaseAttestationBinding(...)`, and the requester and opaque job identifier from that same approved record. The input has exactly five fields:
+Start with the complete activated on-chain booking group and a separately reviewed version-3 launch configuration. `validateGuestConfiguration(...)` validates and hashes the full public configuration. Pass that hash to `configuredMarketAttestationBinding(...)`, together with the market proof, selected booking and approved run. Take the requester and opaque job identifier from that same verified booking group. The input has exactly five fields:
 
 ```json
 {
-  "schema": "cannabis.guest-initialization.v1",
+  "schema": "cannabis.guest-initialization.v2",
   "tee": "snp",
   "requester": "<requester public address>",
   "jobId": "<opaque job identifier>",
@@ -18,7 +18,7 @@ Start with the approved funded-lease binding, produced by `leaseAttestationBindi
 }
 ```
 
-The placeholders illustrate the shape; the preparation command requires actual validated values. The binding includes the network, escrow, order, lease, reservation, encrypted package, workload policy, runtime, task, attempt, rank, group size and accelerator class. Current evidence profiles accept CPU only. Customer source, arguments, data, identity secrets and keys do not belong in this file. Keep scheduling metadata private even though the initialization commitment is not a secret.
+The placeholders illustrate the shape; the preparation command requires actual validated values. The binding includes the network, escrow, order, lease, reservation, encrypted package, workload policy, runtime, task, attempt, rank, group size, accelerator class and `configurationSHA256` as a nonzero `0x`-prefixed 32-byte digest. Current evidence profiles accept CPU only. Customer source, arguments, data, identity secrets and keys do not belong in this file. Keep scheduling metadata private even though the initialization commitment is not a secret.
 
 ```sh
 node scripts/prepare-guest-init.mjs \
@@ -29,6 +29,18 @@ node scripts/prepare-guest-init.mjs \
 The command validates the assignment, normalizes Ethereum addresses and writes sorted compact JSON followed by one newline. It refuses to overwrite an existing destination. The digest covers the JSON bytes without the trailing newline: SHA-256 for SNP's 32-byte `HOST_DATA`, SHA-384 for TDX's 48-byte `MRCONFIGID`. The output supplies both hex and standard base64. Put the hex digest in the requester's pinned appraisal policy; supply the identical bytes through the reviewed VMM's initialization controls. Neither preparing a file nor setting a launch field proves hardware acceptance.
 
 The guest accepts only that canonical file encoding, at most 64 KiB. Unknown fields, duplicate-key encodings, invalid UTF-8, unsupported hardware classes and invalid rank placement fail. Linux opens refuse symlinks and nonregular files before reading. The file is copied into retained process state once; subsequent edits cannot replace the running assignment.
+
+The configuration policy template has `measurements.initData: null`. First hash
+that complete configuration, then include its hash in the assignment, and finally
+derive the hardware initialization digest and concrete appraisal policy. This
+order avoids a circular hash. The requester compares the resulting policy to its
+own pinned policy before key recovery. Changing an RPC, contract pin, verifier,
+runtime, tool, service or transport limit changes the assignment commitment.
+
+The operating entry requires configuration v3 and initialization v2 together.
+Historical v1 initialization and older configuration parsing remain explicit
+offline component utilities. They cannot be substituted into the operating entry
+or used to remove the configuration field from a v3 key approval.
 
 ## Start inside the measured control plane
 
@@ -63,7 +75,7 @@ overrides for authorities, runtime, service binaries or agent.
 | `/opt/cannabis/launch-authorities.json` | Public configuration signers, quorum, chain and maximum configuration lifetime, embedded in the measured image |
 | `/run/cannabis-launch/configuration.json` | Configuration and its authority signatures |
 | `/run/cannabis-launch/initialization.json` | Canonical retained assignment prepared by the initialization tool |
-| `/run/cannabis-launch/request.json` | Exactly the signed lease `proof` and fresh attestation `challenge` |
+| `/run/cannabis-launch/request.json` | Exactly the complete market-lease `proof` and fresh attestation `challenge` |
 
 All inputs use compact sorted-key JSON and one trailing newline. Files
 and their ancestor directories must be root-owned and not writable by group or
@@ -78,7 +90,7 @@ The pinned public authorization helper checks that snapshot before the process
 creates `GuestJobScope`. The contained session receives the same descriptor and
 independently verifies the same signatures, assignment, challenge and service.
 Replacing an input pathname after allocation cannot replace the retained package.
-The descriptor itself supplies no authorization; the embedded signer roots do.
+The descriptor itself supplies no authorization. The current draft still requires embedded signer roots in addition to the configuration-bound requester checks. Replacing that global gate with requester/provider consent remains necessary before decentralized operation; the configuration commitment is a prerequisite, not completion of that replacement.
 
 The outer process pins Node and both fixed entries against the measured image's
 file inventory. It validates the signed aggregate/control/helper/storage resource

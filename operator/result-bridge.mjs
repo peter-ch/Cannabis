@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { TypedDataEncoder,verifyTypedData } from 'ethers';
-import { deliveryTypesV2 } from '../compute/key_delivery.mjs';
+import { deliveryApprovalTypes } from '../compute/key_delivery.mjs';
 import { resultStoredPayload } from '../compute/result_transport.mjs';
 import { uploadEncryptedResult,validateUploadAccess } from './result-upload.mjs';
 const integer=(n,min,max)=>Number.isSafeInteger(n)&&n>=min&&n<=max;
@@ -25,9 +25,11 @@ export async function bridgeEncryptedResult(guest,requester,{expected,access,ori
       (!signal||signal instanceof AbortSignal)&&path.isAbsolute(spoolDirectory));
     const root=fs.lstatSync(spoolDirectory);check(root.isDirectory()&&!root.isSymbolicLink());
     expected=structuredClone(expected);access=validateUploadAccess(access,origin);
-    check(expected?.domain?.name==='Cannabis confidential key delivery'&&expected.domain.version==='2'&&
-      expected.digest===access.approvalDigest&&TypedDataEncoder.hash(expected.domain,deliveryTypesV2,expected.value)===expected.digest&&
-      verifyTypedData(expected.domain,deliveryTypesV2,expected.value,expected.requesterSignature)===expected.requester);
+    const types=deliveryApprovalTypes(expected?.domain?.version);
+    check(expected?.domain?.name==='Cannabis confidential key delivery'&&['2','3'].includes(expected.domain.version)&&
+      fields(expected.value,types.JobKeyDelivery.map(x=>x.name))&&
+      expected.digest===access.approvalDigest&&TypedDataEncoder.hash(expected.domain,types,expected.value)===expected.digest&&
+      verifyTypedData(expected.domain,types,expected.value,expected.requesterSignature)===expected.requester);
     const wall=Date.now(),started=performance.now(),end=Math.min(access.expiresAt,wall+timeoutMs);
     const remaining=()=>Math.floor(Math.min(end-Date.now(),timeoutMs-(performance.now()-started)));
     const active=()=>{guest.assertActive();requester.assertActive();check(!controller.signal.aborted&&Date.now()>=wall&&remaining()>0);};

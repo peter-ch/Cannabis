@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { TypedDataEncoder, getAddress, verifyTypedData, ZeroAddress } from 'ethers';
+import { validateGuestConfiguration } from './guest_configuration.mjs';
 import { guestInitialization } from './guest_initialization.mjs';
 import { validateAttestationPolicy } from './attestation.mjs';
 import { GuestFunding } from './guest_funding.mjs';
@@ -12,7 +13,6 @@ import { nativeServiceCommitment } from './guest_execution.mjs';
 const fail=()=>{throw Error('Guest launch configuration is not authorized');};
 const exact=(v,keys)=>{if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).sort().join()!==keys.sort().join())fail();};
 const integer=(v,min,max)=>Number.isSafeInteger(v)&&v>=min&&v<=max;
-const bytes32=v=>typeof v==='string'&&/^0x[0-9a-f]{64}$/.test(v)&&!/^0x0+$/.test(v);
 const address=v=>{const a=getAddress(v);if(a===ZeroAddress)fail();return a;};
 function canonical(value) {
   if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';
@@ -49,11 +49,12 @@ export function readRetainedLaunch(authorities) {
   const value=parseLaunchSnapshot(bytes);
   // The operating entry has no legacy local-ledger fallback. Old configuration
   // parsing remains only for historical/offline component verification.
-  if(value.signed?.configuration?.schema!=='cannabis.guest-launch-configuration.v2')fail();
+  if(value.signed?.configuration?.schema!=='cannabis.guest-launch-configuration.v3')fail();
   return prepareGuestLaunch(authorities,value.signed,value.initialization,value.request);
 }
 export function publicLaunchAdmission(launch) {
-  if(launch.funding?.proof?.schema!=='cannabis.market-lease.v1')fail();
+  if(launch.funding?.proof?.schema!=='cannabis.market-lease.v1'||launch.initialization?.schema!=='cannabis.guest-initialization.v2'||
+    launch.initialization.binding.configurationSHA256!==launch.configurationSHA256)fail();
   const service=nativeServiceCommitment(launch.execution);
   return {schema:'cannabis.guest-launch-admission.v1',profile:launch.execution.profile,
     serviceSHA256:service.serviceSHA256,units:service.units,interval:launch.interval,transport:launch.transport,source:launch.execution.source};
@@ -89,54 +90,10 @@ export const launchConfigurationTypes={GuestLaunchConfiguration:[
   {name:'configurationSHA256',type:'bytes32'},{name:'validFrom',type:'uint64'},{name:'validUntil',type:'uint64'}
 ]};
 export function launchConfigurationPayload(authorities,configuration) {
-  const a=validateLaunchAuthorities(authorities),c=structuredClone(configuration);
-  exact(c,['schema','configurationId','validFrom','validUntil','context','network','provider','resourceId',
-    'execution','attestationPolicyTemplate','bootstrap','transport']);
-  const marketBased=c.schema==='cannabis.guest-launch-configuration.v2';
-  if(Buffer.byteLength(canonical(c))>256*1024||!['cannabis.guest-launch-configuration.v1','cannabis.guest-launch-configuration.v2'].includes(c.schema)||!bytes32(c.configurationId)||
-    !integer(c.validFrom,1,Number.MAX_SAFE_INTEGER)||!integer(c.validUntil,c.validFrom+1,c.validFrom+a.maxValiditySeconds))fail();
-  exact(c.context,['chainId',marketBased?'market':'registryId','token']);
-  if(c.context.chainId!==a.chainId||!marketBased&&!bytes32(c.context.registryId))fail();getAddress(c.context.token);
-  if(marketBased)address(c.context.market);
-  const n=c.network;exact(n,['rpc','chainId','token','escrow','genesisHash','escrowCodeHash','tokenCodeHash',
-    'finality','maxFinalizedAgeSeconds','maxHeadAgeSeconds',...(marketBased?['market','marketCodeHash']:[])]);
-  if(marketBased&&(getAddress(n.market)!==getAddress(c.context.market)||!bytes32(n.marketCodeHash)))fail();
-  const rpc=new URL(n.rpc);
-  if(rpc.username||rpc.password||rpc.search||rpc.hash||rpc.protocol!=='https:'&&!(rpc.protocol==='http:'&&rpc.hostname==='127.0.0.1')||
-    n.chainId!==a.chainId||getAddress(n.token)!==getAddress(c.context.token)||n.finality!=='rpc-finalized'||
-    !integer(n.maxFinalizedAgeSeconds,1,7200)||!integer(n.maxHeadAgeSeconds,1,120)||
-    !bytes32(n.genesisHash)||!bytes32(n.escrowCodeHash)||
-    (getAddress(n.token)===ZeroAddress?n.tokenCodeHash!==null:!bytes32(n.tokenCodeHash)))fail();
-  address(n.escrow);address(c.provider);if(!bytes32(c.resourceId))fail();
-  nativeServiceCommitment(c.execution);
-  const profile=c.execution.profile;
-  exact(profile,['schema','units','runtime','resources','total','control','helper','processLimit','scratchInodes','staging','ciphertext','maxInputBytes','tools']);
-  exact(profile.runtime,['adapter','architecture','os','digestSHA256']);
-  exact(profile.resources,['cpus','memoryMiB','scratchMiB','wallSeconds','nodes']);
-  exact(profile.total,['cpu_millis','memory_bytes','processes','wall_seconds','children']);
-  for(const name of ['control','helper'])exact(profile[name],['cpu_millis','memory_bytes','processes','wall_seconds']);
-  exact(profile.staging,['bytes','inodes']);exact(profile.tools,['pythonSHA256','ageSHA256','ageKeygenSHA256']);
-  exact(profile.ciphertext,['bytes','inodes','inputBytes','outputBytes']);
-  for(const value of [...Object.values(profile.resources),...Object.values(profile.total),...Object.values(profile.control),
-    ...Object.values(profile.helper),...Object.values(profile.staging),...Object.values(profile.ciphertext),profile.processLimit,profile.scratchInodes])
-    if(!integer(value,1,Number.MAX_SAFE_INTEGER))fail();
-  if(!integer(profile.maxInputBytes,0,profile.staging.bytes)||
-    Object.values(profile.tools).some(v=>typeof v!=='string'||!/^[0-9a-f]{64}$/.test(v))||
-    typeof profile.runtime.digestSHA256!=='string'||!/^[0-9a-f]{64}$/.test(profile.runtime.digestSHA256)||
-    Object.values(profile.runtime).some(v=>typeof v!=='string'||!/^[A-Za-z0-9_.-]{1,128}$/.test(v)))fail();
-  for(const file of Object.values(c.execution.source))if(!path.posix.isAbsolute(file)||file.includes('\\')||file.includes('\0')||file.split('/').includes('..'))fail();
-  const b=c.bootstrap;exact(b,['agentBinary','bridgeBinary','runtimeDirectory','port']);
-  for(const field of ['agentBinary','bridgeBinary','runtimeDirectory'])if(typeof b[field]!=='string'||!path.posix.isAbsolute(b[field])||b[field].includes('\\')||b[field].includes('\0')||b[field].split('/').includes('..'))fail();
-  if(!integer(b.port,1024,65535))fail();
-  exact(c.transport,['timeoutMs','maxCiphertextBytes']);
-  if(!integer(c.transport.timeoutMs,1,3600000)||!integer(c.transport.maxCiphertextBytes,1,profile.ciphertext.outputBytes))fail();
-  const p=structuredClone(c.attestationPolicyTemplate);
-  // The assignment digest is derived locally after reading the retained canonical
-  // assignment. Everything else, including the image measurement, is signed.
-  if(p?.measurements?.initData!==null)fail();
-  p.measurements.initData='11'.repeat(p.tee==='snp'?32:48);validateAttestationPolicy(p);
-  const domain={name:'Cannabis guest launch configuration',version:marketBased?'2':'1',chainId:a.chainId,salt:hash(a)};
-  const value={configurationSHA256:hash(c),validFrom:c.validFrom,validUntil:c.validUntil};
+  const a=validateLaunchAuthorities(authorities);
+  const {configuration:c,configurationSHA256}=validateGuestConfiguration(configuration,{chainId:a.chainId,maxValiditySeconds:a.maxValiditySeconds});
+  const domain={name:'Cannabis guest launch configuration',version:c.schema.slice(-1),chainId:a.chainId,salt:hash(a)};
+  const value={configurationSHA256,validFrom:c.validFrom,validUntil:c.validUntil};
   return {domain,types:launchConfigurationTypes,value,digest:TypedDataEncoder.hash(domain,launchConfigurationTypes,value)};
 }
 export function verifyLaunchConfiguration(authorities,signed,now=Math.floor(Date.now()/1000)) {
@@ -155,7 +112,10 @@ export function verifyLaunchConfiguration(authorities,signed,now=Math.floor(Date
 export function prepareGuestLaunch(authorities,signed,initialization,request,{now=Math.floor(Date.now()/1000)}={}) {
   const checked=verifyLaunchConfiguration(authorities,signed,now),c=checked.configuration;
   const retained=guestInitialization(initialization);request=structuredClone(request);exact(request,['proof','challenge']);
-  if(c.schema==='cannabis.guest-launch-configuration.v2'&&request.proof?.schema!=='cannabis.market-lease.v1')fail();
+  if(c.schema!=='cannabis.guest-launch-configuration.v1'&&request.proof?.schema!=='cannabis.market-lease.v1')fail();
+  const configured=c.schema==='cannabis.guest-launch-configuration.v3';
+  if(retained.assignment.schema!==(configured?'cannabis.guest-initialization.v2':'cannabis.guest-initialization.v1')||
+    configured&&retained.assignment.binding.configurationSHA256!==checked.configurationSHA256)fail();
   if(c.schema==='cannabis.guest-launch-configuration.v1'&&request.proof?.schema!=='cannabis.lease-proof.v1')fail();
   if(Buffer.byteLength(canonical(request))>16*1024*1024||retained.assignment.tee!==c.attestationPolicyTemplate.tee)fail();
   const policy=structuredClone(c.attestationPolicyTemplate);policy.measurements.initData=retained.digest;

@@ -2,8 +2,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CapacityLedger } from '../compute/capacity.mjs';
-import { AttestationLedger, leaseAttestationBinding, marketAttestationBinding, requestTrusteeResult } from '../compute/attestation.mjs';
+import { AttestationLedger, leaseAttestationBinding, marketAttestationBinding, configuredMarketAttestationBinding, requestTrusteeResult } from '../compute/attestation.mjs';
 import { keyDeliveryPayload, sealJobKeyDelivery, inspectKeyDelivery, recoverRequesterJobKey } from '../compute/key_delivery.mjs';
+import { validateGuestConfiguration } from '../compute/guest_configuration.mjs';
 import { createResultKeyCustody, recoverRequesterResultKey } from '../compute/result_keys.mjs';
 
 function read(file) {
@@ -18,7 +19,9 @@ try {
   const config = read(configFile), input = read(inputFile);
   if (config.marketProofFile) {
     if (config.capacityLedger) throw Error('Select the market proof without a legacy capacity database');
-    capacity = { schema: 'cannabis.market-requester.v1', context: config.context, proof: read(config.marketProofFile) };
+    capacity = { schema: config.launchConfigurationFile?'cannabis.market-requester.v2':'cannabis.market-requester.v1',
+      context: config.context, proof: read(config.marketProofFile),
+      ...(config.launchConfigurationFile?{configuration:read(config.launchConfigurationFile)}:{}) };
   } else {
     if (!fs.existsSync(config.capacityLedger)) throw Error('Existing funded capacity ledger required');
     capacity = new CapacityLedger(config.capacityLedger, config.context);
@@ -27,7 +30,9 @@ try {
   let result;
   if (action === 'create-result-key') result = await createResultKeyCustody(input);
   else if (action === 'challenge') result = attestations.challenge(config.marketProofFile
-    ? marketAttestationBinding(capacity.proof, config.context, input.reservationId, input.run)
+    ? config.launchConfigurationFile?configuredMarketAttestationBinding(capacity.proof,config.context,input.reservationId,input.run,
+        validateGuestConfiguration(capacity.configuration).configurationSHA256)
+      :marketAttestationBinding(capacity.proof,config.context,input.reservationId,input.run)
     : leaseAttestationBinding(capacity, input.leaseId, input.reservationId, input.run));
   else if (action === 'appraise') result = await requestTrusteeResult(attestations, config.trusteeEndpoint, input.nonce, input.channelJwk, input.evidence);
   else if (action === 'prepare') result = keyDeliveryPayload(capacity, attestations, input);

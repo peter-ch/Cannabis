@@ -129,9 +129,10 @@ export class GuestEvidenceSession {
   #match(expected) {
     const b = this.#challenge.binding, v = expected?.value, d = expected?.domain;
     if (!v || !d || expected.requester !== this.#requester || expected.jobId !== this.#jobId ||
-        d.name !== 'Cannabis confidential key delivery' || !['1','2'].includes(d.version) || BigInt(d.chainId) !== BigInt(b.chainId) ||
+        d.name !== 'Cannabis confidential key delivery' || !['1','2','3'].includes(d.version) || BigInt(d.chainId) !== BigInt(b.chainId) ||
         getAddress(d.verifyingContract) !== getAddress(b.escrow)) throw Error('Delivery differs from retained guest assignment');
-    const fields = { leaseDigest: b.leaseDigest, orderId: b.orderId, reservationId: b.reservationId,
+    if((d.version==='3')!==Object.hasOwn(b,'configurationSHA256'))throw Error('Delivery configuration version differs from retained assignment');
+    const fields = { ...(d.version==='3'?{configurationSHA256:b.configurationSHA256}:{}),leaseDigest: b.leaseDigest, orderId: b.orderId, reservationId: b.reservationId,
       nonce: '0x' + this.#challenge.nonce, attestationPolicySHA256: '0x' + this.#challenge.attestationPolicySHA256,
       channelKeySHA256: '0x' + createHash('sha256').update(canonical(this.#publicKey)).digest('hex'),
       attempt: b.attempt, rank: b.rank, worldSize: b.worldSize };
@@ -188,7 +189,7 @@ export class GuestEvidenceSession {
     let resultKey;
     try {
       expected = structuredClone(expected); this.#match(expected);
-      if(expected.domain.version!=='2')throw Error('Native execution requires an approved confidential result channel');
+      if(!['2','3'].includes(expected.domain.version))throw Error('Native execution requires an approved confidential result channel');
       this.#funding.assertService(nativeServiceCommitment(this.#execution));
       const binding = Object.fromEntries(['packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256',
         'attempt', 'rank', 'worldSize', 'acceleratorClass'].map(k => [k, this.#challenge.binding[k]]));

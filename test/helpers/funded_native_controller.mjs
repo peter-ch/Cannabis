@@ -10,7 +10,7 @@ import { localProvider } from '../../scripts/lib.mjs';
 import { compile } from '../../scripts/compile.mjs';
 import { bookingPayload } from '../../compute/market.mjs';
 import { createMarketLeaseProof, verifyMarketLeaseProof } from '../../compute/market_lease.mjs';
-import { AttestationLedger, marketAttestationBinding, trusteeRuntimeData } from '../../compute/attestation.mjs';
+import { AttestationLedger, configuredMarketAttestationBinding, trusteeRuntimeData } from '../../compute/attestation.mjs';
 import { guestInitialization } from '../../compute/guest_initialization.mjs';
 import { nativeServiceCommitment } from '../../compute/guest_execution.mjs';
 import { keyDeliveryPayload, sealJobKeyDelivery, recoverRequesterJobKey } from '../../compute/key_delivery.mjs';
@@ -19,6 +19,7 @@ import { policy } from '../../scripts/compute-plan.mjs';
 import { createResultKeyCustody, recoverRequesterResultKey } from '../../compute/result_keys.mjs';
 import { ResultInbox } from '../../compute/result_inbox.mjs';
 import { GuestWire, receiveGuestEvidence, sendGuestExecution, receiveEncryptedResult } from '../../compute/result_transport.mjs';
+import { validateGuestConfiguration } from '../../compute/guest_configuration.mjs';
 import { launchConfigurationPayload } from '../../compute/guest_launch.mjs';
 import { sendEncryptedInput } from '../../compute/input_transport.mjs';
 import { receiveSessionResultAccess } from '../../requester/session-access.mjs';
@@ -94,30 +95,32 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
     market:context.market,marketCodeHash:keccak256(await provider.getCode(context.market))};
   const proof=await createMarketLeaseProof(network,{job,settlement,bookingIds:[rp.digest]});
   const lease=verifyMarketLeaseProof(proof,context);
-  capacity={schema:'cannabis.market-requester.v1',context,proof};
   // Advance the fixture chain only when actual UTC enters the reserved interval.
   // Production deadlines and clocks are not replaced with synthetic values.
   while(clock()<start)await new Promise(r=>setTimeout(r,100));
   await provider.send('evm_setNextBlockTimestamp',[clock()]);await provider.send('evm_mine',[]);
-  const binding=marketAttestationBinding(proof,context,rp.digest,input.run,clock());
-  const initialization={schema:'cannabis.guest-initialization.v1',tee:'snp',requester:account,jobId:job.id,binding};
   const key=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
   const attestationPolicy={schema:'cannabis.attestation.trustee-policy.v1',issuer:'Owned joint fixture',
     signingJwk:key.publicKey.export({format:'jwk'}),verifierBuild:'synthetic fixture, no hardware',appraisalPolicyId:'owned-fixture',
     maxTokenAgeSeconds:90,maxTokenLifetimeSeconds:120,challengeTTLSeconds:90,tee:'snp',
-    measurements:{launch:'11'.repeat(48),initData:guestInitialization(initialization).digest,
+    measurements:{launch:'11'.repeat(48),initData:null,
       minimumTCB:{bootloader:1,tee:1,snp:1,microcode:1}}};
-  attestations=new AttestationLedger(':memory:',attestationPolicy);
-  const challenge=attestations.challenge(binding);
   const funding={proof,context,network,provider:workerAccount,resourceId,serviceSHA256:service.serviceSHA256};
   // Disposable authority for this fixture only. Production reads its public
   // authorities from the measured image, never from the requester/host wire.
   const authorities={schema:'cannabis.guest-launch-authorities.v1',chainId:31337,signers:[account],threshold:1,maxValiditySeconds:3600};
   const template=structuredClone(attestationPolicy);template.measurements.initData=null;
-  const configuration={schema:'cannabis.guest-launch-configuration.v2',configurationId:h(9),validFrom:start-15,validUntil:end+60,
+  const configuration={schema:'cannabis.guest-launch-configuration.v3',configurationId:h(9),validFrom:start-15,validUntil:end+60,
     context,network,provider:workerAccount,resourceId,execution:input.execution,attestationPolicyTemplate:template,
     bootstrap:{agentBinary:'/usr/local/bin/ttrpc-aa',bridgeBinary:'/usr/local/bin/api-server-rest',runtimeDirectory:'/run',port:8006},
     transport:{timeoutMs:90000,maxCiphertextBytes:4*1024*1024}};
+  const configurationSHA256=validateGuestConfiguration(configuration).configurationSHA256;
+  const binding=configuredMarketAttestationBinding(proof,context,rp.digest,input.run,configurationSHA256,clock());
+  const initialization={schema:'cannabis.guest-initialization.v2',tee:'snp',requester:account,jobId:job.id,binding};
+  attestationPolicy.measurements.initData=guestInitialization(initialization).digest;
+  attestations=new AttestationLedger(':memory:',attestationPolicy);
+  const challenge=attestations.challenge(binding);
+  capacity={schema:'cannabis.market-requester.v2',context,proof,configuration};
   const configPayload=launchConfigurationPayload(authorities,configuration);
   const signedConfiguration={configuration,signatures:[{signer:account,signature:await requester.signTypedData(configPayload.domain,configPayload.types,configPayload.value)}]};
   await wire.writeJSON({authorities,signedConfiguration,initialization,request:{proof:funding.proof,challenge}});
@@ -131,6 +134,7 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
   const delivery={releaseId:h(8),leaseId:lease.digest,nonce:challenge.nonce,channelJwk:evidence.channelJwk,
     descriptor:input.descriptor,notBefore:clock(),expiresAt:clock()+60,resultKeySHA256:resultCustody.resultKeySHA256};
   const payload=keyDeliveryPayload(capacity,attestations,delivery,clock());
+  assert.equal(payload.domain.version,'3');assert.equal(payload.value.configurationSHA256,configurationSHA256);
   const approval={request:delivery,requesterSignature:await requester.signTypedData(payload.domain,payload.types,payload.value)};
   const record=await sealJobKeyDelivery(capacity,attestations,approval,syntheticEAR(key,attestationPolicy,challenge,evidence.channelJwk),
     network,expected=>recoverRequesterJobKey(input.custody,expected),{ageKeygen:input.ageKeygen,
@@ -191,7 +195,7 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
   assert.equal(await escrow.workerDue(orderId,workerAccount),0n);
   assert.equal(await escrow.totalLiability(),120n);
   process.stdout.write(JSON.stringify({schema:'cannabis.funded-native-fixture.v1',
-    checks:{signedNativeCapacity:true,onChainMarketBooking:true,noCapacityDatabase:true,freshFundedAdmission:true,guardedNativeExecution:true,requesterReconstruction:true,
+    checks:{signedNativeCapacity:true,onChainMarketBooking:true,noCapacityDatabase:true,configurationBoundApproval:true,freshFundedAdmission:true,guardedNativeExecution:true,requesterReconstruction:true,
       exactFeeAndWorkerSettlement:true,workerWithdrawal:true,sessionReplayRefused:true,encryptedReceiptAuthenticated:true,
       requesterProcessRestartRecovery:true,duplicateReceiptIdempotent:true,approvedWorkloadReconstruction:true,
       separateGuestProcess:true,encryptedStreamingHandoff:true,requesterStorageAcknowledgement:true,

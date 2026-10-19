@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TypedDataEncoder } from 'ethers';
 import { generateIdentity } from 'age-encryption';
-import { approvalTypes, validateRecoveryBundle, openApprovedResults } from '../web/work-approvals.js';
-import { deliveryTypesV2 } from '../compute/key_delivery.mjs';
+import { approvalTypes, approvalTypesV3, validateRecoveryBundle, openApprovedResults } from '../web/work-approvals.js';
+import { deliveryTypesV2, deliveryTypesV3 } from '../compute/key_delivery.mjs';
 import { approvedBrowserFixture } from './fixtures/approved-browser.mjs';
 
 test('browser schema matches the guest; desktop encrypted custody and receipts reconstruct the Python archive',async()=>{
@@ -21,6 +21,29 @@ test('browser refuses substituted signer, chain, escrow, approval, custody and d
     b=>b.entries[0].approval.value.attempt++,b=>b.entries[0].approval.requesterSignature='0x'+'11'.repeat(65),
     b=>b.entries[0].custody.resultKeySHA256='0x'+'22'.repeat(32),b=>b.entries.push(b.entries[0])]) {
     const bundle=structuredClone(f.bundle);change(bundle);await assert.rejects(validateRecoveryBundle(bundle));
+  }
+});
+
+test('configuration-bound browser recovery preserves v3 and refuses stripping or re-signing a different configuration',async()=>{
+  assert.deepEqual(approvalTypesV3,deliveryTypesV3);
+  const f=await approvedBrowserFixture({version:'3'});
+  const checked=await validateRecoveryBundle(f.bundle);
+  assert.equal(checked.bundle.entries[0].approval.domain.version,'3');
+  assert.equal((await openApprovedResults(f)).size,1);
+  for(const alter of [p=>p.domain.version='2',p=>delete p.value.configurationSHA256,
+    p=>p.value.configurationSHA256='0x'+'00'.repeat(32),p=>p.value.configurationSHA256='0x'+'99'.repeat(32)]) {
+    const bundle=structuredClone(f.bundle);alter(bundle.entries[0].approval);
+    await assert.rejects(validateRecoveryBundle(bundle));
+  }
+  for(const downgrade of [false,true]) {
+    const bundle=structuredClone(f.bundle),p=bundle.entries[0].approval;
+    p.value.configurationSHA256='0x'+'99'.repeat(32);
+    if(downgrade){p.domain.version='2';delete p.value.configurationSHA256;}
+    const types=downgrade?approvalTypes:approvalTypesV3;
+    p.digest=TypedDataEncoder.hash(p.domain,types,p.value);
+    p.requesterSignature=await f.owner.signTypedData(p.domain,types,p.value);
+    await validateRecoveryBundle(bundle); // Authentic replacement approval is a different session.
+    await assert.rejects(openApprovedResults({...f,bundle}),/receipt/);
   }
 });
 test('an authentic signed approval still requires the exact encrypted receipt and original task/runtime/policy',async()=>{

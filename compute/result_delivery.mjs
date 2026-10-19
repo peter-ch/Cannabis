@@ -1,17 +1,18 @@
 // Authenticated private result receipts. This does not accept work or send payment.
 import { CompactEncrypt, compactDecrypt } from 'jose';
 import { TypedDataEncoder, getAddress } from 'ethers';
-import { deliveryTypesV2 } from './key_delivery.mjs';
+import { deliveryApprovalTypes } from './key_delivery.mjs';
 import { resultKeyCommitment } from './result_keys.mjs';
 
 const maxPlaintext=4*1024*1024,maxEnvelope=6*1024*1024;
 const fail=()=>Error('Result does not match the approved confidential session');
 const fields=(value,keys)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join()===keys.sort().join();
 function approval(expected,key) {
-  if(expected?.domain?.name!=='Cannabis confidential key delivery'||expected.domain.version!=='2'||
-    !fields(expected.value,deliveryTypesV2.JobKeyDelivery.map(x=>x.name))||
+  const types=deliveryApprovalTypes(expected?.domain?.version);
+  if(expected?.domain?.name!=='Cannabis confidential key delivery'||!['2','3'].includes(expected.domain.version)||
+    !fields(expected.value,types.JobKeyDelivery.map(x=>x.name))||
     resultKeyCommitment(key)!==expected.value.resultKeySHA256||
-    TypedDataEncoder.hash(expected.domain,deliveryTypesV2,expected.value)!==expected.digest||
+    TypedDataEncoder.hash(expected.domain,types,expected.value)!==expected.digest||
     getAddress(expected.requester)!==expected.requester||typeof expected.jobId!=='string')throw fail();
   return {approvalDigest:expected.digest,requester:expected.requester,jobId:expected.jobId};
 }

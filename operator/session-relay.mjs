@@ -9,7 +9,7 @@ import { TypedDataEncoder,verifyTypedData,getAddress } from 'ethers';
 import { calculateJwkThumbprint } from 'jose';
 import { guestInitialization } from '../compute/guest_initialization.mjs';
 import { trusteeEvidenceRequest } from '../compute/attestation.mjs';
-import { deliveryTypesV2 } from '../compute/key_delivery.mjs';
+import { deliveryApprovalTypes } from '../compute/key_delivery.mjs';
 import { validateRelayAccess } from '../web/work-relay.js';
 import { validateUploadAccess } from './result-upload.mjs';
 import { bridgeEncryptedResult } from './result-bridge.mjs';
@@ -94,15 +94,17 @@ export async function relayConfiguredSession(guest,requester,{launch,origin,spoo
     check(fields(command,['protocol','operation','envelope','expected'])&&command.protocol===protocol&&command.operation==='execute'&&
       typeof command.envelope==='string'&&command.envelope.length<=32768&&
       /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(command.envelope));
-    const expected=command.expected,v=expected?.value,d=expected?.domain;
-    check(fields(d,['name','version','chainId','verifyingContract'])&&d.name==='Cannabis confidential key delivery'&&d.version==='2'&&
+    const expected=command.expected,v=expected?.value,d=expected?.domain,types=deliveryApprovalTypes(d?.version);
+    check(fields(d,['name','version','chainId','verifyingContract'])&&d.name==='Cannabis confidential key delivery'&&['2','3'].includes(d.version)&&
       d.chainId===b.chainId&&getAddress(d.verifyingContract)===b.escrow&&expected.requester===assignment.requester&&expected.jobId===assignment.jobId&&
-      fields(v,deliveryTypesV2.JobKeyDelivery.map(x=>x.name)));
+      fields(v,types.JobKeyDelivery.map(x=>x.name)));
+    check((d.version==='3')===Object.hasOwn(b,'configurationSHA256')&&
+      (d.version!=='3'||v.configurationSHA256===b.configurationSHA256));
     for(const k of ['orderId','leaseDigest','reservationId','attempt','rank','worldSize'])check(v[k]===b[k]);
     for(const k of ['packageSHA256','policySHA256','runtimeSHA256','taskSHA256'])check(v[k]==='0x'+b[k]);
     check(v.nonce==='0x'+challenge.nonce&&v.attestationPolicySHA256==='0x'+challenge.attestationPolicySHA256&&
       v.channelKeySHA256==='0x'+hash(canonical(e.channelJwk))&&
-      expected.digest===TypedDataEncoder.hash(d,deliveryTypesV2,v)&&verifyTypedData(d,deliveryTypesV2,v,expected.requesterSignature)===assignment.requester);
+      expected.digest===TypedDataEncoder.hash(d,types,v)&&verifyTypedData(d,types,v,expected.requesterSignature)===assignment.requester);
     const headerText=command.envelope.split('.')[0];check(headerText.length<=4096);
     const headerBytes=Buffer.from(headerText,'base64url');check(headerBytes.toString('base64url')===headerText);
     const header=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(headerBytes));

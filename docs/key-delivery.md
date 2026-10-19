@@ -8,7 +8,7 @@ This is a local requester-side integration. It creates and journals encrypted de
 
 `compute/key_delivery.mjs` combines [per-job custody](job-key-custody.md), [Trustee appraisals](trustee-attestation.md), [funded leases](capacity-commitments.md) and escrow state inspection:
 
-1. Derive the workload, policy, reservation and lease bindings from the trusted local capacity ledger. The requester supplies the approved runtime, task, attempt, rank and world size when creating the challenge.
+1. Derive workload, policy, reservation and booking-group bindings from the complete activated market proof, independently verified against the chain. The current requester path retains the full locally reviewed launch configuration, hashes it into the assignment and verifies the booked resource/service and derived appraisal policy. Older local-capacity utilities remain for historical checks. The requester supplies the approved runtime, task, attempt, rank and world size when creating the challenge.
 2. Prepare an EIP-712 `JobKeyDelivery` approval. The wallet-review payload commits the release ID, lease/order/reservation, package and policy, attestation-policy digest, runtime and task, key capsule, input recipient, guest channel key, challenge nonce, rank/attempt/world size and validity interval. Its domain binds chain ID and escrow address. The requester must sign it using the funded order's EOA. No wallet is unlocked or signed by this tool; contract-wallet signatures are not implemented.
 3. Verify the requester signature, fresh Trustee result and every challenge binding. Current integrated profiles are SNP/TDX CPU only. Unsupported accelerators have no fallback to CPU-only approval.
 4. Read accepted funding at an RPC-reported finalized block, pinned by block hash, genesis, token and escrow runtime code. Confirm the original signed settlement terms and every provider's acceptance.
@@ -27,16 +27,18 @@ Use `scripts/compute-key-delivery.mjs`. Its private configuration contains:
 
 | Field | Meaning |
 | --- | --- |
-| `context` | Capacity ledger's existing chain ID, registry ID and token |
-| `capacityLedger` | Existing private funded-lease SQLite path |
+| `context` | Market `chainId`, `market` address and payment `token` |
+| `marketProofFile` | Complete activated booking group and original finalized anchor |
+| `launchConfigurationFile` | Full locally reviewed unsigned configuration v3, matching the protected guest; produces requester source v2 and approval v3 |
+| `capacityLedger` | Historical local-lease utilities only; cannot be combined with `marketProofFile` |
 | `attestationPolicyFile` | Requester-pinned Trustee policy file |
 | `attestationLedger` | Private challenge/delivery SQLite path |
 | `network` | Reviewed RPC, chain/genesis/code pins, token/escrow, `finality: rpc-finalized`, `maxFinalizedAgeSeconds`, `maxHeadAgeSeconds` |
 | `keySource` | Trusted local `python`, `age`, `identity`, `capsule`, `descriptor` paths; Python and age executables must be absolute paths for `seal` |
-| `resultKeySource` | Local `python`, `age`, `identity`, `custody` paths for reopening the encrypted per-release result secret; required for version-2 approvals |
+| `resultKeySource` | Local `python`, `age`, `identity`, `custody` paths for reopening the encrypted per-release result secret; required for version-2 and version-3 approvals |
 | `trusteeEndpoint` | Requester-controlled AS `/attestation` URL used by `appraise`; never taken from a worker's message |
 
-These paths and executable choices are requester configuration, never worker-supplied protocol fields. Python 3.12+, Node 22.22+ and the pinned age/age-keygen installation are required.
+These paths and executable choices are requester configuration, never worker-supplied protocol fields. For the operating market path, use both `marketProofFile` and `launchConfigurationFile`. The complete `network` object must exactly match that reviewed configuration before any key-recovery callback runs. Do not copy a host-proposed configuration into the approved slot without independent review. Python 3.12+, Node 22.22+ and the pinned age/age-keygen installation are required.
 
 ```sh
 node scripts/compute-key-delivery.mjs challenge ../private/delivery-config.json ../private/run-binding.json
@@ -50,7 +52,7 @@ node scripts/compute-key-delivery.mjs inspect ../private/delivery-config.json ..
 - `challenge` input: `{leaseId, reservationId, run}`. `run` contains `runtimeSHA256`, `taskSHA256`, `attempt`, `rank`, `worldSize`, `acceleratorClass`. Values must come from the approved workload and placement. The challenge must be created close enough to the reserved service window to remain fresh.
 - `appraise` input: the guest's `nonce`, `channelJwk` and base64url `evidence`. It calls the configured Trustee, verifies the EAR and returns `{token, appraisal, challengeConsumed: false, ...}`. Keep the response private and pass its token into `seal`; it does not recover a key or consume the challenge. This supports the [guest-held session](guest-attestation.md).
 - `prepare` input: `{releaseId, leaseId, nonce, channelJwk, descriptor, notBefore, expiresAt}`. `descriptor` is the requester's saved package-v2 descriptor. Times are integer Unix seconds and must fit inside both the reservation and challenge lifetime. The returned typed-data payload is ready for wallet review; it does not sign anything.
-- `create-result-key` input: `{releaseId, recipient}` using the requester's own result recipient. Save its encrypted custody record privately and durably before delivery, with the existing requester identity backup. Add its `resultKeySHA256` to the `prepare` request to produce a version-2 approval. The result secret is never printed. Native execution requires this version; legacy version-1 envelopes support only the earlier internal preparation path.
+- `create-result-key` input: `{releaseId, recipient}` using the requester's own result recipient. Save its encrypted custody record privately and durably before delivery, with the existing requester identity backup. Add its `resultKeySHA256` to the `prepare` request. The configured market path produces a version-3 approval containing both result-key and launch-configuration commitments; historical unconfigured checks produce version 2. The result secret is never printed. The retained operating entry requires version 3. Legacy version-1 envelopes support only the earlier internal preparation path.
 - `seal` input: `{approval: {request, requesterSignature}, token}`. `token` is the Trustee EAR. Successful output reports `keyWrapped: true`, `transmitted: false`, `executionAuthorized: false` and includes the encrypted envelope. It contains no raw identity key.
 - `inspect` input: `{releaseId}`. Retrieves the original encrypted journal record after an interrupted caller. It does not renew expiry or create a new release.
 
@@ -72,9 +74,30 @@ Automated integration checks use actual age packages and requester recovery, act
 
 The JOSE implementation is the pinned [jose library](https://github.com/panva/jose/tree/v6.2.12); its [compact JWE API](https://github.com/panva/jose/blob/v6.2.12/docs/jwe/compact/encrypt/classes/CompactEncrypt.md) supplies the standard encryption construction.
 
+## Configuration-bound approval
+
+Approval v3 adds `configurationSHA256` to the exact EIP-712 fields and uses domain
+version `3`. It requires initialized assignment v2 and a fresh result-key
+commitment. The complete configuration is hashed with sorted compact JSON and
+SHA-256; the hash includes network/RPC pins, the policy template, runtime and tool
+hashes, resource/service settings, guest paths, bootstrap, transport and validity.
+
+The requester recomputes this hash from its own retained configuration and derives
+the concrete appraisal policy from the same assignment. It refuses mismatched
+booking/service/runtime data or a different funding network before local custody
+opens. The measured guest and session relay require the same configuration field
+and version. The encrypted receipt is bound to the entire approval digest, and
+durable result selection and browser recovery preserve that version. A separately
+signed replacement configuration is a different session and cannot authenticate
+an older receipt. Historical v2 recovery remains available for its own records.
+
+The current launch signer still needs replacement with bilateral requester/provider
+consent. These bindings do not establish hardware admission or make a host-chosen
+measurement trustworthy.
+
 ## Authenticated private result return
 
-Each version-2 approval commits to a fresh, random 256-bit result secret, separate
+Each version-2 or version-3 approval commits to a fresh, random 256-bit result secret, separate
 from the workload input key. The requester first encrypts this secret into an age
 custody record for its own recipient, using the pinned [age TypeScript
 implementation](https://github.com/FiloSottile/typage). Losing that custody record
@@ -119,7 +142,7 @@ synthetic appraisal and disposable custody; it does not establish live hardware.
 
 ## Requester receipt recovery and approved attempts
 
-The requester-local `ResultInbox` stores the selected signed version-2 approval
+The requester-local `ResultInbox` stores the selected signed version-2 or version-3 approval
 for each order, encrypted package, task and rank. Select it from the requester's
 own delivery journal before handing work to the guest. Never let an incoming
 server response select an expected approval. The SQLite database fixes its chain,
@@ -236,7 +259,7 @@ as paid jobs or establish confidentiality from a real worker operator.
 
 `compute/result_transport.mjs` connects an existing protected guest session to a
 requester through bounded binary frames. It sends public evidence, accepts the
-requester's encrypted version-2 delivery, and streams the encrypted result receipt
+requester's encrypted version-2 or version-3 delivery, and streams the encrypted result receipt
 and age ciphertext. It never transports local file paths, requester custody files,
 identity secrets, content keys, private receipts or decrypted outputs. Relay
 operators can still observe public commitments, message timing and ciphertext sizes.

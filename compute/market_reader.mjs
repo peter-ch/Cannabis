@@ -66,7 +66,8 @@ async function snapshot(options, inspect, clock, selection = {}) {
       marketCodeHash: options.marketCodeHash, genesisHash: options.genesisHash,
       [mode === 'latest' ? 'headBlock' : 'finalizedBlock']: { number: Number(BigInt(block.number)), hash: block.hash, timestamp: Number(BigInt(block.timestamp)) },
       ...value, executionAuthorized: false, keyReleaseAuthorized: false,
-      note: 'RPC-reported finalized state, not a local consensus proof or physical capacity attestation.' });
+      finality: mode==='latest'?'rpc-latest':'rpc-finalized',
+      note: 'RPC-reported '+(mode==='latest'?'latest-head':'finalized')+' state, not a local consensus proof or physical capacity attestation.' });
   } finally { provider.destroy(); }
 }
 

@@ -15,6 +15,7 @@ export const approvalTypes={JobKeyDelivery:[
   ['attempt','uint32'],['rank','uint32'],['worldSize','uint32'],['notBefore','uint64'],['expiresAt','uint64'],
   ['resultKeySHA256','bytes32']
 ].map(([name,type])=>({name,type}))};
+export const approvalTypesV3={JobKeyDelivery:[...approvalTypes.JobKeyDelivery,{name:'configurationSHA256',type:'bytes32'}]};
 const enc=new TextEncoder(),utf8=new TextDecoder('utf-8',{fatal:true});
 const requireValue=(test,message='Recovery does not match the requester-approved execution')=>{if(!test)throw Error(message);};
 const fields=(v,names)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join()===names.slice().sort().join();
@@ -41,15 +42,15 @@ export async function validateRecoveryBundle(input) {
   const slots=[];
   for(const entry of bundle.entries) {
     requireValue(fields(entry,['approval','recipient','custody','envelope']));
-    const p=entry.approval,d=p?.domain,v=p?.value;
+    const p=entry.approval,d=p?.domain,v=p?.value,types=d?.version==='3'?approvalTypesV3:approvalTypes;
     requireValue(fields(p,['domain','value','digest','requester','jobId','requesterSignature'])&&
-      fields(d,['name','version','chainId','verifyingContract'])&&d.name==='Cannabis confidential key delivery'&&d.version==='2'&&
+      fields(d,['name','version','chainId','verifyingContract'])&&d.name==='Cannabis confidential key delivery'&&['2','3'].includes(d.version)&&
       Number(d.chainId)===c.chainId&&getAddress(d.verifyingContract)===c.escrow&&getAddress(p.requester)===c.requester&&
-      fields(v,approvalTypes.JobKeyDelivery.map(f=>f.name))&&/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(p.jobId)&&boundedJSON(p,16384));
-    for(const {name,type} of approvalTypes.JobKeyDelivery)if(type==='bytes32')requireValue(b32(v[name]));
+      fields(v,types.JobKeyDelivery.map(f=>f.name))&&/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(p.jobId)&&boundedJSON(p,16384));
+    for(const {name,type} of types.JobKeyDelivery)if(type==='bytes32')requireValue(b32(v[name]));
     requireValue(recipient(v.inputRecipient)&&recipient(entry.recipient)&&integer(v.attempt,1,1000000)&&integer(v.worldSize,1,100000)&&
       integer(v.rank,0,v.worldSize-1)&&integer(v.notBefore,1,Number.MAX_SAFE_INTEGER)&&integer(v.expiresAt,v.notBefore+1,Number.MAX_SAFE_INTEGER));
-    requireValue(TypedDataEncoder.hash(d,approvalTypes,v)===p.digest&&verifyTypedData(d,approvalTypes,v,p.requesterSignature)===c.requester);
+    requireValue(TypedDataEncoder.hash(d,types,v)===p.digest&&verifyTypedData(d,types,v,p.requesterSignature)===c.requester);
     requireValue((jobId??p.jobId)===p.jobId&&(packageHash??v.packageSHA256)===v.packageSHA256,'Select a recovery export for one job and package');
     jobId=p.jobId;packageHash=v.packageSHA256;
     const slot=await sha256(enc.encode(JSON.stringify([v.orderId,v.packageSHA256,v.taskSHA256,v.rank])));

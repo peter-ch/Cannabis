@@ -7,19 +7,20 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, createHash } from 'node:crypto';
 import { Wallet, TypedDataEncoder } from 'ethers';
 import { Encrypter, generateIdentity, identityToRecipient } from 'age-encryption';
-import { deliveryTypesV2 } from '../compute/key_delivery.mjs';
+import { deliveryApprovalTypes } from '../compute/key_delivery.mjs';
 import { resultKeyCommitment } from '../compute/result_keys.mjs';
 import { sealResultDelivery } from '../compute/result_delivery.mjs';
 import { ResultInbox } from '../compute/result_inbox.mjs';
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
-async function fixture(t,limits) {
+async function fixture(t,limits,version='2') {
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'cannabis-inbox-'));
   const file=path.join(directory,'inbox.sqlite'),wallet=Wallet.createRandom();
   const recipient=await identityToRecipient(await generateIdentity());
   const context={chainId:31337,escrow:'0x'+'11'.repeat(20),requester:wallet.address};
-  const domain={name:'Cannabis confidential key delivery',version:'2',chainId:context.chainId,verifyingContract:context.escrow};
+  const types=deliveryApprovalTypes(version);
+  const domain={name:'Cannabis confidential key delivery',version,chainId:context.chainId,verifyingContract:context.escrow};
   const opened=new Set(),keys=[];
   const connect=()=>{const db=new ResultInbox(file,context,limits);opened.add(db);return db;};
   const close=db=>{db.close();opened.delete(db);};
@@ -28,13 +29,13 @@ async function fixture(t,limits) {
     assert.ok(path.basename(directory).startsWith('cannabis-inbox-'));fs.rmSync(directory,{recursive:true,force:true});});
   async function record(attempt=1,changes={}) {
     const key=randomBytes(32);keys.push(key);
-    const value=Object.fromEntries(deliveryTypesV2.JobKeyDelivery.map(({name,type})=>[name,type==='bytes32'?h(3):type==='string'?recipient:1]));
+    const value=Object.fromEntries(types.JobKeyDelivery.map(({name,type})=>[name,type==='bytes32'?h(3):type==='string'?recipient:1]));
     Object.assign(value,{releaseId:h(attempt+10),nonce:h(attempt+20),attempt,rank:0,worldSize:1,
       resultKeySHA256:resultKeyCommitment(key),notBefore:1000,expiresAt:1060},changes);
-    const digest=TypedDataEncoder.hash(domain,deliveryTypesV2,value);
+    const digest=TypedDataEncoder.hash(domain,types,value);
     const expectedApproval={domain,value,digest,requester:wallet.address,jobId:'owned-inbox-job',
-      requesterSignature:await wallet.signTypedData(domain,deliveryTypesV2,value)};
-    const journal={schema:'cannabis.key-delivery.record.v2',keyWrapped:true,releaseId:value.releaseId,approvalDigest:digest,expectedApproval};
+      requesterSignature:await wallet.signTypedData(domain,types,value)};
+    const journal={schema:'cannabis.key-delivery.record.v'+version,keyWrapped:true,releaseId:value.releaseId,approvalDigest:digest,expectedApproval};
     const receipt={schema:'cannabis.result.v1',jobId:expectedApproval.jobId,taskId:'private-task-name',packageSHA256:value.packageSHA256.slice(2),
       attempt,rank:value.rank,worldSize:value.worldSize,recipient,ciphertextSHA256:'ab'.repeat(32),ciphertextBytes:500,
       files:[{name:'private-result.txt',sha256:'cd'.repeat(32),bytes:20}]};
@@ -91,6 +92,20 @@ test('requester inbox survives restart, keeps only encrypted receipts and treats
       assert.equal(raw.includes(Buffer.from(forbidden)),false);
     assert.equal(raw.includes(r.key),false);
   }
+});
+
+test('v3 inbox retains the signed configuration through restart and refuses mismatched record versions',async t=>{
+  const f=await fixture(t,undefined,'3'),r=await f.record();let db=f.connect();
+  for(const alter of [j=>j.schema='cannabis.key-delivery.record.v2',j=>j.expectedApproval.domain.version='2',
+    j=>delete j.expectedApproval.value.configurationSHA256,j=>j.expectedApproval.value.configurationSHA256=h(99)]) {
+    const changed=structuredClone(r.journal);alter(changed);
+    assert.throws(()=>db.activate(changed,{resultRecipient:f.recipient}));
+  }
+  db.activate(r.journal,{resultRecipient:f.recipient});await db.receive(r.digest,r.envelope,r.load);
+  f.close(db);db=f.connect();
+  assert.deepEqual((await db.recover(r.digest,r.load)).receipt,r.receipt);
+  const saved=db.useCurrent([{approvalDigest:r.digest,receiptSHA256:db.inspect(r.digest).receiptSHA256}],values=>values[0]);
+  assert.equal(saved.domain.version,'3');assert.equal(saved.value.configurationSHA256,r.expectedApproval.value.configurationSHA256);
 });
 
 test('inbox rejects foreign context, modified approvals and unsigned attempt selection',async t=>{

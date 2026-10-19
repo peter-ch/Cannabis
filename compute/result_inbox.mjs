@@ -4,7 +4,7 @@
 import { openDurableDatabase } from './sqlite_runtime.mjs';
 import { createHash } from 'node:crypto';
 import { TypedDataEncoder, getAddress, verifyTypedData, ZeroAddress } from 'ethers';
-import { deliveryTypesV2 } from './key_delivery.mjs';
+import { deliveryApprovalTypes } from './key_delivery.mjs';
 import { openResultDelivery } from './result_delivery.mjs';
 import { inspectResultKeyCustody } from './result_keys.mjs';
 
@@ -20,23 +20,23 @@ function contextValue(value) {
   return result;
 }
 function signedApproval(record,context) {
-  const p=record?.expectedApproval,d=p?.domain,v=p?.value;
-  if(record?.schema!=='cannabis.key-delivery.record.v2'||record.keyWrapped!==true||!d||!v||
+  const p=record?.expectedApproval,d=p?.domain,v=p?.value,types=deliveryApprovalTypes(d?.version);
+  if(record?.schema!=='cannabis.key-delivery.record.v'+d.version||record.keyWrapped!==true||!d||!v||
     Object.keys(d).sort().join()!=='chainId,name,verifyingContract,version'||
-    d.name!=='Cannabis confidential key delivery'||d.version!=='2'||Number(d.chainId)!==context.chainId||
+    d.name!=='Cannabis confidential key delivery'||!['2','3'].includes(d.version)||Number(d.chainId)!==context.chainId||
     getAddress(d.verifyingContract)!==context.escrow||getAddress(p.requester)!==context.requester||
-    Object.keys(v).sort().join()!==deliveryTypesV2.JobKeyDelivery.map(f=>f.name).sort().join()||
+    Object.keys(v).sort().join()!==types.JobKeyDelivery.map(f=>f.name).sort().join()||
     typeof p.jobId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(p.jobId))fail('Delivery does not belong to this requester inbox');
-  for(const {name,type} of deliveryTypesV2.JobKeyDelivery)if(type==='bytes32'&&!bytes32(v[name]))fail('Invalid approval commitment');
+  for(const {name,type} of types.JobKeyDelivery)if(type==='bytes32'&&!bytes32(v[name]))fail('Invalid approval commitment');
   if(!recipient(v.inputRecipient)||!integer(v.attempt,1,1000000)||!integer(v.worldSize,1,100000)||!integer(v.rank,0,v.worldSize-1)||
     !integer(v.notBefore,1,Number.MAX_SAFE_INTEGER)||!integer(v.expiresAt,v.notBefore+1,Number.MAX_SAFE_INTEGER))fail('Invalid approved attempt');
-  const digest=TypedDataEncoder.hash(d,deliveryTypesV2,v);
+  const digest=TypedDataEncoder.hash(d,types,v);
   if(digest!==p.digest||record.approvalDigest!==digest||record.releaseId!==v.releaseId||
-    verifyTypedData(d,deliveryTypesV2,v,p.requesterSignature)!==context.requester)fail('Requester approval signature differs');
+    verifyTypedData(d,types,v,p.requesterSignature)!==context.requester)fail('Requester approval signature differs');
   // Persist only bounded public approval context, not the guest key envelope,
   // owner identity, result key or decrypted receipt/private output metadata.
   return {domain:{name:d.name,version:d.version,chainId:context.chainId,verifyingContract:context.escrow},
-    value:Object.fromEntries(deliveryTypesV2.JobKeyDelivery.map(({name})=>[name,v[name]])),digest,
+    value:Object.fromEntries(types.JobKeyDelivery.map(({name})=>[name,v[name]])),digest,
     requester:context.requester,jobId:p.jobId,requesterSignature:p.requesterSignature};
 }
 function slotFor(expected) {

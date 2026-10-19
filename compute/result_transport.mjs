@@ -72,7 +72,7 @@ export const resultStoredTypes={ResultStored:[
   {name:'ciphertextSHA256',type:'bytes32'},{name:'ciphertextBytes',type:'uint64'}
 ]};
 export function resultStoredPayload(expected,{envelopeSHA256,ciphertextSHA256,ciphertextBytes}) {
-  if(expected?.domain?.name!=='Cannabis confidential key delivery'||expected.domain.version!=='2'||
+  if(expected?.domain?.name!=='Cannabis confidential key delivery'||!['2','3'].includes(expected.domain.version)||
     typeof expected.digest!=='string'||!/^0x[0-9a-f]{64}$/.test(expected.digest)||
     !digest(envelopeSHA256)||!digest(ciphertextSHA256)||!integer(ciphertextBytes,1,1024**4))throw failure();
   const domain={name:'Cannabis encrypted result stored',version:'1',chainId:expected.domain.chainId,
@@ -184,6 +184,6 @@ export async function receiveGuestEvidence(wire) {
   return response.evidence;
 }
 export async function sendGuestExecution(wire,record) {
-  if(record?.schema!=='cannabis.key-delivery.record.v2'||!record.expectedApproval||typeof record.envelope!=='string')throw failure();
+  if(!['2','3'].includes(record?.expectedApproval?.domain?.version)||record.schema!=='cannabis.key-delivery.record.v'+record.expectedApproval.domain.version||!record.expectedApproval||typeof record.envelope!=='string')throw failure();
   return wire.writeJSON({protocol,operation:'execute',envelope:record.envelope,expected:record.expectedApproval});
 }

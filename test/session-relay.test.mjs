@@ -11,7 +11,7 @@ import { TypedDataEncoder } from 'ethers';
 import { Encrypter } from 'age-encryption';
 import { guestInitialization } from '../compute/guest_initialization.mjs';
 import { validateAttestationPolicy } from '../compute/attestation.mjs';
-import { deliveryTypesV2 } from '../compute/key_delivery.mjs';
+import { deliveryApprovalTypes } from '../compute/key_delivery.mjs';
 import { recoverResultKey } from '../compute/result_keys.mjs';
 import { sealResultDelivery } from '../compute/result_delivery.mjs';
 import { ResultInbox } from '../compute/result_inbox.mjs';
@@ -25,17 +25,19 @@ import { approvedBrowserFixture } from './fixtures/approved-browser.mjs';
 import { openApprovedResults } from '../web/work-approvals.js';
 const hash=v=>createHash('sha256').update(v).digest('hex'),deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
-async function fixture(t) {
+async function fixture(t,version='2') {
+  const types=deliveryApprovalTypes(version);
   const root=fs.realpathSync(os.tmpdir()),dir=fs.mkdtempSync(path.join(root,'cannabis-session-relay-'));
   const base=await approvedBrowserFixture(),enc=new Encrypter();enc.addRecipient(base.receipt.recipient);
   const inputBytes=Buffer.from(await enc.encrypt(randomBytes(140000))),packageSHA256=hash(inputBytes);
-  const f=await approvedBrowserFixture({owner:base.owner,identity:base.identity,repetitions:6000,packageSHA256}),entry=f.bundle.entries[0],initialValue=entry.approval.value;
+  const f=await approvedBrowserFixture({owner:base.owner,identity:base.identity,repetitions:6000,packageSHA256,version}),entry=f.bundle.entries[0],initialValue=entry.approval.value;
   const input=path.join(dir,'input.age'),guestInput=path.join(dir,'guest-input.age'),guestResult=path.join(dir,'guest-result.age'),destination=path.join(dir,'requester-result.age');
   fs.writeFileSync(input,inputBytes);fs.writeFileSync(guestResult,f.encrypted[0]);const spoolDirectory=path.join(dir,'spool');fs.mkdirSync(spoolDirectory);
   const binding={chainId:31337,escrow:f.bundle.context.escrow,
     ...Object.fromEntries(['orderId','leaseDigest','reservationId','attempt','rank','worldSize'].map(k=>[k,initialValue[k]])),
     ...Object.fromEntries(['packageSHA256','policySHA256','runtimeSHA256','taskSHA256'].map(k=>[k,initialValue[k].slice(2)])),acceleratorClass:'cpu'};
   const initialization={schema:'cannabis.guest-initialization.v1',tee:'snp',requester:f.owner.address,jobId:f.spec.id,binding};
+  if(version==='3'){initialization.schema='cannabis.guest-initialization.v2';binding.configurationSHA256=initialValue.configurationSHA256;}
   const now=Math.floor(Date.now()/1000),verifier=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
   const policy={schema:'cannabis.attestation.trustee-policy.v1',issuer:'Owned protocol fixture',signingJwk:verifier.publicKey.export({format:'jwk'}),
     verifierBuild:'Synthetic protocol only',appraisalPolicyId:'owned-fixture',maxTokenAgeSeconds:90,maxTokenLifetimeSeconds:120,challengeTTLSeconds:90,tee:'snp',
@@ -75,16 +77,16 @@ async function fixture(t) {
     assert.equal(received.evidence,evidence.evidence);const value={...initialValue,nonce:'0x'+challenge.nonce,
       attestationPolicySHA256:'0x'+challenge.attestationPolicySHA256,channelKeySHA256:'0x'+hash(canonical(received.channelJwk)),notBefore:now,expiresAt:now+55};
     const domain=entry.approval.domain;
-    expected={domain,value,digest:TypedDataEncoder.hash(domain,deliveryTypesV2,value),requester:f.owner.address,jobId:f.spec.id,
-      requesterSignature:await f.owner.signTypedData(domain,deliveryTypesV2,value)};
+    expected={domain,value,digest:TypedDataEncoder.hash(domain,types,value),requester:f.owner.address,jobId:f.spec.id,
+      requesterSignature:await f.owner.signTypedData(domain,types,value)};
     const key=await recoverResultKey(entry.custody,f.identity,{releaseId:value.releaseId,recipient:entry.recipient,resultKeySHA256:value.resultKeySHA256});
     try{resultEnvelope=await sealResultDelivery(f.receipt,key,expected);}finally{key.fill(0);}
     f.bundle.entries[0]={...entry,approval:expected,envelope:resultEnvelope};
-    inbox.activate({schema:'cannabis.key-delivery.record.v2',keyWrapped:true,approvalDigest:expected.digest,releaseId:value.releaseId,expectedApproval:expected},
+    inbox.activate({schema:'cannabis.key-delivery.record.v'+version,keyWrapped:true,approvalDigest:expected.digest,releaseId:value.releaseId,expectedApproval:expected},
       {resultRecipient:entry.recipient});
     const envelope=await new CompactEncrypt(Buffer.from('OWNED WRAPPED FIXTURE INPUT KEY')).setProtectedHeader({alg:'ECDH-ES+A256KW',enc:'A256GCM',
       typ:'cannabis-job-key+jwe',kid:await calculateJwkThumbprint(received.channelJwk),'cannabis-approval':expected.digest}).encrypt(channel.publicKey);
-    return {schema:'cannabis.key-delivery.record.v2',expectedApproval:expected,envelope};
+    return {schema:'cannabis.key-delivery.record.v'+version,expectedApproval:expected,envelope};
   };
   const reserveResult=({approvalDigest,maxCiphertextBytes},signal)=>{
     assert.equal(signal.aborted,false);reservations++;
@@ -112,8 +114,20 @@ async function fixture(t) {
 }
 const failed=r=>{for(const item of r)assert.equal(item.status,'rejected');};
 
-test('session preserves input/evidence ordering, sealed execution, role-specific access and requester acknowledgement',async t=>{
-  const f=await fixture(t),results=await f.run();for(const r of results)assert.equal(r.status,'fulfilled',results.map(x=>x.reason?.message).join(' | '));
+test('configuration-bound session refuses downgrade or substitution before execution or relay reservation',async t=>{
+  for(const variant of ['version','configuration']) {
+    const f=await fixture(t,'3');
+    const results=await f.run({}, {changeRecord:r=>{
+      if(variant==='version'){r.schema='cannabis.key-delivery.record.v2';r.expectedApproval.domain.version='2';delete r.expectedApproval.value.configurationSHA256;}
+      else r.expectedApproval.value.configurationSHA256='0x'+'ff'.repeat(32);
+      return r;
+    }});
+    failed(results);assert.equal(f.executions,0);assert.equal(f.reservations,0);
+  }
+});
+
+for(const version of ['2','3'])test(`v${version} session preserves input/evidence ordering, sealed execution, role-specific access and requester acknowledgement`,async t=>{
+  const f=await fixture(t,version),results=await f.run();for(const r of results)assert.equal(r.status,'fulfilled',results.map(x=>x.reason?.message).join(' | '));
   assert.equal(f.executions,1);assert.equal(f.reservations,1);assert.equal(results[0].value.requesterAcknowledgedStorage,true);
   assert.equal(results[1].value.hardwareValidated,false);assert.equal(results[1].value.guestCompletionObserved,false);
   assert.equal(results[2].value.paymentAuthorized,false);

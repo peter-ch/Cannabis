@@ -64,7 +64,9 @@ export function validateAttestationPolicy(policy) {
 }
 
 export function validateAttestationBinding(b) {
-  exact(b, ['chainId', 'escrow', 'orderId', 'leaseDigest', 'reservationId', 'packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass']);
+  const configured=Object.hasOwn(b??{},'configurationSHA256');
+  exact(b, ['chainId', 'escrow', 'orderId', 'leaseDigest', 'reservationId', 'packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass',...(configured?['configurationSHA256']:[])]);
+  if(configured)bytes32(b.configurationSHA256);
   integer(b.chainId, 1, Number.MAX_SAFE_INTEGER); address(b.escrow);
   for (const k of ['orderId', 'leaseDigest', 'reservationId']) bytes32(b[k]);
   for (const k of ['packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256']) hex(b[k], 32);
@@ -95,6 +97,14 @@ export function marketAttestationBinding(proof, context, bookingId, run, now = s
   const binding = { chainId: context.chainId, escrow: lease.escrow, orderId: lease.orderId,
     leaseDigest: lease.digest, reservationId: bookingId, packageSHA256: lease.job.packageSHA256, policySHA256: lease.job.policySHA256, ...run };
   validateAttestationBinding(binding); return binding;
+}
+
+// The caller supplies the hash of its independently reviewed configuration.
+// Requester key approval later recomputes it from that full local configuration.
+export function configuredMarketAttestationBinding(proof,context,bookingId,run,configurationSHA256,now=seconds()) {
+  bytes32(configurationSHA256);
+  const binding={...marketAttestationBinding(proof,context,bookingId,run,now),configurationSHA256};
+  validateAttestationBinding(binding);return binding;
 }
 
 function validateChallenge(c, policyDigest, policy, now) {

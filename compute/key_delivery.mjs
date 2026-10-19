@@ -6,20 +6,28 @@ import { fileURLToPath } from 'node:url';
 import { CompactEncrypt, compactDecrypt, importJWK, calculateJwkThumbprint } from 'jose';
 import { TypedDataEncoder, getAddress, verifyTypedData, ZeroAddress } from 'ethers';
 import { inspectLease } from './leases.mjs';
-import { leaseAttestationBinding, marketAttestationBinding, trusteeRuntimeData, verifyTrusteeResult } from './attestation.mjs';
+import { leaseAttestationBinding, marketAttestationBinding, configuredMarketAttestationBinding, trusteeRuntimeData, verifyTrusteeResult } from './attestation.mjs';
 import { verifyMarketLeaseProof, readMarketLeaseState } from './market_lease.mjs';
 import { readCurrentEscrow, readFinalizedEscrow } from './finality.mjs';
 import { resultKeyCommitment } from './result_keys.mjs';
+import { validateGuestConfiguration } from './guest_configuration.mjs';
+import { guestInitialization } from './guest_initialization.mjs';
+import { nativeServiceCommitment } from './guest_execution.mjs';
 
 const hash = data => createHash('sha256').update(data).digest('hex');
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 const recipient = value => typeof value === 'string' && /^age1[0-9a-z]{58}$/.test(value);
+const marketSource=source=>['cannabis.market-requester.v1','cannabis.market-requester.v2'].includes(source?.schema);
 function agreement(source, leaseId) {
-  if (source?.schema !== 'cannabis.market-requester.v1') return inspectLease(source, leaseId);
-  exact(source, ['schema', 'context', 'proof']);
+  if (!marketSource(source)) return inspectLease(source, leaseId);
+  const configured=source.schema==='cannabis.market-requester.v2';
+  exact(source, ['schema', 'context', 'proof',...(configured?['configuration']:[])]);
+  const checked=configured?validateGuestConfiguration(source.configuration):{};
+  if(configured&&(checked.configuration.schema!=='cannabis.guest-launch-configuration.v3'||
+    canonical(checked.configuration.context)!==canonical(source.context)))throw Error('Require a locally reviewed market launch configuration');
   const lease = verifyMarketLeaseProof(source.proof, source.context);
   if (lease.digest !== leaseId) throw Error('Requester market group differs from approval');
-  return { ...lease, leaseId: lease.digest, agreement: { request: { job: lease.job } },
+  return { ...lease, ...checked, leaseId: lease.digest, agreement: { request: { job: lease.job } },
     reservations: lease.reservations.map(r => ({ ...r, id: r.reservationId })) };
 }
 
@@ -68,6 +76,11 @@ export const deliveryTypes = { JobKeyDelivery: [
   ['attempt', 'uint32'], ['rank', 'uint32'], ['worldSize', 'uint32'], ['notBefore', 'uint64'], ['expiresAt', 'uint64']
 ].map(([name, type]) => ({ name, type })) };
 export const deliveryTypesV2={JobKeyDelivery:[...deliveryTypes.JobKeyDelivery,{name:'resultKeySHA256',type:'bytes32'}]};
+export const deliveryTypesV3={JobKeyDelivery:[...deliveryTypesV2.JobKeyDelivery,{name:'configurationSHA256',type:'bytes32'}]};
+export function deliveryApprovalTypes(version) {
+  if(version==='1')return deliveryTypes;if(version==='2')return deliveryTypesV2;if(version==='3')return deliveryTypesV3;
+  throw Error('Unsupported key-delivery approval version');
+}
 
 function custody(descriptor, job) {
   if (!descriptor || descriptor.schema !== 'cannabis.package.v2' || descriptor.id !== job.id || descriptor.ciphertextSHA256 !== job.packageSHA256 || descriptor.policySHA256 !== job.policySHA256 || !recipient(descriptor.recipient)) throw Error('Key descriptor differs from the funded workload');
@@ -89,9 +102,27 @@ export function keyDeliveryPayload(capacity, attestations, request, now = nowSec
   const reservation = lease.reservations.find(r => r.id === b.reservationId);
   if (!reservation) throw Error('Challenge does not reference this funded reservation');
   const run = Object.fromEntries(['runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass'].map(k => [k, b[k]]));
-  const expected = capacity?.schema === 'cannabis.market-requester.v1'
-    ? marketAttestationBinding(capacity.proof, capacity.context, b.reservationId, run, now)
-    : leaseAttestationBinding(capacity, request.leaseId, b.reservationId, run, now);
+  const configured=!!lease.configuration;
+  if(configured!==Object.hasOwn(b,'configurationSHA256')||configured&&!withResult)
+    throw Error('Configuration-bound delivery requires its reviewed configuration and result channel');
+  const expected = configured
+    ? configuredMarketAttestationBinding(capacity.proof,capacity.context,b.reservationId,run,lease.configurationSHA256,now)
+    : marketSource(capacity)?marketAttestationBinding(capacity.proof,capacity.context,b.reservationId,run,now)
+    : leaseAttestationBinding(capacity,request.leaseId,b.reservationId,run,now);
+  if(configured) {
+    const configuration=lease.configuration,service=nativeServiceCommitment(configuration.execution);
+    if(getAddress(configuration.provider)!==reservation.provider||configuration.resourceId!==reservation.resourceId||
+      service.serviceSHA256!==reservation.serviceSHA256||service.units!==reservation.units||
+      configuration.execution.profile.runtime.digestSHA256!==b.runtimeSHA256||
+      getAddress(configuration.network.escrow)!==lease.escrow||configuration.validFrom>reservation.start||
+      configuration.validUntil<reservation.end||now<configuration.validFrom||now>=configuration.validUntil)
+      throw Error('Reviewed launch configuration differs from the booked execution');
+    const initialization={schema:'cannabis.guest-initialization.v2',tee:configuration.attestationPolicyTemplate.tee,
+      requester:lease.requester,jobId:lease.job.id,binding:expected};
+    const policy=structuredClone(configuration.attestationPolicyTemplate);
+    policy.measurements.initData=guestInitialization(initialization).digest;
+    if(canonical(policy)!==canonical(attestations.policy))throw Error('Requester appraisal policy differs from reviewed configuration and assignment');
+  }
   if (canonical(expected) !== canonical(b)) throw Error('Challenge and funded lease differ');
   const c = custody(request.descriptor, lease.agreement.request.job);
   trusteeRuntimeData(challenge, request.channelJwk); // Strict public-key schema; no private key accepted.
@@ -105,9 +136,10 @@ export function keyDeliveryPayload(capacity, attestations, request, now = nowSec
     inputRecipient: request.descriptor.recipient, channelKeySHA256: '0x' + hash(canonical(request.channelJwk)),
     nonce: '0x' + challenge.nonce, attempt: b.attempt, rank: b.rank, worldSize: b.worldSize,
     notBefore: request.notBefore, expiresAt: request.expiresAt,
-    ...(withResult?{resultKeySHA256:request.resultKeySHA256}:{})
+    ...(withResult?{resultKeySHA256:request.resultKeySHA256}:{}),
+    ...(configured?{configurationSHA256:lease.configurationSHA256}:{})
   };
-  const d = domain(b,withResult?'2':'1'),types=withResult?deliveryTypesV2:deliveryTypes;
+  const d=domain(b,configured?'3':withResult?'2':'1'),types=deliveryApprovalTypes(d.version);
   return { domain: d, types, value, digest: TypedDataEncoder.hash(d, types, value),
     requester: getAddress(lease.agreement.request.job.requester), provider: reservation.provider,
     jobId: lease.agreement.request.job.id, leaseId: lease.leaseId,
@@ -151,6 +183,7 @@ function initializeJournal(attestations) {
 // against the approved descriptor/commitments, never accept a worker-supplied key.
 export async function sealJobKeyDelivery(capacity, attestations, signed, token, network, loadJobKey, { clock = nowSeconds, ageKeygen, loadResultKey } = {}) {
   signed = structuredClone(signed); network = structuredClone(network);
+  if(marketSource(capacity))capacity=structuredClone(capacity);
   exact(signed, ['request', 'requesterSignature']);
   initializeJournal(attestations);
   const request = signed.request, payload = keyDeliveryPayload(capacity, attestations, request, clock());
@@ -159,8 +192,9 @@ export async function sealJobKeyDelivery(capacity, attestations, signed, token, 
   if (attestations.db.prepare('SELECT 1 FROM key_deliveries WHERE releaseId=? OR (leaseDigest=? AND taskSHA256=? AND attempt=? AND rank=?)').get(payload.value.releaseId, payload.value.leaseDigest, payload.value.taskSHA256, payload.value.attempt, payload.value.rank)) throw Error('A key delivery already exists for this release or rank attempt');
   const challenge = attestations.pending(request.nonce), lease = agreement(capacity, request.leaseId);
   if (BigInt(network.chainId) !== BigInt(payload.domain.chainId) || getAddress(network.escrow) !== getAddress(payload.domain.verifyingContract)) throw Error('Key-delivery network mismatch');
+  if(lease.configuration&&canonical(network)!==canonical(lease.configuration.network))throw Error('Funding network differs from requester-reviewed launch configuration');
   const appraisal = await verifyTrusteeResult(token, attestations.policy, challenge, request.channelJwk, clock());
-  const marketBased = capacity?.schema === 'cannabis.market-requester.v1';
+  const marketBased=marketSource(capacity);
   const finalized = marketBased ? await readMarketLeaseState(lease.proof, network, clock)
     : await readFinalizedEscrow({ ...network, orderId: payload.value.orderId }, clock);
   if (!marketBased) activeSnapshot(finalized, lease, network);
@@ -180,7 +214,7 @@ export async function sealJobKeyDelivery(capacity, attestations, signed, token, 
     deriveInputRecipient(recovered.identity, ageKeygen) !== payload.value.inputRecipient) throw Error('Recovered key does not belong to this approved job');
   let envelope,resultKey,cleartext;
   try {
-    if(payload.domain.version==='2') {
+    if(['2','3'].includes(payload.domain.version)) {
       if(typeof loadResultKey!=='function')throw Error('Require requester-held result-key custody');
       resultKey=await loadResultKey({releaseId:request.releaseId,recipient:recovered.resultRecipient,resultKeySHA256:payload.value.resultKeySHA256});
       if(resultKeyCommitment(resultKey)!==payload.value.resultKeySHA256)throw Error('Result key differs from signed approval');
@@ -210,7 +244,7 @@ export async function sealJobKeyDelivery(capacity, attestations, signed, token, 
       envelope, envelopeSHA256: hash(envelope), attestationTokenSHA256: appraisal.tokenSHA256,
       finalizedBlock: finalized.finalizedBlock, observedHead: finalHead.headBlock,
       keyWrapped: true, transmitted: false, executionAuthorized: false,
-      ...(payload.domain.version==='2'?{expectedApproval:{...structuredClone(payload),requesterSignature:signed.requesterSignature}}:{}) };
+      ...(['2','3'].includes(payload.domain.version)?{expectedApproval:{...structuredClone(payload),requesterSignature:signed.requesterSignature}}:{}) };
     attestations.db.prepare('INSERT INTO key_deliveries VALUES (?,?,?,?,?,?,?,?)').run(request.releaseId, payload.digest, request.nonce,
       payload.value.leaseDigest, payload.value.taskSHA256, payload.value.attempt, payload.value.rank, JSON.stringify(record));
     const consumed = attestations.db.prepare('UPDATE attestation_challenges SET consumed=1,tokenSHA256=? WHERE nonce=? AND consumed=0').run(appraisal.tokenSHA256, request.nonce);
@@ -237,15 +271,15 @@ export async function openJobKeyDelivery(envelope, channelPrivateKey, expected, 
   try { decoded = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plaintext)); }
   catch { throw Error('Malformed protected job-key delivery'); }
   finally { plaintext.fill(0); }
-  const withResult=expected?.domain?.version==='2';
-  if(!['1','2'].includes(expected?.domain?.version))throw Error('Unsupported key-delivery approval version');
+  const types=deliveryApprovalTypes(expected?.domain?.version),withResult=['2','3'].includes(expected.domain.version);
+  exact(expected.value,types.JobKeyDelivery.map(f=>f.name));
   exact(decoded, ['schema', 'notAfter', 'approval', 'job',...(withResult?['resultKey']:[])]);
   const a = decoded.approval;
   exact(a, ['domain', 'value', 'requester', 'signature']);
   if (decoded.schema !== 'cannabis.job-key.delivery.v'+expected.domain.version || protectedHeader.typ !== 'cannabis-job-key+jwe' ||
     protectedHeader.kid !== Buffer.from(expected.value.channelKeySHA256.slice(2), 'hex').toString('base64url') ||
     canonical(a.domain) !== canonical(expected.domain) || canonical(a.value) !== canonical(expected.value) || a.requester !== expected.requester) throw Error('Guest key delivery differs from its expected approval');
-  const types=withResult?deliveryTypesV2:deliveryTypes,digest = TypedDataEncoder.hash(a.domain, types, a.value);
+  const digest = TypedDataEncoder.hash(a.domain, types, a.value);
   if (digest !== expected.digest || protectedHeader['cannabis-approval'] !== digest || verifyTypedData(a.domain, types, a.value, a.signature) !== getAddress(expected.requester)) throw Error('Guest requester approval signature mismatch');
   checkWindow({ value: a.value }, clock());
   integer(decoded.notAfter, clock() + 1, a.value.expiresAt);
