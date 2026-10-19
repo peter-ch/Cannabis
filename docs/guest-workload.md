@@ -152,7 +152,11 @@ chain and synthetic appraisal. The requester and guarded guest now run in separa
 processes using the [encrypted streaming handoff](key-delivery.md#encrypted-streaming-handoff),
 with requester recovery, active-attempt checks and a signed storage acknowledgement.
 The requester reconstructs its downloaded copy in a fresh process before separate
-application acceptance and settlement. Fixture setup still creates disposable
+application acceptance and settlement. The outer process now verifies the signed
+launch package before creating the job scope. A changed package is refused before
+allocation; the contained session rechecks the same sealed snapshot. An opaque
+relay watches the guardian and control process while carrying encrypted results.
+Fixture setup still creates disposable
 custody on the same ordinary machine; this does not establish protection from its
 operator, an admitted production launcher or hardware admission. After compiling and installing the pinned
 verification prerequisites, run:

@@ -6,9 +6,22 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
 import { Wallet, ZeroAddress } from 'ethers';
-import { encodeLaunchJSON, readLaunchJSON, validateLaunchAuthorities, launchConfigurationPayload, verifyLaunchConfiguration, prepareGuestLaunch } from '../compute/guest_launch.mjs';
+import { encodeLaunchJSON, readLaunchJSON, parseLaunchSnapshot, validateLaunchAuthorities, launchConfigurationPayload, verifyLaunchConfiguration, prepareGuestLaunch } from '../compute/guest_launch.mjs';
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
+test('retained launch snapshots preserve canonical inputs and reject ambiguous or extra content',()=>{
+  const original={configuration:encodeLaunchJSON({configuration:{name:'Cannabis'},signatures:[]}),
+    initialization:encodeLaunchJSON({schema:'owned'}),request:encodeLaunchJSON({proof:{},challenge:{}})};
+  const parse=value=>parseLaunchSnapshot(Buffer.from(JSON.stringify(value)));
+  assert.deepEqual(parse(original),{signed:{configuration:{name:'Cannabis'},signatures:[]},initialization:{schema:'owned'},request:{proof:{},challenge:{}}});
+  for(const value of [{...original,key:'forbidden'},{...original,configuration:'{"x":1,"x":2}\n'},
+    {...original,initialization:'{}'},{...original,request:null},{...original,initialization:' '.repeat(65537)}])
+    assert.throws(()=>parse(value));
+  const bytes=JSON.stringify(original);
+  assert.throws(()=>parseLaunchSnapshot(Buffer.from(bytes.slice(0,-1)+',"request":"{}\\n"}')));
+  assert.throws(()=>parseLaunchSnapshot(Buffer.from([0xff])));
+  assert.throws(()=>parseLaunchSnapshot(Buffer.alloc(17*1024**2+1)));
+});
 function fixture() {
   const keys=[Wallet.createRandom(),Wallet.createRandom()],pub=generateKeyPairSync('ec',{namedCurve:'prime256v1'}).publicKey.export({format:'jwk'});
   const authorities={schema:'cannabis.guest-launch-authorities.v1',chainId:31337,signers:keys.map(k=>k.address),threshold:2,maxValiditySeconds:3600};

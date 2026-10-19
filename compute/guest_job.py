@@ -17,6 +17,7 @@ from .guest_deadline import ExecutionDeadline, bounded_stage_deadline
 from .guest_guardian import GuardedResources
 from .guest_resources import JobResourceGroup, ResourceLimits, ResourceTreeLimits, ResourceCleanupError
 from .guest_sandbox import _pinned_file
+from .guest_launch_snapshot import validate_snapshot
 
 
 class GuestJobScope:
@@ -40,12 +41,12 @@ class GuestJobScope:
             self.close()
             raise
 
-    def start(self, executable, executable_sha256, script, script_sha256):
+    def start(self, executable, executable_sha256, script, script_sha256, *, launch_fd=None):
         """Start one pinned trusted control program, never a workload command.
 
         These independent pins must come from the measured launch configuration.
-        Script arguments are closed: inherited trusted JSON configuration and all
-        later customer material cross the anonymous stdin/stdout protocol only.
+        Script arguments are closed. A sealed public launch descriptor may be
+        inherited; later customer material crosses anonymous stdin/stdout only.
         The child environment carries only public cgroup/deadline descriptors.
         """
         if self._used or self._closed:
@@ -54,6 +55,7 @@ class GuestJobScope:
         self.assert_alive()
         handles = []
         try:
+            launch_handles = () if launch_fd is None else (validate_snapshot(launch_fd),)
             for name, expected in [(executable, executable_sha256), (script, script_sha256)]:
                 handles.append(_pinned_file(name, expected))
             launcher = Path(__file__).resolve().parents[1] / 'scripts/compute-guest-control.py'
@@ -63,13 +65,14 @@ class GuestJobScope:
                 str(self._control.path), json.dumps(asdict(self._control.limits), separators=(',', ':')),
                 str(handles[0]), str(handles[1])],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                bufsize=0, close_fds=True, pass_fds=handles, start_new_session=True,
+                bufsize=0, close_fds=True, pass_fds=(*handles, *launch_handles), start_new_session=True,
                 env={'PATH': '/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8',
                      'CANNABIS_JOB_CGROUP': str(self.path),
                      'CANNABIS_JOB_CONTROL': str(self._control.path),
                      'CANNABIS_JOB_DEADLINE': repr(self.deadline.monotonic_end),
                      'CANNABIS_JOB_TOTAL': json.dumps(asdict(self._guard.limits), separators=(',', ':')),
-                     'CANNABIS_JOB_CONTROL_LIMITS': json.dumps(asdict(self._control.limits), separators=(',', ':'))})
+                     'CANNABIS_JOB_CONTROL_LIMITS': json.dumps(asdict(self._control.limits), separators=(',', ':')),
+                     **({'CANNABIS_LAUNCH_FD': str(launch_fd)} if launch_fd is not None else {})})
             self._pidfd = os.pidfd_open(self._child.pid)
             self.assert_alive()
             return self._child

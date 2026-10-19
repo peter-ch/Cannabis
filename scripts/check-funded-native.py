@@ -6,12 +6,14 @@ Fixture setup still creates disposable custody. This is not protected hardware,
 a key-free production outer launcher or a real paid job.
 """
 import argparse
+import copy
 import ctypes
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
+import select
 import shutil
 import socket
 import subprocess
@@ -24,9 +26,27 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from compute.client import canonical, task_binding_sha256
 from compute.job_keys import _new_identity, pack_job
-from compute.guest_deadline import ExecutionDeadline
 from compute.guest_job import GuestJobScope
-from compute.guest_resources import ResourceLimits, ResourceTreeLimits
+from compute.guest_launch_snapshot import LaunchSnapshot
+from compute.guest_launcher import authorize_launch, relay_guest
+
+
+def public_launch_frame(fd):
+    until=time.monotonic()+60
+    def read(size):
+        raw=bytearray()
+        while len(raw)<size:
+            remaining=until-time.monotonic()
+            if remaining<=0 or not select.select([fd],[],[],remaining)[0]: raise RuntimeError('Owned launch intake timeout')
+            chunk=os.read(fd,size-len(raw))
+            if not chunk: raise RuntimeError('Owned launch intake ended early')
+            raw.extend(chunk)
+        return raw
+    header=read(5);size=int.from_bytes(header[1:],'big')
+    assert header[0]==0 and 0<size<=256*1024
+    value=json.loads(read(size))
+    assert set(value)=={'authorities','signedConfiguration','initialization','request'}
+    return value
 
 
 def main():
@@ -43,7 +63,7 @@ def main():
     assert libc.unshare(0x20000)==0
     assert libc.mount(None,b'/',None,0x4000|0x40000,None)==0
     assert libc.mount(b'tmpfs',os.fsencode(base),b'tmpfs',2|4,b'size=768m,nr_inodes=35000,mode=0700,noswap')==0
-    chain=None;scope=None;chain_log=None;requester_proc=None
+    chain=None;scope=None;chain_log=None;requester_proc=None;wire_fds=[]
     try:
         (parent/'cgroup.subtree_control').write_text('+cpu +memory +pids')
         tools=base/'tools';tools.mkdir(mode=0o700)
@@ -87,9 +107,8 @@ def main():
             except (OSError,ValueError):pass
             assert time.monotonic()<until,'Owned chain startup timeout'
             time.sleep(0.1)
-        deadline=ExecutionDeadline.from_service_interval(int(time.time())-1,int(time.time())+120)
-        scope=GuestJobScope(parent,ResourceTreeLimits(**profile['total']),ResourceLimits(**profile['control']),deadline=deadline)
-        proc=scope.start(str(tools/'node'),fixture.sha(tools/'node'),str(guest_controller),fixture.sha(guest_controller))
+        to_guest,requester_write=os.pipe();requester_read,from_guest=os.pipe()
+        wire_fds.extend([to_guest,requester_write,requester_read,from_guest])
         request={'rpc':rpc,'artifact':str(ROOT/'artifacts/ComputeEscrow.json'),'descriptor':descriptor,
             'execution':{'profile':profile,'source':{'python':fixture.PYTHON,'rootfs':str(base/'root'),'age':str(tools/'age'),
                 'ciphertext':str(base/'job/workload.age'),'destination':str(base/'result.age')}},
@@ -100,23 +119,46 @@ def main():
             'ageKeygen':str(tools/'age-keygen'),'spec':workload,'assembled':str(base/'assembled'),
             'resultCustody':str(base/'result-key-custody.json'),'resultManifest':str(manifest),
             'resultsCLI':str(ROOT/'scripts/compute-results.mjs'),'resultBase':str(base/'requester-results'),
-            'wireFDs':{'read':proc.stdout.fileno(),'write':proc.stdin.fileno()}}
+            'wireFDs':{'read':requester_read,'write':requester_write}}
         requester_proc=subprocess.Popen([str(tools/'node'),str(controller)],cwd=ROOT,env=env,
-            stdin=subprocess.PIPE,stdout=subprocess.PIPE,pass_fds=(proc.stdout.fileno(),proc.stdin.fileno()))
-        raw,_=requester_proc.communicate(canonical(request),timeout=110)
+            stdin=subprocess.PIPE,stdout=subprocess.PIPE,pass_fds=(requester_read,requester_write))
+        for fd in [requester_read,requester_write]:os.close(fd);wire_fds.remove(fd)
+        requester_proc.stdin.write(canonical(request));requester_proc.stdin.close();requester_proc.stdin=None
+        public=public_launch_frame(to_guest)
+        authority_file=base/'owned-authorities.json';authority_file.write_bytes(canonical(public['authorities'])+b'\n');authority_file.chmod(0o600)
+        verifier=base/'owned-authorize.mjs'
+        verifier.write_text("import { readLaunchJSON, readRetainedLaunch, publicLaunchAdmission } from "+json.dumps((ROOT/'compute/guest_launch.mjs').as_uri())+";\n"
+            +"process.stdout.write(JSON.stringify(publicLaunchAdmission(readRetainedLaunch(readLaunchJSON("+json.dumps(str(authority_file))+",{trusted:true}))))+'\\n');\n")
+        verifier.chmod(0o600)
+        snapshot_args=lambda signed:(canonical(signed)+b'\n',canonical(public['initialization'])+b'\n',canonical(public['request'])+b'\n')
+        altered=copy.deepcopy(public['signedConfiguration']);altered['configuration']['transport']['maxCiphertextBytes']+=1
+        with LaunchSnapshot(*snapshot_args(altered)) as invalid:
+            try:authorize_launch(str(tools/'node'),fixture.sha(tools/'node'),str(verifier),fixture.sha(verifier),invalid.fd)
+            except ValueError:pass
+            else:raise AssertionError('Changed launch was accepted before allocation')
+        assert not any(p.is_dir() for p in parent.iterdir())
+        with LaunchSnapshot(*snapshot_args(public['signedConfiguration'])) as snapshot:
+            admitted,deadline,transport=authorize_launch(str(tools/'node'),fixture.sha(tools/'node'),str(verifier),fixture.sha(verifier),snapshot.fd)
+            assert admitted.value==profile
+            scope=GuestJobScope(parent,admitted.total,admitted.control,deadline=deadline)
+            proc=scope.start(str(tools/'node'),fixture.sha(tools/'node'),str(guest_controller),fixture.sha(guest_controller),launch_fd=snapshot.fd)
+            assert relay_guest(scope,proc,to_guest,from_guest,max_ciphertext_bytes=transport['maxCiphertextBytes'])['reason']=='finished'
+        raw,_=requester_proc.communicate(timeout=30)
         code=requester_proc.returncode
         assert code==0, f'Owned funded controller exited {code}'
         assert proc.wait(timeout=5)==0, 'Separate guarded guest did not acknowledge delivery and exit'
         result=json.loads(raw)
-        assert scope.finish()['reason']=='finished'
         assert not list(parent.glob('job-*'))
         assert owner_secret.strip() not in raw
         result['wholeTreeCleanup']=True
+        result['checks'].update(authorizationBeforeAllocation=True,changedLaunchRefusedBeforeAllocation=True,
+            sealedLaunchReverifiedInControl=True,guardianMonitoredEncryptedRelay=True)
         result['kernel']=os.uname().release
         print(json.dumps(result))
     finally:
         if requester_proc and requester_proc.poll() is None:requester_proc.kill();requester_proc.wait(timeout=5)
         if scope:scope.close()
+        for fd in wire_fds:os.close(fd)
         if chain:
             chain.terminate()
             try:chain.wait(timeout=5)

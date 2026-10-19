@@ -56,7 +56,7 @@ def main():
     if code != 0 or len(lines) != 1 or 'CANNABIS_BOOT_CHECK' in text:
         raise ValueError('Guest boot check failed; inspect private serial log')
     result = json.loads(lines[0])
-    if result.get('configuredEntryClosed') is not True:
+    if result.get('configuredEntryClosed') is not True or result.get('outerLauncherClosed') is not True:
         raise ValueError('Fixed configured entry did not refuse the unprepared boot')
     if result.get('pythonChecks') != {'schema': 'cannabis.guest-python-check.v1',
             'cachedControlImports': True, 'changedSourceInvalidatesCache': True,
@@ -112,7 +112,10 @@ def main():
         'busyControlExitRefused', 'stoppedControlAndDetachedWorkloadRetired', 'wholeTreeDeadline',
         'shorterControlDeadlineBoundsWholeTree', 'stoppedOuterOwnerDeadline', 'outerOwnerDeathRetiresControlAndWorkload'}
     execution_cases = {'success', 'resource-change', 'profile-underbudget', 'runtime-change', 'owner-death', 'deadline'}
+    launcher_cases = {'kernelSealsPreventMutation','publicInputTypeAndSizeRefusals','success','failed-exit',
+        'backpressure','stopped-control','guardian-death','busy-exit'}
     for field, schema, cases in [('jobChecks','cannabis.guest-job-check.v1',job_cases),
+                                 ('launcherChecks','cannabis.guest-launcher-check.v1',launcher_cases),
                                  ('executionChecks','cannabis.guest-execution-check.v1',execution_cases)]:
         component = result.get(field, {})
         if (component.get('schema') != schema or component.get('kernel') != report['kernelRelease']

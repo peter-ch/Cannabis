@@ -6,6 +6,7 @@ import resource
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from compute.guest_resources import ResourceLimits, join_current_process
+from compute.guest_launch_snapshot import validate_snapshot
 
 
 def main():
@@ -18,7 +19,9 @@ def main():
     # Prevent OOM-exempt control processes from escaping whole-job OOM handling.
     Path('/proc/self/oom_score_adj').write_text('0')
     executable, script = int(executable), int(script)
-    for fd in [executable, script]:
+    launch = os.environ.get('CANNABIS_LAUNCH_FD')
+    inherited = [] if launch is None else [validate_snapshot(int(launch))]
+    for fd in [executable, script, *inherited]:
         os.fstat(fd); os.set_inheritable(fd, True)
     os.execve(executable, [f'/proc/self/fd/{executable}', f'/proc/self/fd/{script}'], dict(os.environ))
 

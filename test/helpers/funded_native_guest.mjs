@@ -1,20 +1,17 @@
 // Owned protocol fixture only: synthetic evidence agent, never a production entry.
 // Customer recovery sources and signing keys are absent from this wire contract.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { GuestEvidenceSession } from '../../compute/guest_session.mjs';
 import { GuestWire, serveGuestSession } from '../../compute/result_transport.mjs';
 import { guestAgentFixture } from './guest_agent_fixture.mjs';
-import { prepareGuestLaunch } from '../../compute/guest_launch.mjs';
+import { readRetainedLaunch } from '../../compute/guest_launch.mjs';
 import { inspectNativeGuest } from '../../compute/guest_execution.mjs';
 
 let agent,session;const wire=new GuestWire(process.stdin,process.stdout,{timeoutMs:110000});
 try {
-  const input=await wire.readJSON(256*1024);
-  assert.equal(Object.keys(input).sort().join(),'authorities,initialization,request,signedConfiguration');
-  const launch=prepareGuestLaunch(input.authorities,input.signedConfiguration,input.initialization,input.request);
-  // Reject host-supplied overrides before using the actual contained runtime.
-  assert.throws(()=>prepareGuestLaunch(input.authorities,input.signedConfiguration,input.initialization,
-    {...input.request,execution:launch.execution}));
+  // Disposable fixture roots only. Production roots have a fixed measured path.
+  const launch=readRetainedLaunch(JSON.parse(fs.readFileSync(new URL('./owned-authorities.json',import.meta.url))));
   const binding=Object.fromEntries(['packageSHA256','policySHA256','runtimeSHA256','taskSHA256','attempt','rank','worldSize','acceleratorClass']
     .map(k=>[k,launch.initialization.binding[k]]));
   const preflight=inspectNativeGuest(launch.execution,binding,launch.interval,{timeoutMs:30000});

@@ -43,6 +43,8 @@ jobs:
         run: sudo python3 -I -B scripts/check-guest-guardian.py
       - name: Verify aggregate control and workload lifecycle
         run: sudo python3 -I -B scripts/check-guest-job.py
+      - name: Verify immutable launch snapshots and guarded transport cleanup
+        run: sudo python3 -I -B scripts/check-guest-launcher.py
       - name: Install pinned tools for disposable Linux isolation checks
         run: |
           python3 - <<'PY'

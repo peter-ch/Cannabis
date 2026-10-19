@@ -53,9 +53,10 @@ Startup verifies both service executable hashes against the image input lock, re
 
 ## Fixed session entry and signed configuration
 
-`scripts/compute-guest-session.mjs` is the fixed Linux control entry for one
-already-contained job. It accepts no command-line override for its authorities,
-runtime, service binaries or agent. The entry reads these fixed guest paths:
+`scripts/compute-guest-launch.py` is the fixed outer process entry. It reads the
+public files below, authenticates them and allocates the contained job before
+starting `scripts/compute-guest-session.mjs`. Neither entry accepts command-line
+overrides for authorities, runtime, service binaries or agent.
 
 | Path | Role |
 | --- | --- |
@@ -64,12 +65,29 @@ runtime, service binaries or agent. The entry reads these fixed guest paths:
 | `/run/cannabis-launch/initialization.json` | Canonical retained assignment prepared by the initialization tool |
 | `/run/cannabis-launch/request.json` | Exactly the signed lease `proof` and fresh attestation `challenge` |
 
-All inputs use compact sorted-key JSON and one trailing newline. The authority file
-and its ancestor directories must be root-owned and not writable by group or
-others. Reads refuse nonregular files, final symlinks, oversized data, changed
+All inputs use compact sorted-key JSON and one trailing newline. Files
+and their ancestor directories must be root-owned and not writable by group or
+others. Reads refuse nonregular files, symlinks, oversized data, changed
 length and alternative/duplicate-key encodings. The authority file contains only
 public addresses. Customer keys, program contents, arguments and private output
 metadata do not belong in these files.
+
+The outer process retains the original three public input strings in one anonymous
+memory file sealed against writes, growth, truncation and further seal changes.
+The pinned public authorization helper checks that snapshot before the process
+creates `GuestJobScope`. The contained session receives the same descriptor and
+independently verifies the same signatures, assignment, challenge and service.
+Replacing an input pathname after allocation cannot replace the retained package.
+The descriptor itself supplies no authorization; the embedded signer roots do.
+
+The outer process pins Node and both fixed entries against the measured image's
+file inventory. It validates the signed aggregate/control/helper/storage resource
+accounting before allocation and retains one service deadline. Authorization time
+also consumes the transport allowance. The opaque relay holds bounded queues,
+watches the child and independent guardian together, and refuses failed exit,
+expired or stalled transport, and descendants left running after control exit.
+Success requires the whole job tree's checked cleanup. The outer process and
+guardian receive no customer content key.
 
 The image builder's optional `--launch-authorities PATH` embeds a reviewed public
 authority set. No production authority set is supplied by default. Merely embedding
@@ -122,10 +140,10 @@ entire VM and its key-bearing processes, including failures during cleanup.
 
 The requester still verifies the signed Trustee appraisal, including vendor evidence, approved boot measurements, initialization digest, fresh challenge and channel key. The startup API does not independently validate a hardware report or authorize workload execution.
 
-The fixed entry assumes an independently supervised `GuestJobScope` and reviewed
-guest filesystem/runtime layout already exist. The complete measured boot/outer
-launcher must supply them, stage only bounded public configuration and encrypted
-workloads, authenticate network transport, reserve whole-VM overhead and enforce
+The outer process now creates the authenticated `GuestJobScope`; it still assumes
+the reviewed protected guest filesystem/runtime layout already exists. The complete
+measured boot must create that layout, stage bounded encrypted workloads,
+authenticate network transport, reserve whole-VM overhead and enforce
 VM disposal/key retirement. Runtime isolation, result transport and local receipt
 recovery are connected components; they do not establish the complete operating
 worker. Do not expose the raw bridge through a host proxy. Passing a matching job

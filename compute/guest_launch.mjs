@@ -22,6 +22,38 @@ function canonical(value) {
 }
 const hash=value=>'0x'+createHash('sha256').update(canonical(value)).digest('hex');
 export const encodeLaunchJSON=value=>canonical(value)+'\n';
+function parseLaunchJSON(text,limit) {
+  if(typeof text!=='string'||Buffer.byteLength(text)>limit)fail();
+  const value=JSON.parse(text);
+  if(text!==encodeLaunchJSON(value))fail();
+  return value;
+}
+export function parseLaunchSnapshot(bytes) {
+  if(!Buffer.isBuffer(bytes)||!integer(bytes.length,1,17*1024**2))fail();
+  const text=new TextDecoder('utf-8',{fatal:true}).decode(bytes),snapshot=JSON.parse(text);
+  if(text!==canonical(snapshot))fail();
+  exact(snapshot,['configuration','initialization','request']);
+  return {signed:parseLaunchJSON(snapshot.configuration,256*1024),
+    initialization:parseLaunchJSON(snapshot.initialization,65536),request:parseLaunchJSON(snapshot.request,16*1024**2)};
+}
+export function readRetainedLaunch(authorities) {
+  // The outer Python launcher checks all four kernel seals before passing this
+  // fd. Authorization is still checked here; an inherited fd is never authority.
+  const text=process.env.CANNABIS_LAUNCH_FD;
+  if(process.platform!=='linux'||!text||!/^[1-9][0-9]{0,5}$/.test(text)||Number(text)<3)fail();
+  const fd=Number(text),s=fs.fstatSync(fd);
+  if(!s.isFile()||!integer(s.size,1,17*1024**2)||
+    fs.readlinkSync(`/proc/self/fd/${fd}`)!=='/memfd:cannabis-public-launch (deleted)')fail();
+  const bytes=Buffer.alloc(s.size);let offset=0;
+  while(offset<bytes.length){const count=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);if(!count)fail();offset+=count;}
+  const value=parseLaunchSnapshot(bytes);
+  return prepareGuestLaunch(authorities,value.signed,value.initialization,value.request);
+}
+export function publicLaunchAdmission(launch) {
+  const service=nativeServiceCommitment(launch.execution);
+  return {schema:'cannabis.guest-launch-admission.v1',profile:launch.execution.profile,
+    serviceSHA256:service.serviceSHA256,units:service.units,interval:launch.interval,transport:launch.transport};
+}
 export function validateLaunchAuthorities(input) {
   const a=structuredClone(input);
   exact(a,['schema','chainId','signers','threshold','maxValiditySeconds']);

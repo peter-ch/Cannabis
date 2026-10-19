@@ -50,6 +50,9 @@ def main():
         if (entry.returncode!=1 or entry.stdout or not entry.stderr.decode().splitlines()
                 or entry.stderr.decode().splitlines()[-1]!='Configured guest session failed; retire the whole job'):
             raise RuntimeError('Configured entry did not refuse the unprepared boot')
+        outer=subprocess.run(['/usr/bin/python3','-I','-B','/opt/cannabis/scripts/compute-guest-launch.py'],capture_output=True,timeout=20)
+        if outer.returncode!=1 or outer.stdout or outer.stderr.decode()!='Guest launch failed; enclosing boot must retire the VM\n':
+            raise RuntimeError('Outer launcher did not refuse the unprepared boot')
         phase('age_runtime')
         subprocess.run(['/usr/local/bin/age', '--version'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         processes.append(subprocess.Popen(['/usr/local/bin/ttrpc-aa', '--attestation_sock', 'unix:///run/confidential-containers/attestation-agent/check.sock'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
@@ -136,7 +139,13 @@ def main():
             print('CANNABIS_EXECUTION_FAILURE ' + execution.stderr.decode(errors='replace')[-8192:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Native execution channel acceptance failed')
         execution_checks = json.loads(execution.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        phase('outer_launch_transport')
+        launcher = subprocess.run(['/usr/bin/python3','-I','-B','/opt/cannabis/scripts/check-guest-launcher.py'],capture_output=True,timeout=90)
+        if launcher.returncode:
+            print('CANNABIS_LAUNCHER_FAILURE '+launcher.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
+            raise RuntimeError('Outer launch transport checks failed')
+        launcher_checks=json.loads(launcher.stdout)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:
