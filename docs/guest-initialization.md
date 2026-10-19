@@ -91,6 +91,12 @@ runtime mount and dedicated ciphertext volume before the retained deadline.
 The outer process and
 guardian receive no customer content key.
 
+The fixed outer entry also requires the image's [whole-guest budget](guest-image-build.md#resource-enforcement-inside-the-guest).
+It checks actual capacity and mounts and refuses to proceed outside the bounded
+outer cgroup. The operating boot must establish that containment before launching
+the process; the component image does not activate an operating worker. Signed
+job limits cannot borrow from image, kernel or outer-launcher allowances.
+
 Before starting the control process, the outer entry creates the empty ciphertext
 volume from the signed version-2 service profile. The contained entry receives
 bounded encrypted input, verifies its assignment hash and publishes it without

@@ -49,13 +49,17 @@ python3 scripts/measure-guest-snp.py \
   --firmware /work/cannabis-firmware-first \
   --image /work/cannabis-image-first \
   --measurement-source /work/sev-snp-measure \
-  --vcpu-type EPYC-Milan --vcpus 2 --guest-features 0x21 \
+  --vcpu-type EPYC-Milan --vcpus 4 --guest-features 0x21 \
   --output /work/cannabis-snp-candidate
 ```
 
 The CPU and feature values above are an explicit calculation example. They are
 not an approved deployment profile. They must match the actual VMM launch and
 the vendor-reported hardware state before use in an admission policy.
+The vCPU count must also cover the guest image's measured VM budget; the current
+CPU reference requires four. A reference below that minimum is refused before
+measurement. Guest RAM and the remaining operating requirements must be admitted
+separately; an offline SNP measurement is not a physical capacity commitment.
 
 The tool checks the recorded boot-file hashes and copies the exact bytes into a
 private `boot-inputs/` directory. It hashes each copy while writing it and measures

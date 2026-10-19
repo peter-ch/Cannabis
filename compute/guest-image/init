@@ -17,10 +17,13 @@ fail() {
 /bin/busybox mount -t cgroup2 -o nosuid,nodev,noexec cgroup2 /sys/fs/cgroup || fail
 # Only the disposable guest hierarchy is configured here; never the host's.
 echo '+cpu +memory +pids' > /sys/fs/cgroup/cgroup.subtree_control || fail
-/bin/busybox mount -t tmpfs -o nosuid,nodev,noswap,mode=0700,size=128m tmpfs /run || fail
-/bin/busybox mount -t tmpfs -o nosuid,nodev,noexec,mode=1777,size=64m tmpfs /tmp || fail
+CANNABIS_RUN_OPTIONS=$(/usr/bin/python3 -I -B /opt/cannabis/scripts/compute-guest-vm.py run) || fail
+CANNABIS_TMP_OPTIONS=$(/usr/bin/python3 -I -B /opt/cannabis/scripts/compute-guest-vm.py tmp) || fail
+CANNABIS_SHM_OPTIONS=$(/usr/bin/python3 -I -B /opt/cannabis/scripts/compute-guest-vm.py shm) || fail
+/bin/busybox mount -t tmpfs -o "$CANNABIS_RUN_OPTIONS" tmpfs /run || fail
+/bin/busybox mount -t tmpfs -o "$CANNABIS_TMP_OPTIONS" tmpfs /tmp || fail
 /bin/busybox mkdir -p /dev/shm
-/bin/busybox mount -t tmpfs -o nosuid,nodev,noexec,mode=0700,size=64m tmpfs /dev/shm || fail
+/bin/busybox mount -t tmpfs -o "$CANNABIS_SHM_OPTIONS" tmpfs /dev/shm || fail
 echo 0 > /proc/sys/kernel/sysrq
 echo 2 > /proc/sys/kernel/kptr_restrict
 echo 1 > /proc/sys/kernel/dmesg_restrict

@@ -19,6 +19,8 @@ def main():
     parser.add_argument('--timeout', type=int, default=1800)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0,str(root))
+    from compute.guest_vm import VmBudget
     image, out = args.image.resolve(), args.output.resolve()
     if sys.platform != 'linux' or not 30 <= args.timeout <= 1800:
         raise ValueError('Use Linux and a 30..1800 second boot deadline')
@@ -30,6 +32,11 @@ def main():
     report = json.loads((image / 'build.json').read_text())
     if report['schema'] != 'cannabis.guest-image-build.v1' or report['executionAuthorized'] is not False:
         raise ValueError('Require the component acceptance image')
+    budget=VmBudget(report['vmBudget']['profile'])
+    reference=budget.value['referenceVM']
+    if (report['vmBudget']['minimumMemoryBytes']!=budget.minimum_memory
+            or report['vmBudget']['minimumCPUs']!=budget.minimum_cpus or budget.minimum_cpus<2):
+        raise ValueError('Unexpected measured VM budget')
     for name in ['vmlinuz', 'initramfs.cpio.gz', 'cmdline']:
         with (image / name).open('rb') as stream:
             actual = hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -42,7 +49,23 @@ def main():
     log = out / 'serial.log'
     # No disks, shared filesystem, NIC, monitor, QMP, GDB or incoming migration.
     # TCG intentionally cannot provide confidential-hardware acceptance evidence.
-    command = [qemu, '-machine', 'q35,accel=tcg', '-cpu', 'max', '-smp', '2', '-m', '2048', '-nodefaults', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-serial', 'stdio', '-no-reboot', '-kernel', str(image / 'vmlinuz'), '-initrd', str(image / 'initramfs.cpio.gz'), '-append', cmdline]
+    command = [qemu, '-machine', 'q35,accel=tcg', '-cpu', 'max', '-smp', str(reference['cpus']), '-m', str(reference['memoryMiB']), '-nodefaults', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-serial', 'stdio', '-no-reboot', '-kernel', str(image / 'vmlinuz'), '-initrd', str(image / 'initramfs.cpio.gz'), '-append', cmdline]
+    refusals={}
+    for name,option,value in [('insufficientMemory','-m',min(2048,budget.minimum_memory//1024**2-128)),
+                              ('insufficientCPUs','-smp',budget.minimum_cpus-1)]:
+        changed=list(command);changed[changed.index(option)+1]=str(value)
+        refusal_log=out/(name+'.log')
+        with refusal_log.open('xb') as stream:
+            process=subprocess.Popen(changed,stdin=subprocess.DEVNULL,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
+            try:code=process.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=10)
+                raise ValueError('Insufficient-capacity guest did not retire') from None
+        text=refusal_log.read_text(errors='replace')
+        if (code!=0 or 'Measured VM capacity refused' not in text or 'CANNABIS_BOOT_CHECK root_handoff_failure' not in text
+                or 'CANNABIS_CHECK_PHASE' in text or 'CANNABIS_BOOT_RESULT' in text or 'Traceback' in text):
+            raise ValueError('Early capacity refusal was not verified')
+        refusals[name]={'refusedBeforeRootCopy':True,'poweredOff':True,'setting':{option:value}}
     with log.open('xb') as stream:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
         try:
@@ -56,6 +79,15 @@ def main():
     if code != 0 or len(lines) != 1 or 'CANNABIS_BOOT_CHECK' in text:
         raise ValueError('Guest boot check failed; inspect private serial log')
     result = json.loads(lines[0])
+    vm=result.get('vmChecks',{})
+    vm_cases={'measuredCapacityAndLayout','smallerCpuSetRefused','changedMountQuotaRefused','outerAdmission',
+              'uncontainedLauncherRefused','changedOuterLimitRefused','changedJobParentRefused','oversizedJobRefused','outerTreeRetired'}
+    if (vm.get('schema')!='cannabis.guest-vm-check.v1' or vm.get('kernel')!=report['kernelRelease']
+            or vm.get('profile')!=budget.value or vm.get('checks')!={name:True for name in vm_cases}
+            or vm.get('capacity',{}).get('minimumMemoryBytes')!=budget.minimum_memory
+            or vm.get('capacity',{}).get('minimumCPUs')!=budget.minimum_cpus
+            or any(vm.get(k) is not False for k in ['hardwareValidated','providerCapacityCommitted','realPaidJob','customerKeysUsed'])):
+        raise ValueError('Measured VM budget acceptance did not pass')
     if result.get('configuredEntryClosed') is not True or result.get('outerLauncherClosed') is not True:
         raise ValueError('Fixed configured entry did not refuse the unprepared boot')
     runtime = result.get('runtimeChecks', {})
@@ -143,7 +175,7 @@ def main():
         raise ValueError('Protected channel requester reconstruction did not pass')
     if result['schema'] != 'cannabis.guest-boot-check.v1' or result['kernel'] != report['kernelRelease'] or result['imageFilesVerified'] != report['embeddedFiles'] or result['tee'] != 'sample' or result['profileChecks'] != [{'profile':p, 'unsupportedHardwareRejected':True} for p in ['snp','tdx']] or any(result[k] is not False for k in ['requestedEvidence','acceptedJobKeys','launchedCustomerWork','hardwareValidated']):
         raise ValueError('Unexpected guest result')
-    final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}
+    final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'referenceVM':reference, 'earlyCapacityRefusals':refusals, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}
     (out / 'verification.json').write_text(json.dumps(final,indent=2)+'\n')
     print(json.dumps(final))
 

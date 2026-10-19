@@ -35,6 +35,8 @@ jobs:
         run: python -m unittest discover -s test -p 'test_guest_resources.py' -v
       - name: Verify signed execution profile resource accounting
         run: python -m unittest discover -s test -p 'test_guest_execution.py' -v
+      - name: Verify measured whole-guest budget accounting
+        run: python -m unittest discover -s test -p 'test_guest_vm.py' -v
       - name: Verify encrypted input storage limits and retained admission
         run: sudo /usr/bin/python3 -I -B scripts/check-guest-ciphertext.py
       - name: Verify embedded launch authority ownership and path refusals

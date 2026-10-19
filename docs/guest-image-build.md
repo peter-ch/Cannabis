@@ -102,7 +102,15 @@ python3 scripts/verify-guest-boot.py \
   --output /work/cannabis-image-first-boot
 ```
 
-This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default boot-check deadline is thirty minutes, allowing CPU emulation of the expanded 106-case suite; individual component, workload and cleanup deadlines remain enforced separately. Failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private. The owned entry point emits bounded phase names so slow or stalled checks can be distinguished without customer content.
+This uses QEMU's ordinary TCG CPU emulation and the measured reference profile:
+four vCPUs and 4 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor,
+QMP or debugger. Before the full boot, two separate guests must refuse insufficient
+RAM or CPUs and power off before the second root copy. Each negative boot has a
+two-minute deadline. The full boot retains its thirty-minute deadline for the
+expanded 115-case suite; individual component, workload and cleanup deadlines
+remain separate. Failure or timeout does not count as success. Keep the serial
+logs and verification JSON private. Bounded phase names distinguish slow or
+stalled checks without customer content.
 
 Inside the VM, the entry point mounts ephemeral runtime storage, disables core dumps and further kernel-module loading, checks embedded files, exercises the Python extensions and age executable, and starts the actual attestation agent and REST bridge on loopback. Both production CPU probes must reject the unsupported sample profile with their exact structured refusal. Import errors, missing libraries and unexpected success fail the check. No hardware evidence, channel key, job key or customer computation is requested. The services are terminated and the VM powers off.
 
@@ -137,6 +145,46 @@ sudo /usr/bin/python3 -I -B scripts/check-guest-ciphertext.py
 The check deliberately does not treat execution on real SNP/TDX hardware as an accepted deployment: that requires the separate initialization, measurement, negative-case and full workload acceptance run. Do not turn an ordinary boot result into an attestation policy.
 
 ## Resource enforcement inside the guest
+
+The image now embeds `vm-profile.json` from `compute/guest-image/vm-profile.json`.
+Early boot checks the kernel's memory and allowed-CPU views before duplicating the
+root. The root and `/run`, `/tmp` and `/dev/shm` receive the profile's explicit byte
+and inode ceilings, with swap disabled. The builder rejects an image whose
+page-rounded file data, entry count or compressed archive exceed those allowances.
+
+The current CPU profile budgets a 1 GiB root, 128/64/16 MiB volatile mounts,
+256 MiB for the outer launcher, up to 1 GiB for the job and 512 MiB of kernel/PID-1
+headroom. Boot also budgets the temporary second root and a 256 MiB compressed
+archive allowance. Its peak requires at least 3,280 MiB in the guest's `MemTotal`
+view. The four-vCPU reference also covers the job's 3,000 millicpu ceiling, the
+outer launcher's 500 and 500 for kernel/supervisor activity. These are limits for
+this measured CPU profile, not a promise of dedicated host cores or service backing.
+
+`VmAdmission` retains the outer launcher's actual cgroup, checks its CPU/memory/PID
+and swap controls, and refuses a launcher outside it, changed mounts or controls,
+and a signed job exceeding the measured job allowance. The fixed entry applies
+this check before reading public launch inputs and rechecks it around allocation
+and retirement. An operating boot must create the outer group and start the
+launcher there before its allocations. Moving an existing process later does
+not move its earlier memory charges. [Linux cgroup memory ownership](https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-ownership).
+
+Jobs use a separate empty bounded parent at `/sys/fs/cgroup/cannabis-jobs`; the
+root cgroup contains PID 1 and cannot be used as the empty allocation parent.
+Admission retains this parent's identity, verifies its aggregate CPU/memory/PID,
+depth and descendant limits, and requires it empty before allocation and after
+retirement. The operating boot must create both this parent and the outer leaf.
+
+Nine actual-VM cases cover capacity/layout, a reduced CPU affinity mask, a changed
+mount quota in a private namespace, contained and uncontained launchers, changed
+outer or job-parent limits, an oversized job and checked nested-group retirement. The default image
+still runs these checks and powers off. Operating PID-1 supervision, the actual
+outer launch/guardian setup, trustworthy time, physical provider admission and
+whole-VM disposal remain required. Kernel headroom is a budget allowance, not an
+enforced hard bound on every kernel allocation. Guest-visible capacity and mount
+ceilings do not establish a provider commitment or confidential hardware.
+An outer-group OOM can kill the launcher and its inherited guardians together.
+The operating PID-1 supervisor must remain outside that group and retire the
+entire VM on this failure; creating the cgroup alone does not supply that boundary.
 
 `compute/guest_resources.py` supplies a cgroup-v2 boundary for the trusted launcher.
 It creates one fresh group beneath an already configured, empty parent, without

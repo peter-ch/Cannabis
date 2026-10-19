@@ -18,6 +18,7 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 INPUTS = ROOT / 'compute/guest-image'
+sys.path.insert(0,str(ROOT))
 
 
 def digest(path):
@@ -85,6 +86,8 @@ def main():
     args = parser.parse_args()
     if sys.platform != 'linux' or os.uname().machine != 'x86_64':
         raise ValueError('Use Linux x86_64 with Python 3.12+, dpkg-deb and depmod')
+    from compute.guest_vm import VmBudget
+    vm_budget=VmBudget(json.loads((INPUTS/'vm-profile.json').read_text()))
     out, cache, services = (p.resolve() for p in (args.output, args.cache, args.guest_services))
     if out.exists() or ROOT in out.parents or ROOT in cache.parents or out == ROOT or cache == ROOT:
         raise ValueError('Require a new output and external cache outside the public repository')
@@ -144,6 +147,7 @@ def main():
     copy_text(ROOT / 'LICENSE', project / 'LICENSE')
     copy_text(INPUTS / 'inputs.json', project / 'image-inputs.json')
     copy_text(INPUTS / 'inputs.json', project / 'compute/guest-image/inputs.json')
+    copy_text(INPUTS / 'vm-profile.json', project / 'vm-profile.json')
     shutil.copyfile(node_prefix / 'LICENSE', tree / 'usr/local/bin/node.LICENSE')
     if args.launch_authorities:
         # The image contains only public authorization roots. External signed
@@ -163,7 +167,7 @@ def main():
     for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'check-guest-guardian.py', 'compute-guest-guardian.py', 'check-guest-sandbox.py', 'compute-guest-sandbox.py', 'check-guest-native.py', 'compute-guest-helper.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs', 'compute-guest-control.py', 'check-guest-job.py', 'compute-guest-native-pipe.py', 'check-guest-execution.py', 'compute-guest-admission.py', 'compute-guest-session.mjs']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     copy_text(ROOT / 'scripts/check-guest-python.py', project / 'scripts/check-guest-python.py')
-    for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py','check-guest-runtime.py','check-guest-ciphertext.py']:
+    for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py','check-guest-runtime.py','check-guest-ciphertext.py','compute-guest-vm.py','check-guest-vm.py']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in lock['guestServices']:
         shutil.copyfile(services / name, tree / 'usr/local/bin' / name)
@@ -201,13 +205,24 @@ def main():
     # remote attestation; firmware must cover the kernel/initrd/cmdline chain.
     manifest = [{'path':'/' + p.relative_to(tree).as_posix(), 'sha256':digest(p)} for p in sorted(tree.rglob('*')) if p.is_file() and not p.is_symlink()]
     (project / 'image-files.json').write_text(json.dumps(manifest, separators=(',', ':')) + '\n')
+    # tmpfs allocates file data in pages. Include every final entry and a page
+    # for each symlink conservatively; inode metadata belongs to kernel headroom.
+    payload=list(tree.rglob('*'))
+    root_pages=sum((p.stat().st_size+4095)//4096*4096 if p.is_file() and not p.is_symlink()
+                   else 4096 if p.is_symlink() else 0 for p in payload)
+    if root_pages>vm_budget.root.bytes or len(payload)+1>vm_budget.root.inodes:
+        raise ValueError('Image cannot fit its measured root byte/inode ceilings')
     cmdline = 'console=ttyS0 panic=-1 quiet loglevel=3 init=/init'
     (out / 'cmdline').write_text(cmdline + '\n')
     write_initramfs(tree, out / 'initramfs.cpio.gz', lock['sourceDateEpoch'])
+    if (out/'initramfs.cpio.gz').stat().st_size>vm_budget.value['bootArchiveBytes']:
+        raise ValueError('Compressed archive exceeds the measured boot allowance')
     report = {'schema':'cannabis.guest-image-build.v1', 'kernelRelease':lock['kernelRelease'], 'inputsSHA256':digest(INPUTS / 'inputs.json'), 'builderSHA256':digest(Path(__file__)), 'embeddedFiles':len(manifest), 'outputs':{name:{'sha256':digest(out/name), 'bytes':(out/name).stat().st_size} for name in ['vmlinuz', 'initramfs.cpio.gz', 'cmdline']}, 'bootPurpose':'component acceptance; powers off without workload intake', 'hardwareValidated':False, 'executionAuthorized':False, 'independentReproduction':False}
     report['pythonBytecode'] = bytecode
     report['nativeRuntime'] = runtime
     report['runtimeRecipeSHA256'] = digest(recipe)
+    report['vmBudget']={'profile':vm_budget.value,'minimumMemoryBytes':vm_budget.minimum_memory,
+        'minimumCPUs':vm_budget.minimum_cpus,'rootFilePageBytes':root_pages,'rootEntries':len(payload)+1}
     (out / 'build.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report))
 

@@ -35,6 +35,13 @@ def main():
             path = Path(entry['path'])
             if hashlib.sha256(path.read_bytes()).hexdigest() != entry['sha256']:
                 raise RuntimeError('embedded component changed')
+        phase('measured_vm_budget')
+        vm=subprocess.run(['/usr/bin/python3','-I','-B','/opt/cannabis/scripts/check-guest-vm.py'],
+            capture_output=True,timeout=180)
+        if vm.returncode:
+            print('CANNABIS_VM_FAILURE '+vm.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
+            raise RuntimeError('Measured VM budget checks failed')
+        vm_checks=json.loads(vm.stdout)
         # These imports exercise the actual image's interpreter and extension
         # libraries; no customer package or participant custody is consulted.
         phase('python_runtime')
@@ -159,7 +166,7 @@ def main():
             print('CANNABIS_LAUNCHER_FAILURE '+launcher.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
             raise RuntimeError('Outer launch transport checks failed')
         launcher_checks=json.loads(launcher.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'runtimeChecks':runtime_checks, 'ciphertextChecks':ciphertext_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'runtimeChecks':runtime_checks, 'ciphertextChecks':ciphertext_checks, 'vmChecks':vm_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:
