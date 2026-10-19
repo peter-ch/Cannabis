@@ -18,6 +18,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import uuid
@@ -31,6 +32,11 @@ from compute.guest_launch_snapshot import LaunchSnapshot
 from compute.guest_launcher import authorize_launch, relay_guest
 from compute.guest_runtime import FrozenRuntime
 from compute.guest_ciphertext import GuestCiphertextStorage
+
+# Python's standard-library operator module owns this name; load the local
+# ordinary-host volume adapter explicitly rather than shadowing the library.
+volume_spec=importlib.util.spec_from_file_location('owned_result_volume',ROOT/'operator/result_volume.py')
+volume=importlib.util.module_from_spec(volume_spec);volume_spec.loader.exec_module(volume)
 
 
 def public_launch_frame(fd):
@@ -67,8 +73,12 @@ def main():
     assert libc.unshare(0x20000)==0
     assert libc.mount(None,b'/',None,0x4000|0x40000,None)==0
     assert libc.mount(b'tmpfs',os.fsencode(base),b'tmpfs',2|4,b'size=768m,nr_inodes=35000,mode=0700,noswap')==0
-    chain=None;scope=None;chain_log=None;requester_proc=None;operator_proc=None;wire_fds=[]
+    chain=None;scope=None;chain_log=None;requester_proc=None;operator_proc=None;wire_fds=[];result_home=None;result_volume_ready=False
     try:
+        if args.hosted:
+            result_home=Path(tempfile.mkdtemp(prefix='cannabis-funded-results-',dir='/var/tmp'))
+            volume.create_volume(result_home,96*1024**2,4)
+            result_volume_ready=True
         (parent/'cgroup.subtree_control').write_text('+cpu +memory +pids')
         tools=base/'tools';tools.mkdir(mode=0o700)
         for name in ['node','age','age-keygen']:
@@ -157,9 +167,10 @@ def main():
                 operator_controller.chmod(0o600)
                 operator_read,relay_write=os.pipe();relay_read,operator_write=os.pipe()
                 wire_fds.extend([operator_read,relay_write,relay_read,operator_write])
-                spool=base/'operator-spool';spool.mkdir(mode=0o700)
+                spool=result_home/'mount/spool'
                 report_file=base/'operator-report.json'
                 config={'public':public,'origin':request['resultOrigin'],'spool':str(spool),'report':str(report_file),
+                    'dispatchJournal':str(base/'dispatch.sqlite'),
                     'fds':{'guestRead':operator_read,'guestWrite':operator_write,'requesterRead':to_guest,'requesterWrite':from_guest}}
                 # Only public retained launch data and transport/storage handles.
                 # Owner custody paths and keys never enter this operator config.
@@ -196,12 +207,13 @@ def main():
             assert report['bookedTLSPeerAuthenticated'] and report['peerListenerDisposed']
             assert report['peerAssignmentSHA256']==report['peerRouteId']
             assert report['durableDispatchRetained'] and report['restartedDispatchRefused']
-            assert report['localSpoolReservationRetained']
+            assert report['localSpoolReservationRetained'] and report['physicalSpoolCapacityChecked']
             assert not report['guestCompletionObserved'] and not report['paymentAuthorized'] and not report['hardwareValidated']
             assert Path(report['sourceFile']).is_file() and Path(report['directory']).parent==spool
             result['checks'].update(separateSessionOperator=True,hostedSignatureForwarded=True,completeEncryptedSpoolRetained=True,
                                    bookedTLSProviderAuthenticated=True,bookedAssignmentRouted=True,peerListenerDisposed=True,
-                                     durableDispatchRetained=True,restartedDispatchRefused=True,localSpoolReservationRetained=True)
+                                     durableDispatchRetained=True,restartedDispatchRefused=True,localSpoolReservationRetained=True,
+                                     physicalSpoolCapacityChecked=True)
         assert not list(parent.glob('job-*'))
         assert owner_secret.strip() not in raw
         result['wholeTreeCleanup']=True
@@ -223,6 +235,17 @@ def main():
             try:chain.wait(timeout=5)
             except subprocess.TimeoutExpired:chain.kill();chain.wait(timeout=5)
         if chain_log:chain_log.close()
+        if result_volume_ready:
+            # Synthetic fixture results only. The production unmount helper
+            # always preserves its image and manifest. Delete only this owned
+            # disposable volume after checked unmount/device detachment.
+            volume.unmount_volume(result_home)
+            assert result_home.resolve().parent==Path('/var/tmp').resolve() and result_home.name.startswith('cannabis-funded-results-')
+            assert sorted(p.name for p in result_home.iterdir())==['mount','result-volume.ext4','volume.json']
+            (result_home/'mount').rmdir()
+            (result_home/'result-volume.ext4').unlink();(result_home/'volume.json').unlink();result_home.rmdir()
+        elif result_home:
+            print('Incomplete owned result-volume setup retained at '+str(result_home),file=sys.stderr)
         # Own disposable groups only. The guardian must retire any admitted tree.
         assert not any(p.is_dir() for p in parent.iterdir())
         parent.rmdir()

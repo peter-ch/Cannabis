@@ -1,5 +1,5 @@
 // Ordinary-host storage accounting. This is neither execution admission nor a
-// filesystem quota. Keep this directory/database/WAL together across restarts.
+// filesystem quota. Keep the entire directory together across restarts.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash,randomBytes } from 'node:crypto';
@@ -44,7 +44,12 @@ export class ResultSpool {
     check(regular(file).size>0||create);
     this.#db=openDurableDatabase(file,{timeout:1000});
     try {
-      this.#db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;');
+      // A held reader must not grow an unbounded WAL in the result volume.
+      // Switching an older store requires exclusive SQLite access; never erase
+      // its WAL or recreate the database to get around a failed transition.
+      check(this.#db.prepare('PRAGMA journal_mode=DELETE').get().journal_mode==='delete');
+      this.#db.exec('PRAGMA synchronous=EXTRA; PRAGMA trusted_schema=OFF; PRAGMA temp_store=MEMORY;');
+      check(this.#db.prepare('PRAGMA synchronous').get().synchronous===3);
       if(create)this.#db.exec(`CREATE TABLE spool_settings(id INTEGER PRIMARY KEY CHECK(id=1),body TEXT NOT NULL,last_time INTEGER NOT NULL) STRICT;
         CREATE TABLE results(id TEXT PRIMARY KEY,digest TEXT UNIQUE NOT NULL,owner TEXT NOT NULL,expected TEXT NOT NULL,
           max_bytes INTEGER NOT NULL,charge INTEGER NOT NULL,service_end INTEGER NOT NULL,retry_end INTEGER NOT NULL,
@@ -62,7 +67,10 @@ export class ResultSpool {
           integer(s.maxRecords,1,4096)&&integer(s.retentionMs,DAY,30*DAY));this.#time();
       });
       const pageSize=this.#db.prepare('PRAGMA page_size').get().page_size;
-      this.#db.exec(`PRAGMA max_page_count=${Math.ceil((this.#settings.maxBytes+1048576)/pageSize)}; PRAGMA journal_size_limit=1048576;`);
+      check(pageSize===4096);
+      const pages=Math.ceil((this.#settings.maxBytes+1048576)/pageSize);
+      check(this.#db.prepare(`PRAGMA max_page_count=${pages}`).get().max_page_count===pages);
+      this.#db.exec('PRAGMA journal_size_limit=0;');
       if(create)syncDir(this.#root);stores.add(this);
     }catch(error){this.#db.close();throw error;}
   }
@@ -85,6 +93,16 @@ export class ResultSpool {
     const directory=path.join(this.#root,row.id);
     if(fs.existsSync(directory)){const s=fs.lstatSync(directory);check(s.isDirectory()&&!s.isSymbolicLink());}
     return directory;
+  }
+  // Keep the native capacity inspection coherent with file creation, recovery
+  // and deletion by other store processes. This callback is local trusted code,
+  // synchronous and never a network-selected operation.
+  withStorageLayout(inspect) {
+    check(typeof inspect==='function');
+    return this.#transaction(()=>{
+      const rows=this.#db.prepare('SELECT id,max_bytes AS maxCiphertextBytes FROM results ORDER BY id').all();
+      const result=inspect(rows);check(!result||typeof result.then!=='function');return result;
+    });
   }
   reserve({expected,maxCiphertextBytes,serviceEnd},signal) {
     expected=approval(expected);check(!signal||signal instanceof AbortSignal&&!signal.aborted);

@@ -39,6 +39,8 @@ jobs:
         run: python -m unittest discover -s test -p 'test_guest_vm.py' -v
       - name: Verify encrypted input storage limits and retained admission
         run: sudo /usr/bin/python3 -I -B scripts/check-guest-ciphertext.py
+      - name: Check bounded result volume and restart recovery
+        run: sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-result-volume.py
       - name: Verify reviewed launch file ownership and path refusals
         run: sudo env PATH="$PATH" node --test --test-name-pattern='reviewed launch files' test/guest-launch.test.mjs
       - name: Exercise kernel CPU, memory, process and deadline limits

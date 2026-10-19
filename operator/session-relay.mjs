@@ -13,6 +13,7 @@ import { validateUploadAccess } from './result-upload.mjs';
 import { bridgeEncryptedResult } from './result-bridge.mjs';
 import { claimPeerChannel } from '../compute/peer_channel.mjs';
 import { assertResultSpool } from './result-spool.mjs';
+import { assertPhysicalResultSpool } from './physical-spool.mjs';
 const protocol='cannabis.guest-wire.v1',CHUNK=65536;
 const integer=(n,min,max)=>Number.isSafeInteger(n)&&n>=min&&n<=max;
 const fields=(v,n)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join()===n.sort().join();
@@ -36,6 +37,7 @@ function abortable(fn,signal) {
 // the responsibility of the sealed launcher and requester evidence appraisal.
 export async function relayAuthenticatedSession(guest,requester,options={}) {
   try {
+    assertPhysicalResultSpool(options.spool);
     const launch=structuredClone(options.launch);
     claimPeerChannel(requester,'provider',launch.funding.consent,launch.initialization,launch.funding.proof);
     return await relayConfiguredSession(guest,requester,{...options,launch});
@@ -148,6 +150,7 @@ export async function relayConfiguredSession(guest,requester,{launch,origin,spoo
     check(fields(accepted,['protocol','operation','approvalDigest','relayId'])&&accepted.protocol==='cannabis.hosted-session.v1'&&
       accepted.operation==='result-access-ready'&&accepted.approvalDigest===expected.digest&&accepted.relayId===read.id);
     spool.dispatch(reservation); // durable uncertainty BEFORE any execution bytes
+    fresh(); // native storage inspection may consume the remaining service time
     await guest.writeJSON(command);active();
     const result=await bridgeEncryptedResult(guest,requester,{expected,access:upload,origin,reservation,
       maxCiphertextBytes:launch.transport.maxCiphertextBytes,timeoutMs:remaining(),signal:controller.signal,fetchImpl,wait});

@@ -220,8 +220,8 @@ retained prepared launch and sealed guest channel. Closing the listener stops
 intake and destroys connections. Its bounded shutdown report distinguishes closed
 sockets from handlers still pending cleanup; such a report cannot claim that a
 worker, VM or customer keys have been retired. Resource/VM guardians and checked
-cleanup remain required. The visible signing workflow, physical storage limits
-and durable independent operation remain release requirements.
+cleanup remain required. The visible signing workflow, complete operator storage
+accounting and durable independent operation remain release requirements.
 
 ## Local encrypted result reservations and recovery
 
@@ -236,10 +236,50 @@ the command write, including when that write fails without a known outcome.
 SQLite transactions enforce aggregate byte and record limits across processes
 sharing the same intact store. Creation is explicit and requires an empty private
 directory. Reopening a missing ledger or changing its saved limits fails closed.
-Retain the directory, SQLite database and WAL together. This is an ordinary-host
-logical allowance, not physical disk preallocation, a filesystem quota, TEE
-admission, protection against operator rollback, or a reservation across different
-operator machines. Filesystem limits and capacity monitoring remain required.
+Retain the entire directory, database and any recovery journal together. The
+result ledger uses checked SQLite DELETE rollback journaling with synchronous
+EXTRA and a maximum database page count. A held reader can delay or refuse a
+writer; it cannot cause a growing WAL. To convert an older WAL store, stop all
+its users and let SQLite perform the transition. Never remove a database, WAL
+or recovery journal to force an open.
+
+The network-facing `relayAuthenticatedSession` requires `PhysicalResultSpool`.
+The selected Linux adapter keeps the ledger, ciphertext and receipts on a bounded
+ext4 loop volume with preallocated backing space. It checks the mounted device,
+backing inode and allocated blocks, mount options, managed files, available bytes
+and inodes at startup, before reservation and again before dispatch. Capacity
+includes the configured archive allowance, capped database, rollback journal and
+filesystem headroom. An open store retains a directory descriptor so ordinary
+unmount fails while it is in use. Missing or changed storage fails closed.
+
+This path currently requires a root-managed Linux operator and local ext4 backing
+storage; there is no Windows, sparse-file or ordinary-folder fallback for network
+dispatch. The logical `ResultSpool` remains useful for isolated protocol checks.
+Host allocation cannot guarantee underlying thin-provisioned device capacity,
+power-loss survival, hostile-host integrity or storage on another machine. These
+controls do not admit a TEE. The dispatch journal and HTTP relay are separate
+stores; whole-operator disk accounting and monitoring remain integration work.
+
+### Prepare and retain the result volume
+
+An operator explicitly creates a fresh private directory on its existing Linux
+ext4 disk, then uses the native helper. For example, this configures a 256 MiB
+logical allowance and at most 16 records; the backing file is larger to cover
+database, journal and filesystem overhead:
+
+```sh
+sudo install -d -m 700 /var/lib/cannabis/result-volume
+sudo /usr/bin/python3 -I -B operator/result_volume.py create /var/lib/cannabis/result-volume --max-bytes 268435456 --max-records 16
+```
+
+The adapter opens `/var/lib/cannabis/result-volume/mount/spool`. `create` refuses
+existing contents and does not resize or replace a store. After all operator
+processes close, `unmount` preserves both `result-volume.ext4` and `volume.json`;
+`mount` reopens the retained volume. `inspect` reports its current device and
+capacity. Keep both files and their private directory together; never replace
+an occupied store with an empty one after an error. Moving or restoring it to a
+different backing inode requires reviewed reconciliation and is deliberately
+refused by the current adapter.
 
 The ledger distinguishes unused reservations, uncertain dispatch, partial output,
 sealed output, complete output and requester-acknowledged storage. Cancellation or
@@ -264,8 +304,8 @@ verified requester storage signature starts the deletion retention period (seven
 days by default, configurable at store creation from one to thirty days). Cleanup
 persists deletion intent and releases capacity only after checked file removal;
 interrupted cleanup resumes from the ledger. Windows file flushing and SQLite
-durability are checked, but Windows directory flush and physical power-loss
-guarantees are not established by these process-termination tests. These controls
+durability have component checks, but Windows directory flush and physical power-loss
+guarantees are not established by process-termination tests. These controls
 are implemented in the compute review branch; live protected operation remains
 in preparation.
 

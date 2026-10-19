@@ -381,8 +381,10 @@ sessions, authenticated channels and the visible worker remains required.
 `operator/session-relay.mjs` connects encrypted input delivery, public guest
 evidence, sealed key delivery and the hosted result handoff. Its caller supplies
 the retained output of `prepareGuestLaunch`, already authenticated requester and
-guest channels, the independently configured storage origin, a private spool
-directory and a local storage-reservation callback. This transport module does
+guest channels, the independently configured storage origin, a retained result
+spool and a remote storage-reservation callback. The network-facing entry requires
+the [bounded Linux result volume](decentralized-compute.md#prepare-and-retain-the-result-volume).
+This transport module does
 not independently revalidate bilateral launch consent or admit protected hardware.
 Never expose a caller-selected launch plan through a public endpoint.
 
@@ -404,9 +406,12 @@ an expiring reservation; it cannot cause late execution.
 
 Both channels, cancellation and the remaining signed service/transport interval
 bound the whole exchange. The operator retains complete ciphertext after a later
-failure, including a failed storage acknowledgement. It still needs aggregate
-spool quotas and a reviewed retention policy. Reserving relay capacity alone does
-not reserve local operator disk or establish worker capacity.
+failure, including a failed storage acknowledgement. Persistent local reservations
+and physical capacity checks precede dispatch, separately from the HTTP relay's
+reservation. Uncertain execution and incomplete output remain charged until
+protected termination can be reconciled. Retention and complete-result recovery
+are described in the linked volume guide; neither store establishes worker
+execution capacity or protected hardware admission.
 
 The owned `check-funded-native.py --hosted` integration uses a separate ordinary
 operator process between requester and guarded native execution. It exercises
