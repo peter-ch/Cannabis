@@ -402,9 +402,10 @@ class NativeSandbox:
                     break
                 if pidfd in ready:
                     self._process.wait(timeout=5)
-                    # Descendants can outlive their leader. Finish cannot
-                    # disarm a busy group and never means accepted useful work.
-                    cleanup = self._guard.wait(action='finish')
+                    # bwrap monitors can leave the group just after the waited
+                    # leader. Observe bounded natural completion; a still-busy
+                    # group is killed and refused, never treated as success.
+                    cleanup = self._guard.finish_after_exit(cancelled=cancelled)
                     reason = cleanup['reason']
                     break
                 # The guardian owns the deadline; waiting for its checked reply

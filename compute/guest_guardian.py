@@ -277,6 +277,32 @@ class GuardedResources:
     def close(self):
         return self.wait(action='cancel')
 
+    def finish_after_exit(self, *, cancelled=None):
+        """After leader exit, briefly observe natural whole-tree completion.
+
+        Launcher/monitor processes can finish just after the waited leader.
+        Never extend the retained wall deadline, disarm a populated group, or
+        treat killed stragglers as successful completion. Busy finish still
+        rejects and kills the tree after this fixed two-second drain budget.
+        """
+        end = time.monotonic() + 2
+        while self._result is None:
+            if cancelled is not None and cancelled.is_set():
+                return self.wait(action='cancel')
+            if time.monotonic() >= self.deadline or select.select([self.fileno()], [], [], 0)[0]:
+                return self.wait()
+            try:
+                empty = not self._group.populated
+            except OSError:
+                # A terminal guardian may have removed the retained group
+                # between channel inspection and the kernel read. Still require
+                # its checked acknowledgement, with the fixed action timeout.
+                return self.wait(action='finish')
+            if empty or time.monotonic() >= end:
+                return self.wait(action='finish')
+            select.select([self.fileno()], [], [], 0.02)
+        return dict(self._result)
+
     def __enter__(self):
         return self
 

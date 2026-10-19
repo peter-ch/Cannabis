@@ -112,7 +112,7 @@ def run_guarded_helper(parent, limits, request, *, cancelled=None):
                         raise ValueError('Protected helper response exceeds its bound')
             if cleanup is None and pidfd in readable:
                 child.wait(timeout=5)
-                cleanup = guard.wait(action='finish')
+                cleanup = guard.finish_after_exit(cancelled=cancelled)
                 if cleanup['reason'] != 'finished' or child.returncode != 0 or sent != len(raw):
                     raise ValueError('Protected helper did not complete successfully')
             if cleanup is not None and eof:

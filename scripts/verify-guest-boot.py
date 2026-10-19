@@ -80,7 +80,8 @@ def main():
     guardian = result.get('guardianChecks', {})
     guardian_cases = {'normalFinish', 'cancelTree', 'busyFinishRefused', 'ownerSIGKILL', 'stoppedOwnerDeadline',
                       'leakedSocketOwnerDeath', 'ownerExitWithoutFinalizer', 'guardianFailureRefusedAndCleaned',
-                      'independentDeadline', 'lateFinishRefused', 'stoppedGuardianCancelBounded'}
+                      'independentDeadline', 'lateFinishRefused', 'stoppedGuardianCancelBounded',
+                      'naturalTailDrain', 'lingeringTailRefused'}
     if (guardian.get('schema') != 'cannabis.guest-guardian-check.v1' or guardian.get('kernel') != report['kernelRelease']
             or guardian.get('customerCodeExecuted') is not False or guardian.get('hardwareValidated') is not False
             or guardian.get('checks') != {name: True for name in guardian_cases}):

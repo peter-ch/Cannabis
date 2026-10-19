@@ -138,10 +138,18 @@ Explicit finish and cancellation wait at most ten seconds for the guardian's
 acknowledgement before invoking retained-object fallback cleanup. This bound does
 not grow with the purchased job duration. Fallback failure remains fatal.
 
-Eleven kernel checks cover normal finish, cancellation, refused busy finish, owner
+After the leader exits, `finish_after_exit()` observes natural whole-tree exit
+for at most two seconds while monitoring cancellation and the original deadline.
+This handles launcher monitors that exit just after their leader. It requests
+successful finish only after observed emptiness; a remaining tree is killed and
+refused. Cancellation and expiry still take precedence. Direct busy finish remains
+a refusal.
+
+Thirteen kernel checks cover normal finish, cancellation, refused busy finish, owner
 SIGKILL, owner exit without finalizers, a stopped owner's deadline, a deliberately
 leaked control socket, guardian failure, bounded cancellation of a stopped guardian,
-independent expiry and late finish. The
+natural trailing-process exit, refused lingering descendants, independent expiry
+and late finish. The
 same checks run in CI and in the pinned boot image:
 
 ```sh

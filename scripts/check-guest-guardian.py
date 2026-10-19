@@ -53,6 +53,25 @@ def worker(group, limits, leaked_fd=None):
     time.sleep(25)
 
 
+def trailing(group, limits, seconds):
+    join_current_process(group, ResourceLimits(**json.loads(limits)))
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1})
+    reader, writer = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(reader)
+        os.write(writer, b'1')
+        os.close(writer)
+        signal.sigwait({signal.SIGUSR1})
+        time.sleep(float(seconds))
+        os._exit(0)
+    os.close(writer)
+    assert os.read(reader, 1) == b'1'
+    os.close(reader)
+    print(json.dumps({'child': child}), flush=True)
+    os._exit(0)
+
+
 def actor(parent, mode):
     # Include slow-emulator startup in the reserved wall budget. The stopped
     # owner's deadline must still expire before the owned worker's safety exit.
@@ -107,6 +126,21 @@ def run(parent):
             finally:
                 for handle in handles:
                     os.close(handle)
+                finish(work)
+    for duration, expected in [('0.5', 'finished'), ('25', 'not-empty')]:
+        with GuardedResources(parent, limits) as guard:
+            work = spawn(['trailing', str(guard.path), json.dumps(asdict(limits)), duration])
+            state = line(work)
+            handle = os.pidfd_open(state['child'])
+            try:
+                assert work.wait(timeout=5) == 0
+                signal.pidfd_send_signal(handle, signal.SIGUSR1)
+                result = guard.finish_after_exit()
+                assert result['reason'] == expected and result['removed'] and not guard.path.exists()
+                ended(handle)
+                cases['naturalTailDrain' if expected == 'finished' else 'lingeringTailRefused'] = True
+            finally:
+                os.close(handle)
                 finish(work)
     for mode in ['killed', 'stopped', 'leaked', 'exit']:
         owner = spawn(['actor', str(parent), mode])
@@ -209,6 +243,8 @@ def main():
 if __name__ == '__main__':
     if len(sys.argv) >= 2 and sys.argv[1] == 'worker':
         worker(*sys.argv[2:])
+    elif len(sys.argv) == 5 and sys.argv[1] == 'trailing':
+        trailing(*sys.argv[2:])
     elif len(sys.argv) == 4 and sys.argv[1] == 'actor':
         actor(*sys.argv[2:])
     else:
