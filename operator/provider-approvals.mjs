@@ -154,6 +154,7 @@ export class ProviderApprovals {
   }
   decline(key) {const r=this.#request(key);check(activeStates.has(r.state));this.#finish(r,'declined');return {state:r.state};}
   signed(key) {const e=this.#entry(key);check(e.signed);return structuredClone(e.signed);}
+  retainedOrigin(key) {return this.#entry(key).origin;}
   peerRoute(key,handle) {
     const e=this.#entry(key),signed=this.signed(key);check(typeof handle==='function');
     return {signed,initialization:structuredClone(e.initialization),proof:structuredClone(e.proof),

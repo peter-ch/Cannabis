@@ -17,6 +17,13 @@ from cannabis_host.snp_profile import SnpProfile,unique
 
 
 def main():
+    if len(sys.argv)==3 and sys.argv[1]=='--inspect':
+        profile=SnpProfile(sys.argv[2])
+        try:
+            observation=profile.require_hardware()
+            print(json.dumps({'schema':'cannabis.host-snp-observation.v1',**observation}),flush=True)
+        finally:profile.close()
+        return
     if len(sys.argv)!=3 or os.geteuid()!=0 or not sys.argv[2].isdigit():raise ValueError('Require retained profile and actual parent')
     parent=int(sys.argv[2])
     if parent!=os.getppid():raise ValueError('Operator parent changed')

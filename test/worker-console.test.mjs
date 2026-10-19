@@ -3,6 +3,25 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createConsoleServer, createObserver } from '../operator/server.mjs';
 
+test('booked service controls have exact actions and never grant paid admission',async t=>{
+  let starts=0,stops=0;
+  const request=await fixture(t,undefined,{service:{snapshot:()=>({state:'stopped',hardwareValidated:false}),
+    start:()=>{starts++;return {state:'starting'};},stop:()=>{stops++;return {state:'stopping'};}}});
+  const control=JSON.parse((await request('/api/control')).body);assert.equal(control.operatorService,true);
+  const headers={origin:request.origin,'content-type':'application/json','x-cannabis-console':control.actionToken};
+  for(const body of ['null','[]','{"profile":"/private"}','{"command":"run"}'])
+    assert.equal((await request('/api/service/start',{method:'POST',headers,body})).status,400);
+  assert.equal((await request('/api/service/start',{method:'POST',headers:{...headers,origin:'https://outside.invalid'},body:'{}'})).status,403);
+  assert.equal(starts,0);
+  for(const action of ['start','stop'])assert.equal((await request('/api/service/'+action,{method:'POST',headers,body:'{}'})).status,202);
+  assert.equal(starts,1);assert.equal(stops,1);
+  const status=JSON.parse((await request('/api/status')).body);assert.equal(status.worker.admitted,false);
+  assert.equal(status.worker.earningsThisSession,'0');assert.equal(status.operatorService.hardwareValidated,false);
+  assert.equal((await request('/api/service/reset',{method:'POST',headers,body:'{}'})).status,405);
+  const absent=await fixture(t);const token=JSON.parse((await absent('/api/control')).body);
+  assert.equal(token.operatorService,false);assert.equal(JSON.parse((await absent('/api/status')).body).operatorService.state,'not-configured');
+});
+
 async function fixture(t, observer = createObserver({ cpu: 'fixture', graphics: [] }),options={}) {
   const server = createConsoleServer(observer,options);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

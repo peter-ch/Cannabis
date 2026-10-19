@@ -1,6 +1,6 @@
 // Local operator control over retained ciphertext, never execution or settlement.
 import { createHash,randomBytes } from 'node:crypto';
-import { PhysicalResultSpool } from './physical-spool.mjs';
+import { PhysicalResultSpool,assertPhysicalResultSpool } from './physical-spool.mjs';
 import { validateUploadAccess } from './result-upload.mjs';
 import { validateRelayAccess } from '../web/work-relay.js';
 import { uploadRetainedResult } from './result-bridge.mjs';
@@ -20,10 +20,12 @@ function description(source) {
 }
 
 export class ResultConsole {
-  #spool;#origins;#review;#operation;#controller;#task;#closed=false;
+  #spool;#origins;#review;#operation;#controller;#task;#closed=false;#ownsSpool;
   constructor(directory,{relayOrigins=[]}={}) {
     check(Array.isArray(relayOrigins)&&relayOrigins.length<=8&&new Set(relayOrigins).size===relayOrigins.length);
-    this.#origins=relayOrigins.map(originValue);this.#spool=new PhysicalResultSpool(directory);
+    this.#origins=relayOrigins.map(originValue);this.#ownsSpool=typeof directory==='string';
+    if(!this.#ownsSpool)assertPhysicalResultSpool(directory);
+    this.#spool=this.#ownsSpool?new PhysicalResultSpool(directory):directory;
   }
   #ready(){check(!this.#closed&&this.#operation?.state!=='uploading');}
   snapshot() {
@@ -90,7 +92,7 @@ export class ResultConsole {
   }
   async close() {
     this.#closed=true;this.#review=undefined;this.#controller?.abort();
-    try{await this.#task;}finally{this.#spool.close();}
+    try{await this.#task;}finally{if(this.#ownsSpool)this.#spool.close();}
   }
 }
 function descriptionFromRecovery(r) {

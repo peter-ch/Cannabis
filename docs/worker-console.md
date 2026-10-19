@@ -1,6 +1,6 @@
 # Your worker console
 
-The Cannabis worker console shows actual CPU activity, memory use and local hardware inventory in a browser window. It is available in the [project source](https://github.com/peter-ch/Cannabis). With an existing result volume selected, it also shows retained attempts and provides encrypted-result recovery and deliberate replacement delivery. The compute review branch additionally contains provider-controlled wallet approvals for retained assignments and direct peer connections. It cannot accept customer jobs or earn payments yet. These controls remain under integration; the older published tools do not include them.
+The Cannabis worker console shows actual CPU activity, memory use and local hardware inventory in a browser window. It is available in the [project source](https://github.com/peter-ch/Cannabis). With an existing result volume selected, it also shows retained attempts and provides encrypted-result recovery and deliberate replacement delivery. The compute review branch additionally contains provider-controlled wallet approvals and an optional booked-service lifecycle connecting retained assignments to the fixed SNP launcher. A reviewed paid worker is not available yet. These controls remain under integration; the older published tools do not include them.
 
 ## Open the console
 
@@ -124,8 +124,9 @@ this panel, retaining its origin, exporter, fresh nonces and remaining handshake
 budget. The requester signature is checked before the provider prompt. A
 submitted peer signature becomes **channel verified** only after the native
 authenticated-channel capability passes the retained assignment check; the
-subsequent execution handler still consumes its one-use capability. This adapter
-does not itself start a listener, launch a guest or supply hardware admission.
+subsequent execution handler still consumes its one-use capability. The optional
+service below composes this adapter with the fixed host launcher; the signing
+adapter itself supplies no hardware admission.
 
 There are at most four pending requests and a bounded recent history. Reviews
 expire within 60 seconds; peer requests retain the shorter remaining handshake
@@ -136,13 +137,85 @@ an already saved consent, and no pending approval is restored after restart.
 Readiness reports include public assignment addresses and commitments, but never
 signatures, wallet keys or local paths. Review them before sharing.
 
+## Configure the booked service
+
+The review branch supports a single independently operated provider service on
+a root-managed Linux SNP host. Start its loopback console with
+`node operator/server.mjs --operator-config /absolute/operator.json`.
+This mode owns the provider manager, existing dispatch journal and physical
+result store together. Do not combine it with the separate result/provider flags
+or run another console against the same stores. Nothing starts listening for
+peers merely because the console opens.
+
+The private configuration uses this shape (replace every example path/origin):
+
+```json
+{
+  "schema": "cannabis.operator-service.v1",
+  "profile": "/var/lib/cannabis/host-profile.json",
+  "catalog": "/var/lib/cannabis/provider-catalog.json",
+  "approvals": "/var/lib/cannabis/approvals",
+  "spool": "/var/lib/cannabis/result-volume/mount/spool",
+  "dispatch": "/var/lib/cannabis/dispatch.sqlite",
+  "peer": {
+    "origin": "https://peer.example:4443",
+    "listenHost": "0.0.0.0",
+    "cert": "/var/lib/cannabis/tls/cert.pem",
+    "key": "/var/lib/cannabis/tls/key.pem"
+  },
+  "relay": {
+    "origin": "https://results.example",
+    "port": 4210,
+    "orders": "/var/lib/cannabis/orders.sqlite",
+    "results": "/var/lib/cannabis/results.sqlite"
+  }
+}
+```
+
+All paths must already exist, be absolute and have root-owned parents without
+symlinks or group/world write access. Configuration, profile, TLS key and databases
+are private files. The console does not create/reset databases, obtain certificates,
+change DNS or provision servers. Prepare their existing schemas through the
+corresponding deployment tools and retain their recovery state. The catalog's peer
+origins must match the selected TLS listener. Both local ports are explicit,
+distinct and above 1023. An independently configured TLS reverse proxy must route
+the selected result origin to the loopback relay; the peer port uses TLS directly.
+No founder endpoint is required.
+
+After retaining provider launch approval, choose **Start booked listener**.
+The service first checks the pinned host profile, actual SNP device/QEMU support
+and result volume. It selects only approved, unexpired, unused assignments and
+allows one connection/session at a time. Actual peer authentication and fresh
+funding checks still precede durable dispatch. The provider approves the live
+connection in the wallet panel. Guest handoff, VM startup, encrypted relay and
+local shutdown then appear as separate session stages.
+
+**Stop intake and sessions** aborts peer connections and waits for owned cleanup.
+The relay remains available for retained encrypted results until the console
+server shuts down. Closing a browser or pausing monitoring does not stop the
+service. A missing cleanup report or outstanding handler blocks restart in that
+process. Preserve the VM slot, dispatch database and result volume for local
+reconciliation; never erase them to force another attempt. Dispatch tombstones
+survive restarts and are never reopened by a GUI action.
+
+Local session completion means transport and local process shutdown only. It is
+not vendor attestation, protected-key erasure, accepted useful work or payment.
+The status report excludes local paths, TLS keys, signatures, result grants and
+customer content. It includes selected origins, assignment identifiers, session
+times and cleanup state. The report can contain scheduling metadata.
+
+Whole-operator CPU/memory/PID limits and disk quotas for the Node process,
+supervisor, HTTP relay and SQLite/WAL overhead still need integration. The VM
+leaf and result volume alone do not bound the whole service. This composition
+has not completed an actual SNP deployment or genuine paid acceptance.
+
 ## Before a paid worker can start
 
-The Start paid worker control remains disabled in this release. There is no hidden start endpoint or setting that enables paid work. Admission needs a fresh vendor-verified hardware report bound to the approved guest and assignment, a measured isolated launcher, protected storage/devices/networking, cleanup and key retirement, reviewed payment contracts and provider terms, and a real end-to-end acceptance run. See [worker deployment](worker-deployment.md) and [confidential computation](confidential-compute.md).
+The Start paid worker control remains disabled in this release. The separate booked-listener controls do not establish paid admission. Admission needs a fresh vendor-verified hardware report bound to the approved guest and assignment, a measured isolated launcher, protected storage/devices/networking, cleanup and key retirement, reviewed payment contracts and provider terms, and a real end-to-end acceptance run. See [worker deployment](worker-deployment.md) and [confidential computation](confidential-compute.md).
 
 Ordinary desktop hardware and the website hosting servers are not automatically eligible. A remotely operated confidential worker could later be controlled from a desktop GUI, provided the attestation and key-release path is validated. No plaintext fallback is permitted.
 
-The process listens only on loopback, serves an explicit asset list and refuses foreign hosts/origins. Result and approval actions require same-origin bounded JSON and a process-local control token. The optional result adapter only opens the startup-selected store and uploads retained ciphertext to startup-selected relay origins. Provider approvals use only startup-selected assignments. There is no job submission, arbitrary command/path/signing, plaintext customer-content, wallet-key custody or payment interface. Do not publish or reverse-proxy its port.
+The console listens only on loopback, serves an explicit asset list and refuses foreign hosts/origins. Result, approval and lifecycle actions require same-origin bounded JSON and a process-local control token. The selected service's peer listener is separate and accepts only retained booked routes. Browser requests cannot add paths, commands, assignments or arbitrary signing messages. There is no plaintext customer-content, wallet-key custody or payment interface. Do not publish or reverse-proxy the console port.
 
 ## Computing and issuance
 

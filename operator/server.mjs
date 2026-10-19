@@ -1,5 +1,5 @@
-// Local observation, result recovery and explicit provider approvals. No wallet
-// key custody, execution, job intake or settlement authority.
+// Loopback controls for observation, recovery, provider signing and the optional
+// retained operator service. No wallet-key custody or settlement authority.
 import http from 'node:http';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -20,6 +20,8 @@ const files = new Map([
   ['/provider.js', ['provider.js', 'text/javascript; charset=utf-8']],
   ['/provider-wallet.js', ['provider-wallet.js', 'text/javascript; charset=utf-8']],
   ['/provider.css', ['provider.css', 'text/css; charset=utf-8']],
+  ['/service.js', ['service.js', 'text/javascript; charset=utf-8']],
+  ['/service.css', ['service.css', 'text/css; charset=utf-8']],
   ['/compute-engine.webp', ['../web/assets/editorial/compute-engine-small.webp', 'image/webp']]
 ]);
 const assets = new Map([...files].map(([route, [name, type]]) => [route, { type, body: fs.readFileSync(path.join(here, name)) }]));
@@ -77,7 +79,7 @@ export function createObserver(inventory) {
   };
 }
 
-export function createConsoleServer(observer,{results=null,provider=null}={}) {
+export function createConsoleServer(observer,{results=null,provider=null,service=null}={}) {
   const actionToken=randomBytes(32).toString('hex');
   const actions=new Map([
     ['/api/results/recover',['id',body=>results.recover(body.id)]],
@@ -88,7 +90,9 @@ export function createConsoleServer(observer,{results=null,provider=null}={}) {
     ['/api/provider/begin',['assignmentId',body=>provider.beginLaunch(body.assignmentId)]],
     ['/api/provider/review',['requestId',body=>provider.detail(body.requestId)]],
     ['/api/provider/submit',['requestId,signature',body=>provider.submit(body.requestId,body.signature)]],
-    ['/api/provider/decline',['requestId',body=>provider.decline(body.requestId)]]
+    ['/api/provider/decline',['requestId',body=>provider.decline(body.requestId)]],
+    ['/api/service/start',['',()=>service.start()]],
+    ['/api/service/stop',['',()=>service.stop()]]
   ]);
   const server=http.createServer({ requestTimeout: 5000, headersTimeout: 5000, maxHeaderSize: 8192 }, async (req, res) => {
     const origin = `http://127.0.0.1:${res.socket.localPort}`;
@@ -111,18 +115,18 @@ export function createConsoleServer(observer,{results=null,provider=null}={}) {
         !/^[0-9a-f]{64}$/.test(provided)||!timingSafeEqual(Buffer.from(provided),Buffer.from(actionToken))) {
         req.resume();res.writeHead(403).end();return;
       }
-      const signing=req.url.startsWith('/api/provider/');
-      if(!(signing?provider:results)){req.resume();json({error:signing?'No provider catalog is configured.':'No result store is configured.'},503);return;}
+      const signing=req.url.startsWith('/api/provider/'),operating=req.url.startsWith('/api/service/');
+      if(!(operating?service:signing?provider:results)){req.resume();json({error:operating?'No operator service is configured.':signing?'No provider catalog is configured.':'No result store is configured.'},503);return;}
       const timer=setTimeout(()=>req.destroy(),5000);let body;
       try {
         const chunks=[];let size=0;
-        for await(const chunk of req){size+=chunk.length;if(size>(signing?20480:8192))throw Error('Body limit');chunks.push(chunk);}
+        for await(const chunk of req){size+=chunk.length;if(size>(operating?64:signing?20480:8192))throw Error('Body limit');chunks.push(chunk);}
         body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
         if(!body||Array.isArray(body)||Object.keys(body).sort().join()!==actions.get(req.url)[0])throw Error('Body shape');
       }catch{if(!res.destroyed)json({error:'Use the selected item and a bounded console request.'},400);return;}
       finally{clearTimeout(timer);}
-      try{json(await actions.get(req.url)[1](body),req.url==='/api/results/start-retry'?202:200);}
-      catch{json({error:signing?'Provider approval unavailable. Refresh and review the retained assignment.':'Recovery action unavailable. Keep the retained result, refresh its state and review the selected relay.'},409);}
+      try{json(await actions.get(req.url)[1](body),operating||req.url==='/api/results/start-retry'?202:200);}
+      catch{json({error:operating?'Service action unavailable. Refresh lifecycle status and retain recovery state.':signing?'Provider approval unavailable. Refresh and review the retained assignment.':'Recovery action unavailable. Keep the retained result, refresh its state and review the selected relay.'},409);}
       return;
     }
     if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405, { Allow: 'GET, HEAD' }).end(); return; }
@@ -132,12 +136,15 @@ export function createConsoleServer(observer,{results=null,provider=null}={}) {
         const value=observer.status();
         value.resultStorage=results?results.snapshot():{state:'not-configured',reason:'No retained result store is selected for this console.'};
         value.providerApprovals=provider?provider.snapshot():{state:'not-configured',reason:'No retained provider assignments are selected for this console.'};
+        value.operatorService=service?service.snapshot():{state:'not-configured',reason:'No operator service is selected. This window shows machine observations only.'};
+        if(service){value.mode='operator-controls';value.worker.reason='Paid acceptance and earnings are not verified by local service or transport status.';
+          value.limits[value.limits.length-1]='The selected booked service has separate controls. Local sessions do not establish payment, token issuance or requester attestation.';}
         json(value);
       } catch { res.writeHead(503).end(); }
       return;
     }
-    if(req.url==='/api/control'){json({schema:'cannabis.console-control.v1',configured:Boolean(results||provider),
-      resultStorage:Boolean(results),providerApprovals:Boolean(provider),actionToken:results||provider?actionToken:null});return;}
+    if(req.url==='/api/control'){json({schema:'cannabis.console-control.v1',configured:Boolean(results||provider||service),
+      resultStorage:Boolean(results),providerApprovals:Boolean(provider),operatorService:Boolean(service),actionToken:results||provider||service?actionToken:null});return;}
     const asset = assets.get(req.url);
     if (!asset) { res.writeHead(404).end(); return; }
     res.writeHead(200, { 'Content-Type': asset.type, 'Content-Length': asset.body.length });
@@ -157,7 +164,7 @@ function openConsole(url) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  let directory,catalog,approvalDirectory,port=4201,open=false;const relayOrigins=[];
+  let directory,catalog,approvalDirectory,serviceFile,port=4201,open=false;const relayOrigins=[];
   const args=process.argv.slice(2);
   for(let i=0;i<args.length;i++) {
     if(args[i]==='--open'&&!open)open=true;
@@ -165,24 +172,28 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     else if(args[i]==='--relay-origin'&&args[i+1])relayOrigins.push(args[++i]);
     else if(args[i]==='--provider-catalog'&&!catalog&&args[i+1])catalog=args[++i];
     else if(args[i]==='--provider-approvals'&&!approvalDirectory&&args[i+1])approvalDirectory=args[++i];
+    else if(args[i]==='--operator-config'&&!serviceFile&&args[i+1])serviceFile=args[++i];
     else if(args[i]==='--port'&&/^[0-9]{1,5}$/.test(args[i+1]??''))port=Number(args[++i]);
-    else throw Error('Usage: node operator/server.mjs [--open] [--port PORT] [--result-store ABSOLUTE_PATH] [--relay-origin ORIGIN] [--provider-catalog ABSOLUTE_FILE --provider-approvals ABSOLUTE_DIRECTORY]');
+    else throw Error('Usage: node operator/server.mjs [--open] [--port PORT] [--operator-config ABSOLUTE_FILE | --result-store ABSOLUTE_PATH --relay-origin ORIGIN --provider-catalog ABSOLUTE_FILE --provider-approvals ABSOLUTE_DIRECTORY]');
   }
-  if(!Number.isSafeInteger(port)||port<1024||port>65535||relayOrigins.length&&!directory||Boolean(catalog)!==Boolean(approvalDirectory))throw Error('Invalid local console configuration');
-  let results=null,provider=null;
+  if(!Number.isSafeInteger(port)||port<1024||port>65535||relayOrigins.length&&!directory||Boolean(catalog)!==Boolean(approvalDirectory)||
+    serviceFile&&(directory||catalog||approvalDirectory||relayOrigins.length))throw Error('Invalid local console configuration');
+  let results=null,provider=null,service=null;
+  if(serviceFile){const {openOperatorService}=await import('./service.mjs');({service,results,provider}=await openOperatorService(serviceFile));}
   if(directory){const {ResultConsole}=await import('./storage-console.mjs');results=new ResultConsole(directory,{relayOrigins});}
   if(catalog){const {ProviderApprovals,readProviderCatalog}=await import('./provider-approvals.mjs');
     provider=new ProviderApprovals(readProviderCatalog(catalog),approvalDirectory);}
   const observer = createObserver(await localInventory());
-  const server = createConsoleServer(observer,{results,provider});
-  server.on('error', async error => { observer.close(); await results?.close(); await provider?.close(); console.error(error.code === 'EADDRINUSE' ? 'The selected port is already in use. No existing process was replaced.' : 'Console could not start.'); process.exitCode = 1; });
+  const server = createConsoleServer(observer,{results,provider,service});
+  let closing;
+  const close=()=>closing??=(async()=>{observer.close();server.close();server.closeAllConnections();
+    if(service)await service.close();else{await results?.close();await provider?.close();}})().catch(()=>{
+      console.error('Operator shutdown is unverified. Preserve recovery state and inspect owned processes.');process.exitCode=1;});
+  server.on('error', async error => { await close(); console.error(error.code === 'EADDRINUSE' ? 'The selected port is already in use. No existing process was replaced.' : 'Console could not start.'); process.exitCode = 1; });
   server.listen(port, '127.0.0.1', () => {
     const url = `http://127.0.0.1:${port}/`;
-    console.log(`Cannabis worker console: ${url}\nLocal observations${results?', encrypted-result recovery':''}${provider?', provider approvals':''}; paid execution is not admitted.`);
+    console.log(`Cannabis worker console: ${url}\nLocal observations${results?', encrypted-result recovery':''}${provider?', provider approvals':''}${service?', explicit booked-service controls':''}; paid acceptance is not verified.`);
     if (open) openConsole(url);
   });
-  let closing=false;
-  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
-    if(closing)return;closing=true;observer.close();server.close();server.closeAllConnections();await results?.close();await provider?.close();
-  });
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, close);
 }

@@ -3,6 +3,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { inspectLaunchHandoff,receiveLaunchHandoff } from '../compute/launch_handoff.mjs';
 import { stageOperatingGuest,relayOperatingGuest } from './guest-boot-channel.mjs';
 
@@ -10,6 +12,15 @@ const script=fileURLToPath(new URL('../scripts/compute-host-vm.py',import.meta.u
 const failure=()=>Error('Selected SNP VM is unavailable or its lifecycle did not complete; retain dispatch and result recovery state');
 const check=v=>{if(!v)throw failure();};
 const exact=(v,keys)=>check(v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join()===[...keys].sort().join());
+
+export async function inspectSnpHost(profileFile,{signal}={}) {
+  check(process.platform==='linux'&&process.geteuid()===0&&typeof profileFile==='string'&&path.isAbsolute(profileFile)&&!signal?.aborted);
+  const {stdout,stderr}=await promisify(execFile)('/usr/bin/python3',['-I','-B',script,'--inspect',profileFile],{
+    timeout:15000,maxBuffer:8192,signal,windowsHide:true,env:{PATH:'/usr/bin:/bin',LANG:'C.UTF-8',PYTHONDONTWRITEBYTECODE:'1'}});
+  const value=JSON.parse(stdout);exact(value,['schema','snpDeviceObserved','qemuSnpObjectObserved','hardwareValidated']);
+  check(!stderr&&value.schema==='cannabis.host-snp-observation.v1'&&value.snpDeviceObserved===true&&
+    value.qemuSnpObjectObserved===true&&value.hardwareValidated===false);return value;
+}
 
 export async function launchSnpVm(ticket,{profileFile,signal}={}) {
   check(process.platform==='linux'&&process.geteuid()===0&&typeof profileFile==='string'&&path.isAbsolute(profileFile)&&
@@ -79,15 +90,26 @@ export async function launchSnpVm(ticket,{profileFile,signal}={}) {
 
 // Use as the provider's retained route handler. Independent providers can own
 // this adapter; no founder service or universal launch signer is consulted.
-export async function runSnpBookedSession(requester,local,{profileFile,origin,spool,reserveResult,signal,fetchImpl,wait}={}) {
-  let vm,guest;
+export async function runSnpBookedSession(requester,local,{profileFile,origin,spool,reserveResult,signal,fetchImpl,wait,onStage}={}) {
+  check(onStage===undefined||typeof onStage==='function');let vm,guest,cleanup;
+  // Observations are output-only. A UI failure cannot grant or cancel authority.
+  const stage=(phase,report)=>{try{onStage?.(Object.freeze({phase,...(report?{localTreeStopped:report.localTreeStopped===true}:{}),
+    hardwareValidated:false,protectedKeyRetirementVerified:false}));}catch{}};
   try {
+    stage('awaiting-requester');
     const ticket=await receiveLaunchHandoff(requester,{signed:local.signed,initialization:local.initialization,proof:local.proof},{signal});
+    stage('starting-vm');
     vm=await launchSnpVm(ticket,{profileFile,signal});
+    stage('staging-guest');
     guest=await stageOperatingGuest(vm.socket,ticket,{signal});
+    stage('relaying-encrypted-session');
     const result=await relayOperatingGuest(guest,{origin,spool,reserveResult,signal,fetchImpl,wait});
-    const cleanup=await vm.completion;
+    stage('awaiting-vm-stop');cleanup=await vm.completion;stage('local-session-finished',cleanup);
     return {...result,hostVm:cleanup};
-  }catch(error){vm?.cancel();if(vm)await vm.completion.catch(()=>{});requester.fail();throw error;}
+  }catch(error){stage('stopping');vm?.cancel();
+    if(vm)cleanup=await vm.completion.catch(failure=>failure.localCleanupReport??null);
+    else cleanup=error.localCleanupReport??null;
+    stage(cleanup?.localTreeStopped?'failed-local-tree-stopped':'failed-cleanup-unknown',cleanup);
+    requester.fail();throw error;}
   finally{guest?.close();}
 }
