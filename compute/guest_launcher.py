@@ -83,7 +83,6 @@ def relay_guest(scope, proc, reader, writer, *, max_ciphertext_bytes):
     if len(set(descriptors)) != len(descriptors) or any(os.isatty(fd) for fd in descriptors):
         raise ValueError('Require distinct nonterminal transport descriptors')
     blocking = {fd:os.get_blocking(fd) for fd in descriptors}
-    child_pidfd, guardian = scope.monitor_handles()
     pending_in, pending_out = bytearray(), bytearray()
     incoming_open = outgoing_open = child_input_open = True
     received = sent = 0
@@ -91,6 +90,7 @@ def relay_guest(scope, proc, reader, writer, *, max_ciphertext_bytes):
     # bounds. This additional stream ceiling includes fixed public frame overhead.
     stream_limit = max_ciphertext_bytes + 32*1024**2
     try:
+        child_pidfd, guardian = scope.monitor_handles()
         for fd in descriptors: os.set_blocking(fd, False)
         while True:
             scope.assert_alive()

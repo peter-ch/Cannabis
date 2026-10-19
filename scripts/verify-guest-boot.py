@@ -113,7 +113,7 @@ def main():
         'shorterControlDeadlineBoundsWholeTree', 'stoppedOuterOwnerDeadline', 'outerOwnerDeathRetiresControlAndWorkload'}
     execution_cases = {'success', 'resource-change', 'profile-underbudget', 'runtime-change', 'owner-death', 'deadline'}
     launcher_cases = {'kernelSealsPreventMutation','publicInputTypeAndSizeRefusals','success','failed-exit',
-        'backpressure','stopped-control','guardian-death','busy-exit'}
+        'backpressure','stopped-control','guardian-death','guardian-reaped','busy-exit'}
     for field, schema, cases in [('jobChecks','cannabis.guest-job-check.v1',job_cases),
                                  ('launcherChecks','cannabis.guest-launcher-check.v1',launcher_cases),
                                  ('executionChecks','cannabis.guest-execution-check.v1',execution_cases)]:

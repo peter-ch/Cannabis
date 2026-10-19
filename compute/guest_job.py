@@ -114,10 +114,14 @@ class GuestJobScope:
         if self._closed:
             return
         try:
-            if self._guard is not None:
-                self._guard.close()
-            if self._control is not None:
-                self._control.close()
+            try:
+                if self._guard is not None:
+                    self._guard.close()
+            finally:
+                # A failed guardian performs retained-tree fallback and then
+                # raises. Release the control leaf's descriptors on that path too.
+                if self._control is not None:
+                    self._control.close()
         finally:
             if self._child is not None:
                 if self._child.poll() is None:

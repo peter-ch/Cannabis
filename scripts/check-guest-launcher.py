@@ -52,7 +52,7 @@ def run(parent,base):
         except (OSError,ValueError):pass
         else:raise AssertionError('Unsafe public input accepted')
     checks['publicInputTypeAndSizeRefusals']=True
-    for mode in ['success','failed-exit','backpressure','stopped-control','guardian-death','busy-exit']:
+    for mode in ['success','failed-exit','backpressure','stopped-control','guardian-death','guardian-reaped','busy-exit']:
         print('Owned outer-launch check: '+mode,file=sys.stderr,flush=True)
         marker=base/(mode+'.ready')
         program=base/(mode+'.py')
@@ -74,16 +74,21 @@ def run(parent,base):
             assert marker.exists(),'Owned relay child did not become ready'
             if mode=='success':os.write(peer_write,b'PING')
             if mode=='stopped-control':os.kill(proc.pid,signal.SIGSTOP)
-            if mode=='guardian-death':os.kill(scope._guard._process.pid,signal.SIGKILL)
+            if mode in ['guardian-death','guardian-reaped']:
+                os.kill(scope._guard._process.pid,signal.SIGKILL)
+                if mode=='guardian-reaped':scope._guard._process.wait(timeout=5)
             os.close(peer_write);peer_write=None
             try:
                 result=relay_guest(scope,proc,to_guest,from_guest,max_ciphertext_bytes=1024)
+            except EOFError:
+                assert mode in ['guardian-death','guardian-reaped']
             except (RuntimeError,ValueError,OSError):
                 assert mode!='success'
             else:
                 assert mode=='success' and result['reason']=='finished'
                 assert os.read(peer_read,4)==b'PONG'
             assert proc.poll() is not None and not scope.path.exists()
+            assert scope._control._fd is None and scope._control._parent is None
             assert os.get_blocking(to_guest) and os.get_blocking(from_guest)
             checks[mode]=True
         finally:

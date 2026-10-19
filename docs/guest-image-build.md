@@ -73,7 +73,7 @@ python3 scripts/verify-guest-boot.py \
   --output /work/cannabis-image-first-boot
 ```
 
-This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default boot-check deadline is thirty minutes, allowing CPU emulation of the expanded 79-case suite; individual component, workload and cleanup deadlines remain enforced separately. Failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private. The owned entry point emits bounded phase names so slow or stalled checks can be distinguished without customer content.
+This uses QEMU's ordinary TCG CPU emulation, two vCPUs and 2 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor, QMP or debugger. The default boot-check deadline is thirty minutes, allowing CPU emulation of the expanded 80-case suite; individual component, workload and cleanup deadlines remain enforced separately. Failure or timeout does not count as a successful boot. Keep the serial log and verification JSON private. The owned entry point emits bounded phase names so slow or stalled checks can be distinguished without customer content.
 
 Inside the VM, the entry point mounts ephemeral runtime storage, disables core dumps and further kernel-module loading, checks embedded files, exercises the Python extensions and age executable, and starts the actual attestation agent and REST bridge on loopback. Both production CPU probes must reject the unsupported sample profile with their exact structured refusal. Import errors, missing libraries and unexpected success fail the check. No hardware evidence, channel key, job key or customer computation is requested. The services are terminated and the VM powers off.
 
@@ -86,10 +86,11 @@ configuration and kernel admission using disposable authorities and synthetic
 appraisal. Neither check establishes a production signer set or actual hardware
 admission.
 
-Eight additional kernel cases check immutable public launch snapshots, unsafe
+Nine additional kernel cases check immutable public launch snapshots, unsafe
 input refusal, successful opaque relay and cleanup after failed control exit,
-write backpressure, a stopped control process, guardian death or a lingering
-descendant. These are owned lifecycle checks. The boot initializer still powers
+write backpressure, a stopped control process, guardian death before or during
+relay startup, or a lingering descendant. Failed cleanup channels must still
+release retained control-group descriptors. These are owned lifecycle checks. The boot initializer still powers
 off; it does not activate the operating launcher or accept customer jobs.
 
 The check deliberately does not treat execution on real SNP/TDX hardware as an accepted deployment: that requires the separate initialization, measurement, negative-case and full workload acceptance run. Do not turn an ordinary boot result into an attestation policy.
