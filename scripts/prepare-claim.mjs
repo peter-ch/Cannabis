@@ -18,12 +18,13 @@ export async function prepareClaim({ rpc, chainId, token, recipient, codeHash, p
     if (code === '0x' || keccak256(code).toLowerCase() !== codeHash.toLowerCase()) throw Error('Contract code does not match verified release');
     const contract = new Contract(token, compile().Cannabis.abi, provider);
     if (BigInt(proof.message) !== BigInt(recipient) || BigInt(proof.scope) !== await contract.claimScope()) throw Error('Proof recipient or scope does not match');
+    const minimumClaimMembers = Number(await contract.minimumClaimMembers());
     await contract.claim.staticCall(recipient, proof, { from: recipient });
     return { name: 'Cannabis', status: 'UNSIGNED_VERIFIED_CLAIM', checkedAt: new Date().toISOString(),
-      chainId: chainId.toString(), token, recipient, deployedCodeHash: keccak256(code),
+      chainId: chainId.toString(), token, recipient, deployedCodeHash: keccak256(code), minimumClaimMembers,
       transaction: { chainId: toBeHex(chainId), from: recipient, to: token,
         data: contract.interface.encodeFunctionData('claim', [recipient, proof]), value: '0x0' },
-      sent: false, review: 'Review the canonical chain, contract and recipient in your wallet. Re-simulate immediately before signing; membership updates can stale the proof. Network fees apply.' };
+      sent: false, review: 'Review the canonical chain, contract and recipient in your wallet. A singleton group cannot hide which member claimed; small groups limit privacy. You may wait for more real members. Re-simulate immediately before signing; membership updates can stale the proof. Network fees apply.' };
   } finally { provider.destroy(); }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

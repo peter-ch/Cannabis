@@ -11,7 +11,7 @@ import { Group } from '@semaphore-protocol/group';
 import { verifyProof } from '@semaphore-protocol/proof';
 import { createEncryptedIdentity, inspectEncryptedIdentity, generateClaimProof, validateMembershipSnapshot, claimScope } from '../claims/identity.mjs';
 
-let directory, age, identityFile, vault, backup, context, snapshot, artifacts;
+let directory, age, identityFile, vault, backup, context, snapshot, artifacts, singletonArtifacts;
 const recipient = '0x' + '12'.repeat(20), token = '0x' + '13'.repeat(20);
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 function config() { return { age, identityFile, vault, commitment: backup.commitment, context, snapshot, artifacts, recipient }; }
@@ -33,22 +33,24 @@ before(async () => {
   // Download only in fixture setup. The participant API must use explicitly supplied pinned bytes.
   // Await the output stream's completion before reading or pinning fixture bytes.
   // The shared downloader can return while its final writes are still pending.
-  const paths = {};
-  for (const extension of ['wasm', 'zkey']) {
-    const file = path.join(directory, 'semaphore-7.' + extension);
-    const response = await fetch('https://snark-artifacts.pse.dev/semaphore/4.13.0/semaphore-7.' + extension);
-    assert.ok(response.ok && response.body, 'Unable to download the proving fixture');
-    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(file, { flags: 'wx', mode: 0o600 }));
-    paths[extension] = file;
-  }
   const artifact = file => { const data = fs.readFileSync(file); return { path: file, bytes: data.length, sha256: digest(data) }; };
-  artifacts = { depth: 7, wasm: artifact(paths.wasm), zkey: artifact(paths.zkey) };
+  for (const depth of [1,7]) {
+    const selected={depth};
+    for (const extension of ['wasm', 'zkey']) {
+      const file = path.join(directory, `semaphore-${depth}.${extension}`);
+      const response = await fetch(`https://snark-artifacts.pse.dev/semaphore/4.13.0/semaphore-${depth}.${extension}`);
+      assert.ok(response.ok && response.body, 'Unable to download the proving fixture');
+      await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(file, { flags: 'wx', mode: 0o600 }));
+      selected[extension]=artifact(file);
+    }
+    if(depth===1)singletonArtifacts=selected;else artifacts=selected;
+  }
 });
 after(async () => {
   await globalThis.curve_bn128?.terminate();
   if (directory) {
     // Remove only explicitly created fixture files from the verified owned directory.
-    for (const name of ['owner.key', 'participant.age', 'corrupt.age', 'other.key', 'other.age', 'bad.key', 'config.json', 'result.json', 'membership.json', 'proof.json', 'bad-proof.json', 'semaphore-7.wasm', 'semaphore-7.zkey']) fs.rmSync(path.join(directory, name), { force: true });
+    for (const name of ['owner.key', 'participant.age', 'corrupt.age', 'other.key', 'other.age', 'bad.key', 'config.json', 'result.json', 'membership.json', 'proof.json', 'bad-proof.json', 'semaphore-7.wasm', 'semaphore-7.zkey', 'semaphore-1.wasm', 'semaphore-1.zkey']) fs.rmSync(path.join(directory, name), { force: true });
     fs.rmdirSync(directory);
   }
 });
@@ -104,6 +106,21 @@ test('incorrect artifact pins and depth fail before opening participant custody'
     await assert.rejects(generateClaimProof({ ...config(), vault: path.join(directory, 'missing.age'), artifacts: changed }), /artifact does not match/);
   }
   await assert.rejects(generateClaimProof({ ...config(), artifacts: { ...artifacts, depth: 8 } }), /group depth/);
+});
+test('a singleton snapshot proves offline with pinned depth-one artifacts and no invented member', async () => {
+  const group=new Group([backup.commitment]);assert.equal(group.depth,0);
+  const selectedContext={...context,memberCount:1,root:group.root.toString()};
+  const selectedSnapshot={...snapshot,root:selectedContext.root,commitments:[backup.commitment]};
+  assert.equal(validateMembershipSnapshot(selectedSnapshot,selectedContext).size,1);
+  assert.throws(()=>validateMembershipSnapshot({...selectedSnapshot,commitments:[]},{...selectedContext,memberCount:0}),/at least one/);
+  const originalFetch=globalThis.fetch;globalThis.fetch=()=>{throw Error('Network forbidden during participant proving');};
+  try {
+    const options={...config(),context:selectedContext,snapshot:selectedSnapshot,artifacts:singletonArtifacts};
+    const result=await generateClaimProof(options);assert.equal(result.merkleTreeDepth,1);assert.equal(result.merkleTreeRoot,selectedContext.root);
+    assert.equal(await verifyProof(result),true);assert.equal(selectedSnapshot.commitments.length,1);
+    await assert.rejects(generateClaimProof({...options,artifacts:{...singletonArtifacts,depth:0}}),/group depth/);
+    await assert.rejects(generateClaimProof({...options,artifacts}),/group depth/);
+  }finally{globalThis.fetch=originalFetch;}
 });
 test('actual offline proof binds the recipient and scope and reveals no member identifier', async () => {
   const originalFetch = globalThis.fetch;

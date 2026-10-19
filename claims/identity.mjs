@@ -114,7 +114,7 @@ export function validateMembershipSnapshot(snapshot, context) {
   exact(snapshot, ['schema', 'chainId', 'token', 'root', 'commitments']);
   claimScope(context.chainId, context.token); decimal(context.root);
   if (snapshot.schema !== 'cannabis.membership-snapshot.v1' || snapshot.chainId !== context.chainId || address(snapshot.token) !== address(context.token) || snapshot.root !== context.root) throw Error('Membership context mismatch');
-  if (!Number.isSafeInteger(context.memberCount) || context.memberCount < 128 || context.memberCount > 990000 || !Array.isArray(snapshot.commitments) || snapshot.commitments.length !== context.memberCount) throw Error('Require the complete membership list and at least 128 members');
+  if (!Number.isSafeInteger(context.memberCount) || context.memberCount < 1 || context.memberCount > 990000 || !Array.isArray(snapshot.commitments) || snapshot.commitments.length !== context.memberCount) throw Error('Require the complete membership list and at least one enrolled member');
   const members = snapshot.commitments.map(member => decimal(member));
   if (new Set(snapshot.commitments).size !== members.length) throw Error('Duplicate membership commitment');
   const group = new Group(members);
@@ -132,12 +132,15 @@ export async function generateClaimProof(options) {
   const { snapshot, context, artifacts } = structuredClone({ snapshot: options.snapshot, context: options.context, artifacts: options.artifacts });
   const recipient = address(options.recipient), group = validateMembershipSnapshot(snapshot, context);
   exact(artifacts, ['depth', 'wasm', 'zkey']);
-  if (artifacts.depth !== group.depth || artifacts.depth < 7 || artifacts.depth > 20) throw Error('Proving artifacts must match the complete group depth');
+  // A singleton LeanIMT has depth zero. Semaphore supports it using its depth-one
+  // circuit; no fabricated identity or additional group leaf is inserted.
+  const proofDepth = Math.max(1, group.depth);
+  if (artifacts.depth !== proofDepth || artifacts.depth < 1 || artifacts.depth > 20) throw Error('Proving artifacts must match the complete group depth (minimum circuit depth one)');
   const wasm = pinnedArtifact(artifacts.wasm, 32 * 1024 * 1024);
   const zkey = pinnedArtifact(artifacts.zkey, 128 * 1024 * 1024);
   return withIdentity(options, async identity => {
     if (group.indexOf(identity.commitment) < 0) throw Error('Identity is not in this membership snapshot');
-    const proof = await generateProof(identity, group, BigInt(recipient), claimScope(context.chainId, context.token), group.depth, { wasm, zkey });
+    const proof = await generateProof(identity, group, BigInt(recipient), claimScope(context.chainId, context.token), proofDepth, { wasm, zkey });
     if (!await verifyProof(proof)) throw Error('Generated proof failed verification');
     // No commitment, member index, Merkle path or identity secret in the public output.
     return proof;

@@ -14,6 +14,9 @@ const valid = { founder: '0x1111111111111111111111111111111111111111', launch: '
 test('mainnet launch validates a concrete beneficiary, network, schedule and emissions', () => {
   const result = validateLaunch(valid, now);
   assert.equal(result.network.chainId, 8453);
+  assert.equal(result.minimumClaimMembers,1);
+  for (const minimumClaimMembers of [1,4,8,990000]) assert.equal(validateLaunch({...valid,minimumClaimMembers},now).minimumClaimMembers,minimumClaimMembers);
+  for (const minimumClaimMembers of [0,990001,-1,1.5,'4',null,NaN,Infinity]) assert.throws(()=>validateLaunch({...valid,minimumClaimMembers},now),/Minimum claim members/);
   assert.equal(result.registrarAddress, valid.registrar);
   assert.equal(new Date(result.end * 1000).toISOString(), '2028-11-01T12:00:00.000Z');
 });
@@ -29,9 +32,17 @@ for (const network of ['base', 'ethereum']) test(`exported source independently 
   const fixture = await dependencyRPC(undefined, network === 'ethereum' ? '1' : '8453');
   try {
     const launch = new Date(Date.now() + 14 * 86400000).toISOString().replace(/\.\d{3}Z$/, 'Z');
-    await prepare({ ...valid, network, launch, out, semaphoreCodeHash: fixture.config.dependencies.semaphore.codeHash, dependencyConfig: fixture.config });
+    const minimumClaimMembers=network==='base'?4:1;
+    await prepare({ ...valid, minimumClaimMembers, network, launch, out, semaphoreCodeHash: fixture.config.dependencies.semaphore.codeHash, dependencyConfig: fixture.config });
     const manifest = JSON.parse(fs.readFileSync(path.join(out, 'launch-manifest.json'), 'utf8'));
     assert.equal(manifest.maxSupply, '420000000');
+    assert.equal(manifest.minimumEnrolledMembersForClaim, minimumClaimMembers);
+    assert.equal(manifest.constructorArguments.at(-1),minimumClaimMembers);
+    assert.equal(manifest.claimPolicyAuthority,valid.founder);
+    assert.match(manifest.claimMinimumPolicy,/already enrolled count/);
+    assert.equal(manifest.minimumParticipantsForDeployment, 0);
+    assert.equal(Object.hasOwn(manifest,'minimumAnonymitySet'),false);
+    assert.match(manifest.membershipPrivacy,/singleton/);
     assert.equal(manifest.chain.chainId, network === 'ethereum' ? 1 : 8453);
     assert.equal(manifest.founderAllocation, '4200000');
     assert.equal(manifest.communityAllocation, '415800000');

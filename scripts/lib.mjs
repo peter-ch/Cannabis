@@ -53,14 +53,14 @@ export function end24Months(start) {
   date.setUTCDate(Math.min(originalDay, lastDay));
   return Math.floor(date.getTime() / 1000);
 }
-export async function deploy(provider, artifact, { delay = 100, semaphoreAddress, registrar } = {}) {
+export async function deploy(provider, artifact, { delay = 100, semaphoreAddress, registrar, minimumClaimMembers = 1 } = {}) {
   const founder = await provider.getSigner(0);
   const block = await provider.getBlock('latest');
   const start = block.timestamp + delay;
   const end = end24Months(start);
   registrar ??= await (await provider.getSigner(2)).getAddress();
   const token = await new ContractFactory(artifact.abi, artifact.bytecode, founder)
-    .deploy(await founder.getAddress(), start, end, semaphoreAddress, registrar);
+    .deploy(await founder.getAddress(), start, end, semaphoreAddress, registrar, minimumClaimMembers);
   await token.waitForDeployment();
   return { token, start, end, founder: await founder.getAddress(), registrar };
 }

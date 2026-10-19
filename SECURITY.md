@@ -2,7 +2,7 @@
 
 Cannabis is preparing mainnet launch. Its custom contracts and complete deployment have not received an independent security/privacy audit. Existing library audits and passing tests do not constitute an audit of Cannabis.
 
-The design uses OpenZeppelin ERC-20 components and Semaphore zero-knowledge membership proofs. It has a fixed supply cap, immutable founder vesting, append-only enrollment, recipient-bound claims, network/contract-bound nullifiers, a 128-commitment threshold, and no upgrade, tax, blacklist or administrator mint function.
+The design uses OpenZeppelin ERC-20 components and Semaphore zero-knowledge membership proofs. It has a fixed supply cap, immutable founder vesting, append-only enrollment, recipient-bound claims, network/contract-bound nullifiers, and no upgrade, tax, blacklist or administrator mint function. The initial claim minimum defaults to one verified member and is configurable at deployment. The founder wallet can only raise it up to the already enrolled count; it cannot use an increase to suspend eligible claims or change allocations. No recruitment quota blocks deployment. A singleton group provides no membership anonymity; small groups limit privacy.
 
 The enrollment registrar remains a trust dependency: it must admit distinct verified people exactly once, protect enrollment metadata and prevent identity-reset abuse. A compromised or dishonest registrar could admit fake identities and weaken distribution fairness and effective anonymity. This must be independently reviewed before launch.
 

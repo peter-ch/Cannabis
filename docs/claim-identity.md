@@ -56,7 +56,7 @@ The proof configuration extends the recovery configuration with:
     "chainId": "CANONICAL_CHAIN_ID",
     "token": "VERIFIED_TOKEN_ADDRESS",
     "root": "CURRENT_DECIMAL_GROUP_ROOT",
-    "memberCount": 128
+    "memberCount": 1
   },
   "snapshot": {
     "schema": "cannabis.membership-snapshot.v1",
@@ -66,20 +66,20 @@ The proof configuration extends the recovery configuration with:
     "commitments": ["COMPLETE_ORDERED_DECIMAL_COMMITMENTS"]
   },
   "artifacts": {
-    "depth": 7,
-    "wasm": { "path": "C:/reviewed/semaphore-7.wasm", "sha256": "REVIEWED_SHA256", "bytes": 123 },
-    "zkey": { "path": "C:/reviewed/semaphore-7.zkey", "sha256": "REVIEWED_SHA256", "bytes": 456 }
+    "depth": 1,
+    "wasm": { "path": "C:/reviewed/semaphore-1.wasm", "sha256": "REVIEWED_SHA256", "bytes": 123 },
+    "zkey": { "path": "C:/reviewed/semaphore-1.zkey", "sha256": "REVIEWED_SHA256", "bytes": 456 }
   }
 }
 ~~~
 
-These are placeholders, not a deployment or artifact manifest. Replace the count, depth, byte sizes and hashes with the actual reviewed values. The depth must match the reconstructed full group (7 through 20). Hashes supplied by the same untrusted download do not establish provenance: get artifact pins through the reviewed release. The library's current default circuit version is 4.13.0, distinct from its 4.14.5 package version; production tooling always supplies explicit artifacts and never invokes the automatic downloader.
+These are placeholders, not a deployment or artifact manifest. Replace the count, depth, byte sizes and hashes with the actual reviewed values. Use the reconstructed full group depth, with a minimum circuit depth of one (supported client range: 1 through 20). A singleton tree has depth zero and uses depth-one artifacts without adding another member. Hashes supplied by the same untrusted download do not establish provenance: get artifact pins through the reviewed release. The library's current default circuit version is 4.13.0, distinct from its 4.14.5 package version; production tooling always supplies explicit artifacts and never invokes the automatic downloader.
 
 ~~~sh
 node scripts/claim-identity.mjs prove --config prove-config.json --out proof.json
 ~~~
 
-The prover checks canonical integers, deployment context, a unique list of 128–990,000 commitments, reconstructed root, membership, and artifact byte counts and SHA-256 hashes. It uses the checked artifact bytes in memory, preventing a later path substitution from changing the proving inputs. It derives the exact contract scope from the chain ID and token address, binds the receiving wallet as the message, and verifies the generated proof before returning it. A count of commitments alone is not evidence of distinct humans; that remains the provider's responsibility. The [Semaphore proof guide](https://docs.semaphore.pse.dev/guides/proofs) explains proof messages and scopes.
+The prover checks canonical integers, deployment context, a unique list of 1–990,000 commitments, reconstructed root, membership, and artifact byte counts and SHA-256 hashes. It uses the checked artifact bytes in memory, preventing a later path substitution from changing the proving inputs. It derives the exact contract scope from the chain ID and token address, binds the receiving wallet as the message, and verifies the generated proof before returning it. A count of commitments alone is not evidence of distinct humans; that remains the ceremony reviewers' responsibility. A singleton group gives no membership anonymity, and a small group gives limited privacy. Participants may wait for more genuine members before claiming; the launch minimum defaults to one. The downloader checks the deployed minimum; final claim preparation re-simulates against current on-chain policy. The [Semaphore proof guide](https://docs.semaphore.pse.dev/guides/proofs) explains proof messages and scopes.
 
 Only `proof.json` belongs in the unsigned [claim preparation](community-claims.md) step. That step checks the deployed code and simulates the claim. The offline prover trusts the context you supply; it cannot establish that a root is currently canonical. Membership updates can require a new proof and simulation before signing.
 

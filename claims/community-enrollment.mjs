@@ -58,7 +58,7 @@ export function normalizeCeremonyPolicy(input){
     for(const key of witnesses){if(used.has(key))throw Error('Venue and registry roles must be separate; venue keys cannot repeat across simultaneous venues');used.add(key);}
     return {id:v.id,capacity:v.capacity,quorum:v.quorum,witnesses};
   }).sort((a,b)=>order(a.id,b.id));
-  if(capacity>(990000)||capacity<(input.round===1?128:1))throw Error('Invalid total ceremony capacity');
+  if(capacity>990000||capacity<1)throw Error('Invalid total ceremony capacity');
   const policy={schema:input.schema,chainId:input.chainId,registrar:address(input.registrar),enrollment:address(input.enrollment),
     registryReviewers,registryQuorum:input.registryQuorum,round:input.round,startsAt,endsAt,submissionsCloseAt,venues};
   if(policy.registrar===policy.enrollment)throw Error('Registrar and enrollment must differ');return policy;

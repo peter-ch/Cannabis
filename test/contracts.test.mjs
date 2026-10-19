@@ -17,7 +17,7 @@ async function timestamp(time) { await provider.send('evm_setNextBlockTimestamp'
 async function claim() { return (await token.connect(recipient).claim(address, proof)).wait(); }
 before(async () => {
   artifacts = compile({ ...localSources,
-    'ExhaustionHarness.sol': { content: '// SPDX-License-Identifier: MIT\npragma solidity ^0.8.30;\nimport {Cannabis} from "Cannabis.sol";\ncontract ExhaustionHarness is Cannabis { constructor(address f,uint64 s,uint64 e,address sem,address r) Cannabis(f,s,e,sem,r) { communityIssued = COMMUNITY_ALLOCATION - CLAIM_AMOUNT; _mint(f,communityIssued); } }' },
+    'ExhaustionHarness.sol': { content: '// SPDX-License-Identifier: MIT\npragma solidity ^0.8.30;\nimport {Cannabis} from "Cannabis.sol";\ncontract ExhaustionHarness is Cannabis { constructor(address f,uint64 s,uint64 e,address sem,address r) Cannabis(f,s,e,sem,r,1) { communityIssued = COMMUNITY_ALLOCATION - CLAIM_AMOUNT; _mint(f,communityIssued); } }' },
     'EnrollmentCapacityHarness.sol': { content: '// SPDX-License-Identifier: MIT\npragma solidity ^0.8.30;\nimport {CannabisEnrollment} from "Cannabis.sol";\ncontract EnrollmentCapacityHarness is CannabisEnrollment { constructor(address s,address r) CannabisEnrollment(s,r) { enrolledCount = MAX_MEMBERS - 1; } }' }
   });
   node = await startNode(await freePort(), 'test-node.log'); provider = node.provider;
@@ -30,9 +30,9 @@ before(async () => {
 });
 after(async () => { provider?.destroy(); node?.child.kill(); await closeProver(); });
 async function reset() { await provider.send('evm_revert', [initial]); initial = await provider.send('evm_snapshot', []); }
-async function membershipOptions() {
-  const names = { token: await token.getAddress(), enrollment: await enrollment.getAddress(), semaphore: await semaphore.getAddress() };
-  const release = { chainId: '31337', ...names, fromBlock: (await token.deploymentTransaction().wait()).blockNumber };
+async function membershipOptions(selected = token) {
+  const names = { token: await selected.getAddress(), enrollment: await selected.enrollment(), semaphore: await selected.semaphore() };
+  const release = { chainId: '31337', ...names, fromBlock: (await selected.deploymentTransaction().wait()).blockNumber };
   for (const [name, target] of Object.entries(names)) release[name + 'CodeHash'] = keccak256(await provider.getCode(target));
   return { rpc: node.rpc, release, pageSize: 2 };
 }
@@ -112,16 +112,23 @@ test('membership downloader rejects incomplete, repeated, wrong-group and altere
 test('membership downloader rejects code substitution, anchor changes, stale heads and newer membership', async () => {
   await reset(); const options = await membershipOptions();
   const rootSelector = new Interface(['function getMerkleTreeRoot(uint256) view returns (uint256)']).getFunction('getMerkleTreeRoot').selector;
-  for (const mode of ['code','anchor','stale','new-members']) {
-    let rootReads = 0, changed = false;
+  const policyABI = new Interface(['function minimumClaimMembers() view returns (uint32)']);
+  for (const mode of ['code','anchor','stale','new-members','new-policy','invalid-policy']) {
+    let rootReads = 0, policyReads = 0, changed = false;
     const proxy = await rpcProxy((request, response) => {
       if (mode === 'code' && request.method === 'eth_getCode') { response.result = '0x6000'; changed = true; }
       if (mode === 'anchor' && request.method === 'eth_getBlockByNumber' && request.params[0].startsWith('0x')) { response.result.hash = '0x' + 'ab'.repeat(32); changed = true; }
       if (mode === 'stale' && request.method === 'eth_getBlockByNumber' && request.params[0] === 'latest') { response.result.timestamp = '0x1'; changed = true; }
       if (mode === 'new-members' && request.method === 'eth_call' && request.params[0].data.startsWith(rootSelector) && ++rootReads > 1) { response.result = '0x' + '01'.repeat(32); changed = true; }
+      if (request.method === 'eth_call' && request.params[0].data === policyABI.encodeFunctionData('minimumClaimMembers')) {
+        policyReads++;
+        if (mode === 'invalid-policy' || (mode === 'new-policy' && policyReads > 1)) {
+          response.result = policyABI.encodeFunctionResult('minimumClaimMembers',[mode === 'invalid-policy' ? 0 : 8]);changed = true;
+        }
+      }
     });
     try {
-      await assert.rejects(downloadMembershipSnapshot({ ...options, rpc: proxy.rpc }), /Runtime-code hash|anchor changed|stale or inconsistent|Membership changed/);
+      await assert.rejects(downloadMembershipSnapshot({ ...options, rpc: proxy.rpc }), /Runtime-code hash|anchor changed|stale or inconsistent|Membership changed|Claim minimum changed|Invalid on-chain claim minimum/);
       assert.equal(changed, true);
     } finally { await proxy.close(); }
   }
@@ -198,14 +205,41 @@ test('enrollment admits the final eligible member and rejects excess capacity at
   assert.equal(await registry.enrolledCount(), 990000n);
   await assert.rejects(registry.addVerifiedMembers.staticCall([localIdentity(1).commitment]), /InvalidEnrollment/);
 });
-test('small groups and stale roots cannot bypass the anonymity threshold', async () => {
+test('empty membership cannot claim and stale roots still require regeneration', async () => {
   await reset(); const other = await deploy(provider, artifacts.Cannabis, { semaphoreAddress: await semaphore.getAddress(), delay: 100 });
   await timestamp(Math.max(start, other.start));
-  await assert.rejects(other.token.claim.staticCall(address, { ...proof, scope: (await other.token.claimScope()).toString() }), /AnonymitySetTooSmall/);
+  await assert.rejects(other.token.claim.staticCall(address, { ...proof, scope: (await other.token.claimScope()).toString() }), /InsufficientEnrolledMembers/);
   await (await enrollment.addVerifiedMembers([localIdentity(128).commitment])).wait();
   await assert.rejects(token.claim.staticCall(address, proof), /MembershipRootChanged/);
   const refreshed = await generateProof(localIdentity(1), localGroup(129), BigInt(address), await token.claimScope());
   await (await token.claim(address, refreshed)).wait(); assert.equal(await token.balanceOf(address), parseEther('420'));
+});
+test('the first enrolled member can claim at opening, then newcomers join without resetting one-time claims', async () => {
+  await reset();const first = await deploy(provider, artifacts.Cannabis, { semaphoreAddress: await semaphore.getAddress(), delay: 100 });
+  const registry = new Contract(await first.token.enrollment(), artifacts.CannabisEnrollment.abi, await provider.getSigner(2));
+  await assert.rejects(downloadMembershipSnapshot(await membershipOptions(first.token)), /1 to 990000/);
+  await (await registry.addVerifiedMembers([localIdentity(0).commitment])).wait();
+  const one = await downloadMembershipSnapshot(await membershipOptions(first.token));
+  assert.equal(one.context.memberCount, 1);assert.deepEqual(one.snapshot.commitments,[localIdentity(0).commitment.toString()]);
+  const scope=await first.token.claimScope(),single=await generateProof(localIdentity(0),localGroup(1),BigInt(address),scope);
+  assert.equal(single.merkleTreeDepth,1);assert.equal(await verifyProof(single),true);
+  await assert.rejects(first.token.claim.staticCall(address,single),/ClaimsNotOpen/);
+  await timestamp(first.start);await (await first.token.claim(address,single)).wait();
+  assert.equal(await first.token.balanceOf(address),parseEther('420'));assert.equal(await registry.enrolledCount(),1n);
+  assert.equal(first.token.interface.getFunction('MIN_ANONYMITY_SET'),null);
+  assert.equal(await first.token.minimumClaimMembers(),1n);
+  const other=await (await provider.getSigner(3)).getAddress();
+  const repeat=await generateProof(localIdentity(0),localGroup(1),BigInt(other),scope);
+  await assert.rejects(first.token.claim.staticCall(other,repeat),/AlreadyClaimed/);
+  await (await registry.addVerifiedMembers([localIdentity(1).commitment])).wait();
+  const fresh=await generateProof(localIdentity(1),localGroup(2),BigInt(other),scope);
+  await (await first.token.claim(other,fresh)).wait();
+  assert.equal(await first.token.communityIssued(),parseEther('840'));
+  assert.equal(await first.token.totalSupply(),(await first.token.FOUNDER_ALLOCATION())+parseEther('840'));
+  const third=await (await provider.getSigner(4)).getAddress();
+  const afterGrowth=await generateProof(localIdentity(0),localGroup(2),BigInt(third),scope);
+  assert.equal(afterGrowth.nullifier,single.nullifier);
+  await assert.rejects(first.token.claim.staticCall(third,afterGrowth),/AlreadyClaimed/);
 });
 test('vesting pays only founder linearly over exact schedule', async () => {
   await reset(); const amount = await token.FOUNDER_ALLOCATION();
@@ -235,7 +269,9 @@ test('final claim reaches cap exactly; further issuance fails', async () => {
 });
 test('invalid deployment configuration is rejected', async () => {
   await reset(); const factory = new ContractFactory(artifacts.Cannabis.abi, artifacts.Cannabis.bytecode, recipient); const sem = await semaphore.getAddress();
-  for (const args of [[zero,start,end,sem,registrar], [founder,1,end,sem,registrar], [founder,start,start,sem,registrar], [founder,start,end,zero,registrar], [founder,start,end,sem,zero]]) await assert.rejects(factory.deploy(...args));
+  for (const args of [[zero,start,end,sem,registrar], [founder,1,end,sem,registrar], [founder,start,start,sem,registrar], [founder,start,end,zero,registrar], [founder,start,end,sem,zero]]) await assert.rejects(factory.deploy(...args,1));
+  for (const minimum of [0,990001]) await assert.rejects(factory.deploy(founder,start,end,sem,registrar,minimum), error =>
+    error.code === 'CALL_EXCEPTION' && factory.interface.parseError(error.data)?.name === 'InvalidConfiguration');
 });
 test('local API restricts origins, rejects repeat claims, and never serves private files', async () => {
   await reset(); const port = await freePort();
@@ -252,4 +288,58 @@ test('local API restricts origins, rejects repeat claims, and never serves priva
     const res = await fetch(url + '/api/claim', options); assert.equal(res.status, 200); assert.equal((await res.json()).reward, '420');
     assert.equal((await fetch(url + '/api/claim', options)).status, 409);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+for (const minimumClaimMembers of [4,8]) test(`a configured minimum of ${minimumClaimMembers} gates claims and snapshots at its exact boundary`,async()=>{
+  await reset();
+  const selected=await deploy(provider,artifacts.Cannabis,{semaphoreAddress:await semaphore.getAddress(),minimumClaimMembers,delay:100});
+  const registry=new Contract(await selected.token.enrollment(),artifacts.CannabisEnrollment.abi,await provider.getSigner(2));
+  assert.equal(await selected.token.minimumClaimMembers(),BigInt(minimumClaimMembers));
+  await (await registry.addVerifiedMembers(Array.from({length:minimumClaimMembers-1},(_,i)=>localIdentity(i).commitment))).wait();
+  await timestamp(selected.start);
+  const early=await generateProof(localIdentity(0),localGroup(minimumClaimMembers-1),BigInt(address),await selected.token.claimScope());
+  await assert.rejects(selected.token.claim.staticCall(address,early),/InsufficientEnrolledMembers/);
+  await assert.rejects(downloadMembershipSnapshot(await membershipOptions(selected.token)),/Claim minimum is/);
+  await (await registry.addVerifiedMembers([localIdentity(minimumClaimMembers-1).commitment])).wait();
+  const snapshot=await downloadMembershipSnapshot(await membershipOptions(selected.token));
+  assert.equal(snapshot.context.minimumClaimMembers,minimumClaimMembers);
+  const valid=await generateProof(localIdentity(0),localGroup(minimumClaimMembers),BigInt(address),await selected.token.claimScope());
+  await (await selected.token.claim(address,valid)).wait();assert.equal(await selected.token.balanceOf(address),parseEther('420'));
+  await assert.rejects(selected.token.claim.staticCall(address,valid),/AlreadyClaimed/);
+});
+
+test('owner can raise one to four to eight only after enrollment grows; preparation never signs or broadcasts',async()=>{
+  await reset();const selected=await deploy(provider,artifacts.Cannabis,{semaphoreAddress:await semaphore.getAddress(),delay:100});
+  const target=selected.token,registry=new Contract(await target.enrollment(),artifacts.CannabisEnrollment.abi,await provider.getSigner(2));
+  const {prepareClaimThreshold}=await import('../scripts/prepare-claim-threshold.mjs');
+  const options={rpc:node.rpc,chainId:'31337',token:await target.getAddress(),codeHash:keccak256(await provider.getCode(await target.getAddress())),authority:founder,minimumClaimMembers:4};
+  assert.equal(await target.claimPolicyAuthority(),founder);
+  await assert.rejects(target.connect(recipient).increaseMinimumClaimMembers.staticCall(4),/UnauthorizedClaimPolicy/);
+  await assert.rejects(prepareClaimThreshold(options),/InvalidClaimMinimum/);
+  await (await registry.addVerifiedMembers([localIdentity(0).commitment])).wait();await timestamp(selected.start);
+  const first=await generateProof(localIdentity(0),localGroup(1),BigInt(address),await target.claimScope());
+  await (await target.claim(address,first)).wait();
+  for(const minimum of [4,8]) {
+    const before=Number(await registry.enrolledCount());
+    await assert.rejects(target.increaseMinimumClaimMembers.staticCall(minimum),/InvalidClaimMinimum/);
+    await (await registry.addVerifiedMembers(Array.from({length:minimum-before},(_,i)=>localIdentity(before+i).commitment))).wait();
+    const prepared=await prepareClaimThreshold({...options,minimumClaimMembers:minimum});
+    assert.equal(prepared.sent,false);assert.equal(prepared.transaction.value,'0x0');
+    assert.equal(prepared.previousMinimum,Number(await target.minimumClaimMembers()));
+    assert.notEqual(await target.minimumClaimMembers(),BigInt(minimum));
+    const receipt=await (await (await provider.getSigner(0)).sendTransaction(prepared.transaction)).wait();
+    const event=receipt.logs.map(log=>{try{return target.interface.parseLog(log);}catch{return null;}}).find(log=>log?.name==='MinimumClaimMembersIncreased');
+    assert.equal(event.args.previousMinimum,BigInt(prepared.previousMinimum));assert.equal(event.args.newMinimum,BigInt(minimum));
+    assert.equal(await target.minimumClaimMembers(),BigInt(minimum));
+  }
+  for(const minimum of [0,1,4,8,9,990001])await assert.rejects(target.increaseMinimumClaimMembers.staticCall(minimum),/InvalidClaimMinimum/);
+  for(const changes of [{authority:address},{chainId:'1'},{codeHash:'0x'+'11'.repeat(32)},{minimumClaimMembers:1.5}])await assert.rejects(prepareClaimThreshold({...options,...changes}));
+  const current=await downloadMembershipSnapshot(await membershipOptions(target));assert.equal(current.context.minimumClaimMembers,8);
+  const repeat=await generateProof(localIdentity(0),localGroup(8),BigInt(address),await target.claimScope());
+  await assert.rejects(target.claim.staticCall(address,repeat),/AlreadyClaimed/);
+  const newcomer=await (await provider.getSigner(3)).getAddress(),proof=await generateProof(localIdentity(1),localGroup(8),BigInt(newcomer),await target.claimScope());
+  const claim=await prepareClaim({rpc:node.rpc,chainId:'31337',token:await target.getAddress(),recipient:newcomer,codeHash:options.codeHash,proof});
+  assert.equal(claim.minimumClaimMembers,8);assert.equal(claim.sent,false);
+  await (await target.claim(newcomer,proof)).wait();assert.equal(await target.communityIssued(),parseEther('840'));
+  assert.equal(await target.balanceOf(address),parseEther('420'));
 });

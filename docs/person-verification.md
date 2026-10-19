@@ -12,7 +12,7 @@ Cannabis does not collect identity documents, iris or face scans, photographs, l
 
 ## Future newcomers and the permanent registry
 
-The same registrar accepts later rounds without replacing its membership history. Each round needs approval from a separately controlled Cannabis registry-review quorum, at least seven days of on-chain notice, and a presence interval after the preceding round's submission deadline. The first round's published capacity must accommodate at least 128 people. Later rounds may be smaller. The enrollment controller keeps the global 990,000-person ceiling; a new round does not create additional supply or reset claims.
+The same registrar accepts later rounds without replacing its membership history. Each round needs approval from a separately controlled Cannabis registry-review quorum, at least seven days of on-chain notice, and a presence interval after the preceding round's submission deadline. Every round, including the first, may have capacity for a single participant. Independent witness and registry quorums still apply; there is no recruitment quota for deployment. The enrollment controller keeps the global 990,000-person ceiling; a new round does not create additional supply or reset claims.
 
 Each admitted person has one opaque permanent registry tag paired with one Semaphore commitment. Tags must be assigned through the reviewed registry process, not accepted as a participant's assertion that they are new. Do not derive them by hashing names, email addresses, documents or other guessable personal data. A venue roster needs both its witness quorum and the independent registry quorum's approval of these exact bindings.
 
@@ -32,7 +32,7 @@ Each venue submits one complete roster per round. Participants inspect their ent
 2. Check the canonical release, authorized round, UTC interval, venue and witness policy. Attend one approved venue for the full interval.
 3. Provide your commitment through reviewed local intake. Cannabis registry reviewers check the permanent person binding; venue witnesses check attendance. Supply no receiving wallet, document or biometric record.
 4. Confirm the exact commitment and permanent record in the final roster, keep your private receipt, and verify inclusion in the complete finalized membership snapshot after enrollment.
-5. From the common public claim opening, generate the [Semaphore claim proof](community-claims.md) locally. Claims require at least 128 genuinely verified members and preserve the 420-per-person allocation. Later newcomers can claim after their enrollment is finalized.
+5. From the common public claim opening, generate the [Semaphore claim proof](community-claims.md) locally. With the default minimum of one, the first genuinely verified member can claim, preserving the 420-per-person allocation. A release may choose another initial minimum; any later increase is bounded by already enrolled membership. With one member, membership anonymity is impossible; small groups limit privacy. Participants may wait for a larger real group. Later newcomers can claim after their enrollment is finalized.
 
 ## What the software enforces
 
@@ -76,6 +76,6 @@ Keep intake and receipt files on protected operator storage under an explicit re
 
 Witness signatures cannot prove honest physical observation, and registry signatures cannot prove lifetime human uniqueness. Collusion, substitution, compromised keys or a returning person issued a new tag and secret can defeat the human policy. Independence, durable continuity checks, privacy-preserving evidence handling and adversarial tests require review before any production authorization.
 
-The tooling reports cryptographic quorum checks separately from `humanUniquenessEstablished: false`, `enrolled: false` and `sent: false`. Synthetic local participants exercise recurring admission, permanent duplicate refusal and actual Semaphore proofs only. They do not count toward 128 real people. Venue organization, real witness/reviewer custody, cross-round human checks, participant consent, accessibility, complaints, independent review and deployment remain unfinished. See [launch acceptance](launch-plan.md).
+The tooling reports cryptographic quorum checks separately from `humanUniquenessEstablished: false`, `enrolled: false` and `sent: false`. Synthetic local participants exercise recurring admission, permanent duplicate refusal and actual Semaphore proofs only. They do not count as real participants or establish human uniqueness. Venue organization, real witness/reviewer custody, cross-round human checks, participant consent, accessibility, complaints, independent review and deployment remain unfinished. See [launch acceptance](launch-plan.md).
 
 The earlier BrightID adapter is retired from the release path. Historical source and regression checks do not make it a dependency. The current person-verification command performs only the offline Cannabis flow above.

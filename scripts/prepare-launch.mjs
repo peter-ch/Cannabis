@@ -14,8 +14,9 @@ export const networks = {
   base: { chainId: 8453, name: 'Base', currency: 'ETH', explorer: 'https://basescan.org', rpc: 'https://mainnet.base.org' },
   arbitrum: { chainId: 42161, name: 'Arbitrum One', currency: 'ETH', explorer: 'https://arbiscan.io', rpc: 'https://arb1.arbitrum.io/rpc' }
 };
-export function validateLaunch({ founder, launch, network = 'base', semaphore, registrar, semaphoreCodeHash }, now = Date.now()) {
+export function validateLaunch({ founder, launch, network = 'base', semaphore, registrar, semaphoreCodeHash, minimumClaimMembers = 1 }, now = Date.now()) {
   if (!Object.hasOwn(networks, network)) throw Error('Choose ethereum, base or arbitrum');
+  if (!Number.isSafeInteger(minimumClaimMembers) || minimumClaimMembers < 1 || minimumClaimMembers > 990000) throw Error('Minimum claim members must be an integer from 1 to 990000');
   const beneficiary = getAddress(founder);
   if (beneficiary === '0x0000000000000000000000000000000000000000' ||
       ['0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266', '0x70997970c51812dc3a010c7d01b50e0d17dc79c8'].includes(beneficiary.toLowerCase()))
@@ -27,7 +28,7 @@ export function validateLaunch({ founder, launch, network = 'base', semaphore, r
   const semaphoreAddress = getAddress(semaphore), registrarAddress = getAddress(registrar);
   if ([semaphoreAddress, registrarAddress].includes('0x0000000000000000000000000000000000000000')) throw Error('Verified Semaphore and enrollment registrar addresses are required');
   if (!/^0x[0-9a-fA-F]{64}$/.test(semaphoreCodeHash) || /^0x0+$/.test(semaphoreCodeHash)) throw Error('Pin the reviewed Semaphore runtime-code hash');
-  return { beneficiary, start: timestamp / 1000, end: end24Months(timestamp / 1000), network: networks[network], semaphoreAddress, registrarAddress, semaphoreCodeHash };
+  return { beneficiary, start: timestamp / 1000, end: end24Months(timestamp / 1000), network: networks[network], semaphoreAddress, registrarAddress, semaphoreCodeHash, minimumClaimMembers };
 }
 export async function prepare(options) {
   const config = validateLaunch(options);
@@ -36,7 +37,7 @@ export async function prepare(options) {
     throw Error('Dependency pins do not match the launch network and Semaphore parameters');
   const dependencyObservation = await verifyLaunchDependencies(options.dependencyConfig);
   const artifact = compile().Cannabis;
-  const args = [config.beneficiary, config.start, config.end, config.semaphoreAddress, config.registrarAddress];
+  const args = [config.beneficiary, config.start, config.end, config.semaphoreAddress, config.registrarAddress, config.minimumClaimMembers];
   const transaction = await new ContractFactory(artifact.abi, artifact.bytecode).getDeployTransaction(...args);
   const source = fs.readFileSync(path.join(root, 'contracts/Cannabis.sol'));
   const manifest = {
@@ -45,14 +46,17 @@ export async function prepare(options) {
     claimsOpen: new Date(config.start * 1000).toISOString(), founderVestingEnds: new Date(config.end * 1000).toISOString(),
     maxSupply: '420000000', founderAllocation: '4200000', communityAllocation: '415800000', claimAmount: '420', maxClaimants: 990000,
     issuance: 'One claim per enrolled identity, Semaphore zero-knowledge membership, no proof-of-work',
-    minimumAnonymitySet: 128, semaphore: config.semaphoreAddress, semaphoreCodeHash: config.semaphoreCodeHash, registrar: config.registrarAddress,
+    minimumEnrolledMembersForClaim: config.minimumClaimMembers, minimumParticipantsForDeployment: 0,
+    claimPolicyAuthority: config.beneficiary, claimMinimumPolicy: 'Founder may only increase the minimum up to the already enrolled count; existing claims and access are preserved.',
+    membershipPrivacy: 'No anonymity guarantee; a singleton claim identifies its sole member, and small groups limit privacy.',
+    semaphore: config.semaphoreAddress, semaphoreCodeHash: config.semaphoreCodeHash, registrar: config.registrarAddress,
     dependencyObservation,
     compiler: artifact.compiler, sourceSHA256: createHash('sha256').update(source).digest('hex'),
     creationBytecodeKeccak256: keccak256(artifact.bytecode), deploymentDataKeccak256: keccak256(transaction.data),
     constructorArguments: args, transaction: { chainId: `0x${config.network.chainId.toString(16)}`, from: config.beneficiary, data: transaction.data, value: '0x0' },
     releaseRequirements: ['Portable wallet backup confirmed by owner', 'Exact opening time and parameters accepted',
       'Independent security and privacy review completed', 'Reviewed recurring Cannabis ceremonies, independent venue/registry quorums, durable cross-round human uniqueness and same-identity recovery',
-      'At least 128 independently verified members; admission batching policy published', 'Semaphore deployment, verifier version and code hash verified on selected chain',
+      'Common claim opening and admission windows published; chosen initial claim minimum and bounded later increases disclosed; no deployment recruitment quota; small-group privacy disclosed', 'Semaphore deployment, verifier version and code hash verified on selected chain',
       'Applicable launch requirements addressed',
       'Reviewed decentralized compute market and both escrow deployments; direct participation without a required founder service',
       'Protected execution verifies on-chain capacity and funding; genuine paid acceptance and exact 99/1 settlement completed',
@@ -73,6 +77,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   for (let i = 0; i < argv.length; i += 2) {
     if (!argv[i].startsWith('--') || !argv[i + 1]) throw Error('Arguments must be --name value pairs');
     options[argv[i].slice(2)] = argv[i + 1];
+  }
+  const allowed = new Set(['founder','launch','network','semaphore','registrar','semaphore-code-hash','dependency-config','minimum-claim-members','out']);
+  if (Object.keys(options).some(key => !allowed.has(key))) throw Error('Unknown launch option');
+  if (Object.hasOwn(options,'minimum-claim-members')) {
+    if (!/^[1-9][0-9]{0,5}$/.test(options['minimum-claim-members'])) throw Error('Invalid minimum claim members');
+    options.minimumClaimMembers = Number(options['minimum-claim-members']);
   }
   if (!options.out) throw Error('Set --out to a private review directory');
   if (options['semaphore-code-hash']) options.semaphoreCodeHash = options['semaphore-code-hash'];
