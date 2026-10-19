@@ -34,8 +34,10 @@ async function fixture(t,options={}) {
 function child(config,file) {
   fs.writeFileSync(file,JSON.stringify(config),{flag:'wx',mode:0o600});
   return new Promise((resolve,reject)=>{
-    const p=spawn(process.execPath,['test/helpers/result_spool_process.mjs',file],{windowsHide:true,stdio:['ignore','pipe','pipe']});
-    let out='',err='';const timer=setTimeout(()=>{p.kill();reject(Error('Spool fixture timeout'));},10000);
+    const p=spawn(process.execPath,['--disable-warning=ExperimentalWarning','test/helpers/result_spool_process.mjs',file],{windowsHide:true,stdio:['ignore','pipe','pipe']});
+    // Allow bounded module startup on WSL-mounted source; production service
+    // deadlines and SQLite lock timeouts remain unchanged.
+    let out='',err='';const timer=setTimeout(()=>{p.kill();reject(Error('Spool fixture timeout'));},30000);
     p.stdout.on('data',b=>out+=b);p.stderr.on('data',b=>err+=b);p.on('error',reject);
     p.on('exit',code=>{clearTimeout(timer);try{assert.equal(err,'');resolve({code,...JSON.parse(out)});}catch(e){reject(e);}});
   });
