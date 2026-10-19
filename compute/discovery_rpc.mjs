@@ -1,5 +1,6 @@
 // Operation-scoped JSON-RPC HTTP transport for public discovery reads.
-import { performance } from 'node:perf_hooks';
+// Web-standard transport shared by Node and browser clients. Browser fetch may
+// decode compression itself; bound decoded bytes as well as any exposed length.
 export function boundedDiscoveryRPC({timeoutMs=60000,signal}={}) {
   if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>60000||signal&&!(signal instanceof AbortSignal))throw Error('Invalid discovery RPC budget');
   const controller=new AbortController(),start=performance.now();let closed=false;
@@ -14,22 +15,25 @@ export function boundedDiscoveryRPC({timeoutMs=60000,signal}={}) {
       let reader;
       try {
         if(request.method!=='POST'||!request.body||request.body.length>262144)throw Error('Invalid discovery RPC request');
+        const node=typeof process==='object'&&Boolean(process?.versions?.node);
         const response=await fetch(request.url,{method:'POST',body:request.body,
-          headers:{'Content-Type':'application/json',Accept:'application/json','Accept-Encoding':'identity'},
+          headers:{'Content-Type':'application/json',Accept:'application/json',...(node?{'Accept-Encoding':'identity'}:{})},
           redirect:'error',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer',signal:controller.signal});
         active();
+        const encoding=response.headers.get('content-encoding');
         if(response.status!==200||response.redirected||response.url!==request.url||
           !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(response.headers.get('content-type')??'')||
-          ![null,'identity'].includes(response.headers.get('content-encoding')))throw Error('Discovery RPC response refused');
+          !(node?[null,'identity']:[null,'identity','gzip','br','deflate']).includes(encoding))throw Error('Discovery RPC response refused');
         const declared=response.headers.get('content-length');
         if(declared!==null&&(!/^[1-9][0-9]{0,6}$/.test(declared)||Number(declared)>1048576))throw Error('Discovery RPC response exceeds bound');
         reader=response.body.getReader();const chunks=[];let bytes=0;
         while(true) {
           const part=await reader.read();active();if(part.done)break;
-          bytes+=part.value.length;if(bytes>1048576)throw Error('Discovery RPC response exceeds bound');chunks.push(Buffer.from(part.value));
+          bytes+=part.value.length;if(bytes>1048576)throw Error('Discovery RPC response exceeds bound');chunks.push(part.value);
         }
-        if(declared!==null&&Number(declared)!==bytes)throw Error('Truncated discovery RPC response');
-        return {statusCode:200,statusMessage:'OK',headers:Object.fromEntries(response.headers),body:Buffer.concat(chunks)};
+        if(declared!==null&&[null,'identity'].includes(encoding)&&Number(declared)!==bytes)throw Error('Truncated discovery RPC response');
+        const body=new Uint8Array(bytes);let offset=0;for(const chunk of chunks){body.set(chunk,offset);offset+=chunk.length;}
+        return {statusCode:200,statusMessage:'OK',headers:Object.fromEntries(response.headers),body};
       } catch {abort();throw Error('Bounded discovery RPC failed');}
       finally {try{await reader?.cancel();}catch{}reader?.releaseLock();}
     },

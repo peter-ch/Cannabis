@@ -7,6 +7,7 @@ const titles={publishResource:'Publish resource',publishOffer:'Publish offer',wi
   approveToken:'Approve exact Cannabis allowance',fund:'Fund the job',accept:'Accept as provider',activate:'Activate booked group',cancel:'Cancel unaccepted funding',
   withdrawWorker:'Withdraw earned worker payment',withdrawCredit:'Withdraw available credit'};
 let token,configured=false,connected=false,busy=false,refresh,state,plan,review,phase,controller,activeRequest,selectedPlan='',historyKey='',planKey='';
+let marketAdapter=null,controlEpoch=0;
 const choices=[],seen=new WeakSet();
 const wallet=new MarketWallet(()=>{
   if(['sign','send'].includes(phase))controller?.abort();
@@ -26,9 +27,12 @@ function controls() {
 }
 async function api(name,body={}) {
   if(!configured||!connected||!token)throw Error('The selected market is unavailable. Refresh the console.');
+  const epoch=controlEpoch;
+  if(marketAdapter){const result=await marketAdapter.call(name,body);if(epoch!==controlEpoch)throw Error('Market selection changed. Review again.');return result;}
   const response=await fetch('/api/market/'+name,{method:'POST',headers:{'Content-Type':'application/json','X-Cannabis-Console':token},
     body:JSON.stringify(body),signal:AbortSignal.timeout(5000)});
-  if(!response.ok)throw Error('The selected action is unavailable. Check the plan, current state and retained transaction records.');return response.json();
+  if(!response.ok)throw Error('The selected action is unavailable. Check the plan, current state and retained transaction records.');
+  const result=await response.json();if(epoch!==controlEpoch)throw Error('Market selection changed. Review again.');return result;
 }
 async function poll(requestId) {
   activeRequest=requestId;const start=performance.now();
@@ -53,6 +57,10 @@ function save(name,value) {
   const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)+'\n'],{type:'application/json'}));
   const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
+async function saveRecovery(actionId,fallback) {
+  if(marketAdapter?.recovery)save('cannabis-market-recovery.json',await marketAdapter.recovery());
+  else save('cannabis-transaction-recovery-'+actionId+'.json',fallback??await api('action',{actionId}));
+}
 function forgetReview(){review=undefined;$('market-review').hidden=true;}
 function entries(target,items) {
   target.replaceChildren();for(const [label,value] of items){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=String(value);target.append(dt,dd);}
@@ -74,7 +82,7 @@ function showReview(value) {
   entries($('market-review-summary'),list);
   $('market-review-json').textContent=JSON.stringify(a.kind==='signature'?a.typedData:{transaction:a.transaction,publicTerms:a.summary},null,2);
   $('market-review-note').textContent=a.kind==='signature'?'This signs the selected public hold. It sends no transaction and reserves no capacity by itself.':
-    'Only this action is priced. Intermediate steps use the current canonical head and can be reorganized; they may not be finalized. Complete activation before the hold expires. After every provider accepts, immediate cancellation is unavailable. Protected execution still requires finalized activation. A recovery file is saved before the wallet prompt; cancellation or a timeout cannot revoke that prompt.';
+    'Only this action is priced. Intermediate steps use the current canonical head and can be reorganized; they may not be finalized. Complete activation before the hold expires. After every provider accepts, immediate cancellation is unavailable. Protected execution still requires finalized activation. A recovery download is requested before the wallet prompt; keep your downloaded copy. Cancellation or a timeout cannot revoke the prompt.';
   $('market-confirm').textContent=a.kind==='signature'?'Review and sign in wallet':'Review and submit in wallet';controls();
 }
 async function begin(method,bookingId=null) {
@@ -124,7 +132,7 @@ function renderHistory(actions) {
   for(const a of actions){const row=card(titles[a.method]??a.method,[`State: ${a.state}`,`Account: ${a.actor}`,`Recovery record: ${a.id}`,
     a.transactionHash?'Transaction: '+a.transactionHash:'No transaction hash retained. Inspect the selected wallet before trying another transaction.',...(a.walletOutcome?[a.walletOutcome]:[])]);
     if(a.observation?.gasPaidWei)row.append(card('Observed cost',[amount(a.observation.gasPaidWei)+' ETH network fee',`Observed state: ${a.observation.state}`]));
-    row.append(button('Save recovery record',async()=>save('cannabis-transaction-recovery-'+a.id+'.json',await api('action',{actionId:a.id}))));
+    row.append(button('Save recovery record',()=>saveRecovery(a.id)));
     if(!['confirmed','reverted'].includes(a.state)) {
       if(!a.transactionHash||['hash-reported','not-observed'].includes(a.state)){const label=document.createElement('label');label.textContent='Transaction hash from your wallet';const input=document.createElement('input');input.maxLength=66;input.placeholder='0x…';input.value=a.transactionHash??'';label.append(input);row.append(label);
         row.append(button('Retain this transaction hash',async()=>{await api('report-hash',{actionId:a.id,transactionHash:input.value.trim().toLowerCase()});message('Transaction hash retained. Check its canonical receipt next.');}));}
@@ -149,8 +157,16 @@ function addWallet(info,provider) {
   seen.add(provider);const name=typeof info?.name==='string'?info.name.slice(0,80):'Injected wallet';choices.push(provider);
   $('market-wallet').append(new Option(name,String(choices.length-1)));controls();
 }
-export async function initializeMarket(refreshStatus) {
-  refresh=refreshStatus;try{const r=await fetch('/api/control',{signal:AbortSignal.timeout(5000)}),c=await r.json();token=c.actionToken;configured=Boolean(c.market);}catch{}
+export function setMarketControl(c) {
+  ++controlEpoch;controller?.abort();
+  token=c?.actionToken;configured=Boolean(c?.market);
+  if(!configured){wallet.clear();$('market-wallet').value='';plan=null;selectedPlan='';planKey='';historyKey='';forgetReview();}
+  controls();
+}
+export function loadMarketPlan(value){renderPlan(value);}
+export async function initializeMarket(refreshStatus,{adapter=null}={}) {
+  refresh=refreshStatus;marketAdapter=adapter;
+  try{const c=adapter?await adapter.control():await(await fetch('/api/control',{signal:AbortSignal.timeout(5000)})).json();setMarketControl(c);}catch{}
   window.addEventListener('eip6963:announceProvider',event=>addWallet(event.detail?.info,event.detail?.provider));window.dispatchEvent(new Event('eip6963:requestProvider'));
   if(window.ethereum)addWallet({name:'Legacy injected wallet'},window.ethereum);
   $('market-wallet').addEventListener('change',()=>{const selected=choices[Number($('market-wallet').value)];if($('market-wallet').value!==''&&selected)wallet.select(selected);else wallet.clear();controls();});
@@ -164,7 +180,7 @@ export async function initializeMarket(refreshStatus) {
     const target=$('market-offers');target.replaceChildren();for(const item of v.offers)target.append(card(short(item.offerId),[`Provider: ${item.resource.provider}`,
       `Declared units: ${item.offer.units}; gross rate: ${amount(item.offer.grossPerUnitSecond)} ${item.offer.escrow===state.deployment.nativeEscrow?'ETH':item.offer.escrow===state.deployment.cannabisEscrow?'Cannabis':item.offer.escrow} per unit-second.`,
       `${when(item.offer.start)} — ${when(item.offer.end)}`,item.withdrawn?'Withdrawn':item.expiredAtSnapshot?'Expired at this observation':'Published declaration; hardware and fulfillment remain unverified.']));
-    if(!v.offers.length)target.append(card('No offers in this finalized block range',[]));message('Offer search completed.');});});
+    if(!v.offers.length)target.append(card('No offers in this finalized block range',[]));await marketAdapter?.offers?.(v);message('Offer search completed.');});});
   $('market-new-resource-id').addEventListener('click',()=>{$('market-resource-id').value='0x'+Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');});
   $('market-resource').addEventListener('submit',event=>{event.preventDefault();run(async()=>{const provider=$('market-account').value;if(!provider)throw Error('Select your connected provider account.');
     renderPlan(await api('import',{plan:{schema:'cannabis.market-plan.v1',kind:'resource',provider,resourceId:$('market-resource-id').value.trim().toLowerCase(),
@@ -186,7 +202,7 @@ export async function initializeMarket(refreshStatus) {
       message('Provider signature checked and retained. Save the shareable plan for the requester.');
     } else {
       const r=await api('handoff',{requestId:retained.id}),response=await poll(r.requestId);if(response.state!=='handed-off')throw Error('No wallet handoff was retained.');
-      const handoff=response.result;save('cannabis-transaction-recovery-'+handoff.id+'.json',handoff);phase='send';
+      const handoff=response.result;await saveRecovery(handoff.id,handoff);phase='send';
       const outcome=await wallet.send(retained,handoff,controller.signal);phase=null;forgetReview();
       if(outcome.walletRefused){await api('wallet-refused',{actionId:handoff.id});message('Wallet reported rejection. The record is retained; a later attempt needs a new explicit review.');}
       else {await api('report-hash',{actionId:handoff.id,transactionHash:outcome.transactionHash});message('Transaction hash retained. Check its canonical receipt; wallet submission alone is not confirmation.');}

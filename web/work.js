@@ -2,6 +2,7 @@ import { sha256, MAX_RESULT_BYTES } from './work-results.js';
 import { approvedArchiveDescriptors, openApprovedResults, MAX_RECOVERY_BYTES } from './work-approvals.js';
 import { BrowserResultInbox } from './work-inbox.js';
 import { downloadApprovedArchives, EncryptedDownloadCache } from './work-relay.js';
+import {initializeWorkMarket} from './work-market.js';
 
 const $ = id => document.getElementById(id);
 const enc = new TextEncoder();
@@ -23,7 +24,7 @@ async function api(path, { method = 'GET', body, token } = {}) {
   const response = await fetch('./api/work/' + path, { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error',
     headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: 'Bearer ' + token } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
-  if (!(response.headers.get('content-type') ?? '').includes('application/json')) throw Error('Order service unavailable here. Open cannabis-coin.online/work.html; local result decryption remains available.');
+  if (!(response.headers.get('content-type') ?? '').includes('application/json')) throw Error('Optional preparation storage is unavailable here. Direct market tools and local result decryption remain independent of this service.');
   const result = await response.json(); if (!response.ok) throw Error(result.error ?? 'Request failed'); return result;
 }
 function decimal(atomic) {
@@ -216,9 +217,10 @@ $('results-form').addEventListener('submit', event => {
   });
 });
 window.addEventListener('pagehide', clearResults);
+initializeWorkMarket().catch(()=>{$('direct-market-message').textContent='Direct market tools could not initialize. Use the reviewed local console; no payment was requested.';});
 listRecoveries().catch(()=>{$('selected-execution').textContent='Local result storage is unavailable. Use the requester desktop client.';});
-action(null, async () => {
+void (async () => {try {
   const status = await api('status'); $('service-status').textContent = status.message;
   $('hosted-option').disabled=status.encryptedResultStorageAvailable!==true;
   signedIn((await api('account')).address);
-}).finally(() => { if ($('service-status').textContent.includes('Connecting')) $('service-status').textContent = 'The order service is unavailable here. Local result decryption remains available.'; });
+}catch { $('service-status').textContent = 'Optional preparation storage is unavailable here. Direct market tools and local result decryption remain available.'; }})();

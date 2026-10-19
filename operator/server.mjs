@@ -28,7 +28,12 @@ const files = new Map([
   ['/market.css', ['market.css', 'text/css; charset=utf-8']],
   ['/compute-engine.webp', ['../web/assets/editorial/compute-engine-small.webp', 'image/webp']]
 ]);
-const assets = new Map([...files].map(([route, [name, type]]) => [route, { type, body: fs.readFileSync(path.join(here, name)) }]));
+const marketPanel=fs.readFileSync(path.join(here,'market-panel.html'),'utf8');
+const assets = new Map([...files].map(([route, [name, type]]) => {
+  let body=fs.readFileSync(path.join(here,name));
+  if(name==='index.html')body=Buffer.from(body.toString('utf8').replace('<!-- CANNABIS_MARKET_PANEL -->',marketPanel));
+  return [route,{type,body}];
+}));
 
 export async function localInventory() {
   let graphics = [], graphicsStatus = 'unavailable';

@@ -15,10 +15,10 @@ const same=(a,b)=>canonical(a)===canonical(b);
 const bookingFields=[['reservationId','bytes32'],['offerId','bytes32'],['requester','address'],['orderId','bytes32'],['termsDigest','bytes32'],
   ['start','uint64'],['end','uint64'],['units','uint32'],['gross','uint256'],['holdUntil','uint64']].map(([name,type])=>({name,type}));
 
-export function validateMarketReview(input) {
+function checkReview(input,historical=false) {
   const r=structuredClone(input),a=r.action,d=r.deployment,s=a?.summary;
   check(r.schema==='cannabis.market-wallet-review.v1'&&/^[0-9a-f]{64}$/.test(r.id)&&r.planId===a?.planId&&
-    Number.isSafeInteger(r.expiresAt)&&r.expiresAt>Date.now()&&r.expiresAt<=Date.now()+31000&&address(a?.actor)&&s&&
+    Number.isSafeInteger(r.expiresAt)&&r.expiresAt>0&&(historical||r.expiresAt>Date.now()&&r.expiresAt<=Date.now()+31000)&&address(a?.actor)&&s&&
     r.executionAuthorized===false&&r.keyReleaseAuthorized===false&&r.hardwareValidated===false&&
     sha256(toUtf8Bytes(canonical(a))).slice(2)===r.actionDigest);
   check(number(d.chainId)&&BigInt(d.chainId)>0n&&digest(d.genesisHash)&&
@@ -79,6 +79,10 @@ export function validateMarketReview(input) {
   }
   check(tx.to===to&&nativeValue===value&&tx.data.toLowerCase()===data.toLowerCase());return r;
 }
+export const validateMarketReview=input=>checkReview(input);
+// Recovery may inspect old immutable wallet payloads, but cannot send them.
+// sign()/send() always use the fresh-review entry point above.
+export const validateRetainedMarketReview=input=>checkReview(input,true);
 
 export class MarketWallet {
   #provider;#epoch=0;#selection=0;#changed;#onChange;#accounts=[];

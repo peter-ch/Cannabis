@@ -1,10 +1,9 @@
 // Public, typed market plans. Never accept an RPC destination, private key,
 // arbitrary ABI call or plaintext customer workload from a browser action.
-import {createHash} from 'node:crypto';
-import {AbiCoder,Interface,TypedDataEncoder,getAddress,keccak256,ZeroAddress} from 'ethers';
+import {AbiCoder,Interface,TypedDataEncoder,getAddress,keccak256,ZeroAddress,sha256,toUtf8Bytes} from 'ethers';
 import {bookingPayload,prepareMarketTransaction} from '../compute/market.mjs';
-import {encodeProviderManifest} from '../compute/provider_manifest.mjs';
-import {settlementTerms,termsDigest} from '../scripts/compute-escrow.mjs';
+import {encodeProviderManifest} from '../compute/provider_manifest_model.mjs';
+import {publicOrderPlan,settlementForPlan,termsDigest} from '../compute/settlement.mjs';
 import escrowABI from '../compute/escrow-abi.json' with {type:'json'};
 
 export const check=v=>{if(!v)throw Error('Market plan or retained selection is invalid');};
@@ -14,7 +13,7 @@ export const hash=v=>{check(typeof v==='string'&&/^0x[0-9a-f]{64}$/.test(v)&&!/^
 export const address=(v,zero=false)=>{check(typeof v==='string'&&getAddress(v)===v&&(zero||v!==ZeroAddress));return v;};
 export const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'?
   '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
-export const sha=v=>createHash('sha256').update(typeof v==='string'?v:canonical(v)).digest('hex');
+export const sha=v=>sha256(toUtf8Bytes(typeof v==='string'?v:canonical(v))).slice(2);
 export const json=v=>JSON.parse(JSON.stringify(v,(_,x)=>typeof x==='bigint'?x.toString():x));
 const coder=AbiCoder.defaultAbiCoder(),escrow=new Interface(escrowABI),token=new Interface(['function approve(address spender,uint256 value) returns(bool)']);
 const founder='0xe02Ad92413aD0a3Aac8263eE3C2Bd9410955F89b';
@@ -44,7 +43,7 @@ export function assetFor(c,name) {
 
 export function prepareMarketPlan(configuration,input) {
   const c=marketConfiguration(configuration),p=structuredClone(input);
-  check(Buffer.byteLength(canonical(p))<=131072&&p.schema==='cannabis.market-plan.v1');
+  check(toUtf8Bytes(canonical(p)).length<=131072&&p.schema==='cannabis.market-plan.v1');
   let detail;
   if(p.kind==='resource') {
     exact(p,['schema','kind','provider','resourceId','serviceHash','units']);address(p.provider);hash(p.resourceId);hash(p.serviceHash);uint(p.units,32);
@@ -54,7 +53,7 @@ export function prepareMarketPlan(configuration,input) {
     const encoded=encodeProviderManifest(p.manifest),m=encoded.manifest;
     check(m.chainId===c.chainId&&m.genesisHash===c.genesisHash&&m.market===c.market&&m.resource.provider===p.provider&&
       [c.nativeEscrow,c.cannabisEscrow].includes(m.offer.escrow)&&m.offerId===keccak256(coder.encode(['address','bytes32'],[p.provider,p.nonce])));
-    detail={offerId:m.offerId,manifestHash:encoded.manifestHash,manifestBytes:encoded.bytes.toString('utf8'),offer:{...m.offer,manifestHash:encoded.manifestHash}};
+    detail={offerId:m.offerId,manifestHash:encoded.manifestHash,manifestBytes:new TextDecoder('utf-8',{fatal:true}).decode(encoded.bytes),offer:{...m.offer,manifestHash:encoded.manifestHash}};
   } else if(p.kind==='order') {
     exact(p,['schema','kind','asset','job','settlement','bookings']);const asset=assetFor(c,p.asset);
     // Universal public commitments only; legacy workload plans contain code/args.
@@ -62,7 +61,7 @@ export function prepareMarketPlan(configuration,input) {
     exact(p.settlement,['workers','deliveryManager','adjudicator','acceptBy','deliverBy','reviewSeconds','disputeSeconds']);
     check(Array.isArray(p.settlement.workers)&&p.settlement.workers.length<=64);
     for(const w of p.settlement.workers)exact(w,['account','shareBps']);
-    const s=settlementTerms(p.job,p.settlement);address(s.requester);
+    const s=settlementForPlan(p.job,p.settlement,publicOrderPlan(p.job));address(s.requester);
     const digest=termsDigest({chainId:c.chainId,escrow:asset.escrow,token:asset.token,founderRecipient:c.founderRecipient,...s});
     const orderId=keccak256(coder.encode(['string','uint256','address','address','bytes32'],['Cannabis compute order v1',c.chainId,asset.escrow,s.requester,s.terms.jobHash]));
     check(Array.isArray(p.bookings)&&p.bookings.length>0&&p.bookings.length<=64);

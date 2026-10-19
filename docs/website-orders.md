@@ -1,14 +1,26 @@
 # Website orders and results
 
-Open [Your work](../work.html) to prepare a budget, recover an order or decrypt result archives on your device. Registration is optional. The order service currently saves **preparations**; it does not accept deposits, queue execution or advertise available provider capacity. Payment opens only after reviewed live settlement and confidential worker admission.
+Open [Your work](../work.html) to select a direct market, prepare an order, recover its transaction history or decrypt result archives on your device. Registration is optional. No public mainnet deployment is selected by default. The optional order service saves **preparations**; it does not accept deposits, queue execution or advertise available provider capacity.
 
-The [decentralized market](decentralized-compute.md) provides direct contract tools for discovery, reservations and settlement without this preparation service. Website accounts and hosted storage are optional conveniences and cannot approve workers or decide shared capacity. Connecting the browser ordering flow to independently verified market bookings remains unfinished.
+The review branch connects the browser to the [decentralized market](decentralized-compute.md) without the preparation service. Website accounts and hosted storage are optional conveniences and cannot approve workers or decide shared capacity. Public operation still requires a reviewed live release, confidential worker admission and verified paid acceptance.
+
+## Direct market ordering
+
+Obtain a reviewed deployment configuration independently and select it under **Your work. Your agreements.** It uses the same `cannabis.market-console.v1` schema and runtime pins as the [worker console](worker-console.md#direct-market-controls). Review the chain, genesis, contract addresses, runtime hashes and finite transaction fee limits before opening it. The selected RPC must allow browser requests from this website origin. Compressed replies must expose their content-encoding header through CORS; both declared and decoded reply sizes are bounded. Its canonical and finalized responses are an explicit trust dependency; this browser does not verify consensus itself. A website operator must permit the selected HTTPS RPC through its Content Security Policy. The client sends public chain queries without credentials or referrers; the RPC still sees your connection and query metadata.
+
+Open saved history, explicitly start new history, or restore your latest recovery file. An exclusive Web Lock prevents two pages on the same browser origin from controlling this deployment simultaneously. IndexedDB must be available: the browser commits a transaction handoff before opening the wallet. There is no memory-only payment mode. Storage, locks and recovery are local to this browser origin, not synchronized across devices or websites. Clearing or eviction of browser storage loses that history; an old recovery file cannot reveal transactions made later elsewhere. Keep the latest file and reconcile wallet activity before another action.
+
+Search a bounded finalized block range and import the providers' corresponding manifests or shared offer plans. The browser checks each manifest against its on-chain commitment, deployment, provider and offer. These declarations do not prove available hardware. Select every provider needed for the complete job, the agreed booking interval and units, and a public `cannabis.compute.order.v2` job exported from your compute client. Code, arguments, data, keys and private workload files do not belong in this form. Its exact committed budget must equal the gross booking total. Review the delivery manager, adjudicator and deadlines before retaining a plan. Plans with more complex intervals can be imported as typed market plans.
+
+Share the retained plan with providers and import their signed holds. Each signature is checked against the selected contracts. Use the wallet controls to reserve the complete group, approve the exact allowance when paying Cannabis, fund the escrow, obtain every provider's acceptance and activate the group. Each step has its own fresh state check, simulation and maximum fee review. Intermediate inclusion may be reorganized; protected execution requires finalized activation and separate confidential admission. Neither a booking nor payment releases customer keys automatically.
+
+Recovery downloads contain public plans, provider hold signatures and transaction payloads, never wallet secrets or workload keys. They can reveal and link your activity; share them deliberately. A download is requested before each transaction prompt; verify that your browser saved it and save a newer copy after receiving the hash. Cancelling a prompt or closing a page cannot revoke a submission. An uncertain handoff blocks further transactions from that account until its exact hash and canonical receipt can be reconciled. Restoring a backup imports transaction claims, discards old receipt observations and requires fresh checks; it cannot overwrite newer local history with an older confirmed claim. The browser bounds retained history to 32 plans, 256 actions and 8 MiB per deployment, with 16 deployments. Use the desktop client for larger histories rather than resetting unresolved activity.
 
 ## Guest ordering
 
 Choose Cannabis or ETH and an exact maximum budget. You may attach a `cannabis.compute.order.v2` manifest from the [compute client](compute-payments.md). Only the opaque job identifier, requester address and encrypted package, policy and acceptance commitments are sent. Private workload instructions, code, inputs and content keys stay on your device.
 
-Create and save the recovery file, then reopen that file to verify your copy before the preparation is stored online. Its random 256-bit access key controls access to that preparation. Keep it private and backed up. The service stores a SHA-256 digest of the access key, never the key itself. Recovery secrets travel in authorization headers, never links, URL fragments or analytics. No browser local-storage persistence is used.
+Create and save the preparation recovery file, then reopen that file to verify your copy before the preparation is stored online. Its random 256-bit access key controls access to that preparation. Keep it private and backed up. The service stores a SHA-256 digest of the access key, never the key itself. Recovery secrets travel in authorization headers, never links, URL fragments or analytics. These access keys are not persisted in browser storage. This file is separate from direct-market transaction recovery.
 
 Preparations expire after 30 days and can be deleted earlier from the dashboard. Losing a guest recovery file loses access unless you explicitly linked the preparation to your account. The recovery file is **not** a cryptocurrency wallet and contains no result-decryption identity. An expired or deleted preparation does not cancel an independently created blockchain transaction.
 
@@ -94,7 +106,8 @@ mark an unfinished result verified. Another tab's retirement prevents publicatio
 
 The relay and retrieval controls are implemented in source but not enabled on the
 public service. Production admitted-worker publication and requester acknowledgement,
-live quotes, wallet checkout and payment-state reconciliation remain unfinished.
+reviewed live quotes and actual paid acceptance remain unfinished. Direct-market
+wallet checkout and transaction reconciliation are available in the review branch.
 Local verification or relay storage does not approve a payment.
 
 ## Operating the order service

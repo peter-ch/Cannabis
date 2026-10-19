@@ -4,7 +4,7 @@ import {Interface,getAddress,keccak256,recoverAddress,ZeroAddress} from 'ethers'
 import marketABI from '../compute/market-abi.json' with {type:'json'};
 import escrowABI from '../compute/escrow-abi.json' with {type:'json'};
 import {boundedDiscoveryRPC} from '../compute/discovery_rpc.mjs';
-import {termsDigest} from '../scripts/compute-escrow.mjs';
+import {termsDigest} from '../compute/settlement.mjs';
 import {marketConfiguration,marketAction,prepareMarketPlan,check,hash,uint,canonical,json} from './market-plan.mjs';
 
 const market=new Interface(marketABI),escrow=new Interface(escrowABI);
@@ -25,7 +25,7 @@ class ChainView {
   now() {const value=Date.now();check(value>=this.lastClock);this.lastClock=value;return Math.floor(value/1000);}
   async send(method,params) {
     const id=++this.sequence,response=await this.transport.getUrl({url:new URL(this.c.rpc).href,method:'POST',
-      body:Buffer.from(JSON.stringify({jsonrpc:'2.0',id,method,params}))});
+      body:new TextEncoder().encode(JSON.stringify({jsonrpc:'2.0',id,method,params}))});
     const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(response.body));
     check(value?.jsonrpc==='2.0'&&value.id===id&&!value.error&&Object.hasOwn(value,'result'));return value.result;
   }

@@ -306,6 +306,12 @@ and the [Linux cgroup v2 model](https://docs.kernel.org/admin-guide/cgroup-v2.ht
 
 ## Direct market controls
 
+The [website ordering page](website-orders.md#direct-market-ordering) shares these
+contract, fee-review and wallet controls in the review branch. Requesters can
+select a reviewed deployment and use a browser-owned journal without running the
+local console or a founder service. The local console continues to accept its
+network and journal paths only at startup; browser requests cannot replace them.
+
 The review branch contains a local client for independent providers and requesters.
 It reads the selected chain directly, retains public plans locally and submits
 only actions explicitly reviewed in the selected wallet. It does not require a
