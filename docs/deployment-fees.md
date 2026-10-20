@@ -1,6 +1,38 @@
 # Deployment fee quotes
 
-The release tools can quote the cost of one unsigned Cannabis deployment on Ethereum, Base or Arbitrum One. The quote binds the exact creation data to a separately reviewed hash, reads current chain state and leaves signing with the owner. It never opens a wallet key or submits a transaction.
+The complete Ethereum release quote covers the registrar, Cannabis and its enrollment/vesting children, both payment escrows and the compute market. It binds the exact unsigned package to a separately reviewed hash and leaves signing with the owner. It never opens a wallet key or submits a transaction.
+
+## Complete Ethereum release
+
+Prepare the complete [mainnet release package](mainnet-release.md) first, then retain its reviewed `packageSHA256` separately. Create a private configuration:
+
+~~~json
+{
+  "rpc": "https://YOUR_TRUSTED_RPC",
+  "manifestFile": "/absolute/protected/path/network-release.json",
+  "expectedPackageSHA256": "YOUR_SEPARATELY_REVIEWED_64_CHARACTER_SHA256"
+}
+~~~
+
+~~~sh
+npm run quote:network-release -- --config /protected/network-fees.json --out /protected/network-quote.json
+~~~
+
+The consumer verifies every packaged artifact and reconstructs all five creation transactions, consecutive nonces, constructor arguments and predicted addresses. It checks the pinned Semaphore dependencies, undelegated sender, empty target addresses, pending nonce and actual ETH balance against canonical RPC state.
+
+Using [Ethereum's sequential simulation API](https://ethereum.github.io/execution-apis/api/methods/eth_simulateV1/), it executes one creation per simulated block and checks the resulting allocations, contract links, ceremony quorum, vesting and fees. A second pass validates the same five creations with explicit gas and fee limits. No balance, code, storage or block overrides are used. The initial diagnostic view calls use zero fees and are excluded from deployment costs. Both passes must succeed; changed or partial results are refused.
+
+The report separates simulated gas consumption, maximum gas before refunds, buffered gas limits, a current-price estimate and the aggregate planning budget. By default it adds 20% to maximum gas before refunds and proposes at least twice the observed base fee plus the suggested priority fee. The budget must fit the sender's actual native balance; otherwise the tool refuses a complete validated quote. Each creation must fit the supported 16,777,216 transaction gas cap and block limit.
+
+An API funding refusal carries `UNVALIDATED_FUNDING_SHORTFALL` details from the initial simulation. These preliminary amounts have not passed fee validation or the final freshness checks; they are not a completed quote.
+
+Simulation checks are observations from the selected RPC. They do not prove consensus, validate a wallet signature, reserve addresses or promise inclusion in future blocks. The zero-fee postcondition pass and fee-validation pass are recorded separately. Both must return identical creation runtime bytes and gas observations. Refresh before owner review and each signature. Prices, nonce, state and inclusion timing can change.
+
+This quote includes the five creation transactions only. Community ceremonies, claims, compute jobs, reviews and running services have separate costs. Provisional reviewer addresses or opening dates remain planning scenarios, never canonical production parameters. The report retains `spendAuthorized: false` and `sent: false`.
+
+## Single-transaction quotes
+
+The older `quote:launch` tool covers one unsigned Cannabis creation on Ethereum, Base or Arbitrum One. It does not provide the complete network deployment budget.
 
 Prepare the [mainnet release package](mainnet-release.md) first. Create a private configuration with these three fields:
 

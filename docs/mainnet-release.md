@@ -103,10 +103,11 @@ where `plan` is the manifest without `preparedAt`, `files`, `packageSHA256`,
 Preserve JSON property order when reproducing that commitment.
 
 The package is an unsigned review draft. It contains no gas estimate and does
-not authorize a transaction. The existing single-creation fee checker is not a
-quote for all five transactions: later constructors depend on earlier contracts.
-A complete cost review must cover the whole sequence, applicable fees and
-subsequent operational transactions before signing.
+not authorize a transaction. Use the [complete Ethereum release quote](deployment-fees.md#complete-ethereum-release)
+with its independently reviewed package hash to simulate all five creations in
+order and check their combined fee budget. The older single-creation checker
+does not cover this sequence. Subsequent operational transactions still require
+separate cost review before signing.
 
 Recheck nonce, dependency state and exact transaction data before each signature.
 Require successful confirmed receipts in order, and verify each sender, nonce,

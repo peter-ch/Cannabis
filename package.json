@@ -25,6 +25,7 @@
     "prepare:launch": "node scripts/prepare-launch.mjs",
     "prepare:network-release": "node scripts/prepare-network-release.mjs",
     "quote:launch": "node scripts/quote-launch.mjs",
+    "quote:network-release": "node scripts/quote-network-release.mjs",
     "participant": "node scripts/participant.mjs",
     "exercise:local": "node scripts/exercise-activity.mjs",
     "exercise:microjobs": "node scripts/exercise-microjobs.mjs",
