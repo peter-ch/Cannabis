@@ -24,6 +24,66 @@ python3 scripts/build-guest-image.py \
 
 Use fresh, separate output directories outside the public repository. An existing output is refused. Every package/download hash and the service hashes are checked before use. Package maintainer scripts and npm lifecycle scripts are not executed. The builder restores the merged `/usr` directory layout after package extraction and computes module dependencies for the pinned kernel.
 
+## CPU PyTorch runtime
+
+The default `--runtime native` includes Python's standard library. Select
+`--runtime pytorch-cpu` to embed the separately pinned CPU PyTorch and NumPy
+runtime, including its complete Python wheel dependency closure. The lock at
+`compute/guest-image/pytorch-cpu-wheels.json` records exact versions, upstream
+URLs, sizes, SHA-256 hashes and package metadata. Assembly verifies those pins,
+rejects unsafe paths, special files and collisions, and retains package licenses.
+It extracts wheel contents without running package or installer code. Runtime
+startup still executes the pinned libraries, including their normal Python
+startup hooks; this is part of the runtime that must be reviewed.
+
+```sh
+python3 scripts/build-guest-image.py \
+  --runtime pytorch-cpu \
+  --guest-services /work/cannabis-agent-build/guest-agent-artifacts-first \
+  --cache /work/cannabis-image-downloads \
+  --output /work/cannabis-pytorch-first
+```
+
+This selection embeds `vm-profile-pytorch-cpu.json`: a four-CPU, 8 GiB reference
+VM, a 2 GiB root ceiling and a 2 GiB aggregate job ceiling. Its boot reservation
+includes both early root copies and a 512 MiB compressed-archive allowance.
+Every native runtime inventory is bounded at 1 GiB and 50,000 entries; actual
+bytes and the exact digest are checked before execution. The minimal profile
+retains its smaller ceilings. These are separate measured images and require
+separate repeated-build, boot and hardware qualification evidence.
+
+The PyTorch image uses the existing native adapters and its **own inventory
+digest**. It does not add a scheduler or a central service. A single-process
+task invokes `/usr/bin/python3 -I -B /input/train.py`; a distributed task uses
+`native-group-linux-x86_64-v1` and `attested-tls-ip-v1`. Each rank receives its
+bound `RANK`, `WORLD_SIZE`, `MASTER_ADDR`, `MASTER_PORT` and
+`GLOO_SOCKET_IFNAME=cannabis0`. Initialize PyTorch with the CPU Gloo backend and
+`env://`; run one process per admitted rank. Reserve worker memory, threads and
+scratch space explicitly, and declare every returned checkpoint and log as an
+encrypted output.
+
+Owned component checks train a small neural layer in one process and across two
+Gloo ranks, reconstruct encrypted numeric checkpoints and verify predictions on
+unseen inputs. These checks use disposable fixture identities and data. They
+do not establish hardware confidentiality, a paying customer or independent
+review. Actual support remains conditional on admission of the exact runtime
+image. CUDA, ROCm, other accelerators, JIT/toolchain extensions and automatic
+partitioning are separate capabilities; this CPU recipe supplies none of them.
+
+PyTorch's distributed primitives do not provide their own confidentiality or
+authorization. Cannabis runs them inside the private namespace and authenticated
+encrypted group transport; exposing Gloo or TCPStore on the host network is not
+an alternative. See the [upstream security guidance](https://github.com/pytorch/pytorch/blob/main/SECURITY.md).
+
+The group syscall profile permits `NETLINK_ROUTE` solely inside the retained
+private network namespace so glibc/Gloo can enumerate its interfaces. The kernel
+checks `CAP_NET_ADMIN` for route/link mutations; workloads run with all
+capabilities dropped in a child user namespace and cannot administer the owning
+network namespace. Component checks verify that only `lo` and `cannabis0` appear,
+an attempted link change returns `EPERM`, and other netlink protocols, raw IP,
+packet, IPv6 and vsock sockets remain refused. Standalone tasks retain no netlink
+access. This additional kernel interface requires review with the measured image.
+
 The image embeds fixed consent verification code with no universal signer file.
 The [fixed session entry](guest-initialization.md#fixed-session-entry-and-signed-configuration)
 requires the exact funded assignment and separate requester/provider consent over
@@ -300,19 +360,22 @@ The check deliberately does not treat execution on real SNP/TDX hardware as an a
 
 ## Resource enforcement inside the guest
 
-The image now embeds `vm-profile.json` from `compute/guest-image/vm-profile.json`.
+The image embeds the selected runtime's budget as `vm-profile.json`. The default
+uses `compute/guest-image/vm-profile.json`; the CPU PyTorch selection uses
+`compute/guest-image/vm-profile-pytorch-cpu.json`.
 Early boot checks the kernel's memory and allowed-CPU views before duplicating the
 root. The root and `/run`, `/tmp` and `/dev/shm` receive the profile's explicit byte
 and inode ceilings, with swap disabled. The builder rejects an image whose
 page-rounded file data, entry count or compressed archive exceed those allowances.
 
-The current CPU profile budgets a 1 GiB root, 128/64/16 MiB volatile mounts,
+The default native profile budgets a 1 GiB root, 128/64/16 MiB volatile mounts,
 256 MiB for the outer launcher, up to 1 GiB for the job and 512 MiB of kernel/PID-1
 headroom. Boot also budgets the temporary second root and a 256 MiB compressed
 archive allowance. Its peak requires at least 3,280 MiB in the guest's `MemTotal`
 view. The four-vCPU reference also covers the job's 3,000 millicpu ceiling, the
 outer launcher's 500 and 500 for kernel/supervisor activity. These are limits for
 this measured CPU profile, not a promise of dedicated host cores or service backing.
+The separate CPU PyTorch profile is described [above](#cpu-pytorch-runtime).
 
 `VmAdmission` retains the outer launcher's actual cgroup, checks its CPU/memory/PID
 and swap controls, and refuses a launcher outside it, changed mounts or controls,

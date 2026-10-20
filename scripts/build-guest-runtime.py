@@ -66,14 +66,14 @@ def inventory(root):
                 rows.append([name, 'file', info.st_size, info.st_mode & 0o777, digest])
             else:
                 raise ValueError('Unexpected runtime entry')
-            if len(rows) > 50000 or used > 512 * 1024**2:
+            if len(rows) > 50000 or used > 1024**3:
                 raise ValueError('Runtime exceeds the native inventory limits')
     walk(root, '')
     digest = hashlib.sha256(json.dumps(rows, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
     return digest, used, len(rows)
 
 
-def build_runtime(image, destination):
+def build_runtime(image, destination, *, wheel_lock=None, wheel_cache=None):
     image, destination = Path(image), Path(destination)
     destination.mkdir(mode=0o755)
     for name in [*MOUNTS, 'usr/bin', 'usr/lib/python3.12', 'usr/lib/x86_64-linux-gnu', 'usr/lib64']:
@@ -98,6 +98,12 @@ def build_runtime(image, destination):
     for item in sorted((image / 'usr/lib/x86_64-linux-gnu').glob('*.so*')):
         copy(item.relative_to(image), item.relative_to(image))
     copy('usr/lib64/ld-linux-x86-64.so.2', 'usr/lib64/ld-linux-x86-64.so.2')
+    if wheel_lock is not None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('guest_wheel_recipe', Path(__file__).with_name('build-guest-wheels.py'))
+        recipe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(recipe)
+        recipe.add_wheels(destination, recipe.load_lock(wheel_lock), wheel_cache)
     # The caller may have umask 077; runtime traversal must still be canonical.
     for item in [destination, *destination.rglob('*')]:
         if item.is_dir() and not item.is_symlink():

@@ -97,7 +97,7 @@ def _pinned_file(path, expected):
         raise
 
 
-def tree_digest(path, *, max_bytes=512 * 1024**2, max_entries=50000):
+def tree_digest(path, *, max_bytes=1024**3, max_entries=50000):
     """Canonical content/mode inventory for an immutable approved runtime tree.
 
     Never follow source links. A link is part of the pinned runtime content and
@@ -213,10 +213,18 @@ def _filter(group_network=None):
         rule('socketpair', comparisons=[(0, 4, 1, 0)])
         if group_network is not None:
             # IPv4 TCP/UDP exist only inside the retained group namespace. No
-            # raw, packet, netlink, IPv6 or vsock socket is enabled by this path.
+            # raw IP, packet, IPv6 or vsock socket is enabled by this path.
             for socket_type in (1, 2):
                 for protocol in (0, 6 if socket_type == 1 else 17):
                     rule('socket', comparisons=[(0, 4, 2, 0), (1, 7, 0xf, socket_type), (2, 4, protocol, 0)])
+            # glibc getifaddrs/Gloo need NETLINK_ROUTE in this private namespace.
+            # This admits only that protocol, not general netlink. All workload
+            # capabilities are dropped in a child user namespace: the kernel
+            # rejects non-GET rtnetlink messages without CAP_NET_ADMIN in the
+            # user namespace owning the retained network namespace. The owned
+            # group check verifies both private enumeration and mutation refusal.
+            for socket_type in (2, 3):
+                rule('socket', comparisons=[(0, 4, 16, 0), (1, 7, 0xf, socket_type), (2, 4, 0, 0)])
             # Read-only interface queries for compatible collective libraries.
             # No address, route, MTU, flag or TUN creation ioctl is permitted.
             for request in [0x8912, 0x8913, 0x8915, 0x8919, 0x891b, 0x8921, 0x8933]:

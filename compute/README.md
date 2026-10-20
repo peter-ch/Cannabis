@@ -20,6 +20,13 @@ python scripts/compute-probe.py
 
 The worker manifest is optional. An empty pool produces an unassigned plan. Probe using a Python environment that already contains the intended PyTorch build. The probe does not install drivers, run benchmarks, print host identifiers or establish confidential-execution support.
 
+The [optional CPU PyTorch image recipe](../docs/guest-image-build.md#cpu-pytorch-runtime)
+pins Torch, NumPy and their dependency closure for native single-process and
+protected Gloo group jobs. Its 8 GiB VM profile and runtime digest are distinct
+from the minimal Python image. Select an independently admitted matching provider
+before offering or paying for this capability; a successful local probe or
+training fixture does not establish live availability.
+
 ## Public job manifest
 
 Use schema `cannabis.compute.job.v1`. The planner validates these exact fields and rejects extra execution fields that could leak private arguments.

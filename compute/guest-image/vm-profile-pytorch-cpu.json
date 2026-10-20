@@ -1,0 +1,15 @@
+{
+  "schema": "cannabis.guest-vm-budget.v1",
+  "root": {"bytes": 2147483648, "inodes": 65536},
+  "volatile": {
+    "run": {"bytes": 134217728, "inodes": 8192},
+    "tmp": {"bytes": 67108864, "inodes": 4096},
+    "shm": {"bytes": 16777216, "inodes": 1024}
+  },
+  "outer": {"cpu_millis": 500, "memory_bytes": 268435456, "processes": 64, "wall_seconds": 3600},
+  "job": {"cpu_millis": 3000, "memory_bytes": 2147483648, "processes": 256, "wall_seconds": 3600, "children": 3},
+  "kernelReserveBytes": 536870912,
+  "kernelReserveCPUMillis": 500,
+  "bootArchiveBytes": 536870912,
+  "referenceVM": {"cpus": 4, "memoryMiB": 8192}
+}

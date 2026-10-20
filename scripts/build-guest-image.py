@@ -83,11 +83,14 @@ def main():
     parser.add_argument('--cache', type=Path, required=True)
     parser.add_argument('--guest-services', type=Path, required=True)
     parser.add_argument('--operating', action='store_true', help='Use the one-use operating PID-1 entry with bilateral booked-launch consent')
+    parser.add_argument('--runtime', choices=['native', 'pytorch-cpu'], default='native',
+                        help='Select the measured runtime and its complete VM capacity profile')
     args = parser.parse_args()
     if sys.platform != 'linux' or os.uname().machine != 'x86_64':
         raise ValueError('Use Linux x86_64 with Python 3.12+, dpkg-deb and depmod')
     from compute.guest_vm import VmBudget
-    vm_budget=VmBudget(json.loads((INPUTS/'vm-profile.json').read_text()))
+    vm_profile = INPUTS / ('vm-profile-pytorch-cpu.json' if args.runtime == 'pytorch-cpu' else 'vm-profile.json')
+    vm_budget=VmBudget(json.loads(vm_profile.read_text()))
     out, cache, services = (p.resolve() for p in (args.output, args.cache, args.guest_services))
     if out.exists() or ROOT in out.parents or ROOT in cache.parents or out == ROOT or cache == ROOT:
         raise ValueError('Require a new output and external cache outside the public repository')
@@ -108,6 +111,13 @@ def main():
     for name, target in {'bin': 'usr/bin', 'sbin': 'usr/sbin', 'lib': 'usr/lib', 'lib64': 'usr/lib64'}.items():
         (tree / name).symlink_to(target)
     inputs = [*lock['packages'], lock['node'], lock['age']]
+    wheel_lock = INPUTS / 'pytorch-cpu-wheels.json' if args.runtime == 'pytorch-cpu' else None
+    wheel_recipe = ROOT / 'scripts/build-guest-wheels.py'
+    if wheel_lock:
+        wheel_spec = importlib.util.spec_from_file_location('guest_wheel_recipe', wheel_recipe)
+        wheel_builder = importlib.util.module_from_spec(wheel_spec)
+        wheel_spec.loader.exec_module(wheel_builder)
+        inputs.extend(wheel_builder.load_lock(wheel_lock)['packages'])
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda item: download(item, cache), inputs))
     for package in lock['packages']:
@@ -152,7 +162,9 @@ def main():
     copy_text(ROOT / 'LICENSE', project / 'LICENSE')
     copy_text(INPUTS / 'inputs.json', project / 'image-inputs.json')
     copy_text(INPUTS / 'inputs.json', project / 'compute/guest-image/inputs.json')
-    copy_text(INPUTS / 'vm-profile.json', project / 'vm-profile.json')
+    copy_text(vm_profile, project / 'vm-profile.json')
+    if wheel_lock:
+        copy_text(wheel_lock, project / 'pytorch-cpu-wheels.json')
     shutil.copyfile(node_prefix / 'LICENSE', tree / 'usr/local/bin/node.LICENSE')
     for name in ['package.json', 'package-lock.json']:
         shutil.copyfile(INPUTS / name, project / name)
@@ -170,6 +182,10 @@ def main():
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in ['group_fixture.mjs', 'group_native_controller.mjs', 'group_native_requester.mjs', 'launch_fixture.mjs']:
         copy_text(ROOT / 'test/helpers' / name, project / 'test/helpers' / name)
+    if wheel_lock:
+        copy_text(ROOT / 'scripts/check-guest-pytorch.py', project / 'scripts/check-guest-pytorch.py')
+        copy_text(ROOT / 'test/helpers/pytorch_fixture.py', project / 'test/helpers/pytorch_fixture.py')
+        copy_text(ROOT / 'test/fixtures/pytorch-training.py', project / 'test/fixtures/pytorch-training.py')
     for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py','check-guest-runtime.py','check-guest-ciphertext.py','compute-guest-vm.py','check-guest-vm.py','compute-guest-boot.py','check-guest-boot.py']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in lock['guestServices']:
@@ -206,7 +222,7 @@ def main():
     spec = importlib.util.spec_from_file_location('guest_runtime_recipe', recipe)
     runtime_builder = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runtime_builder)
-    runtime = runtime_builder.build_runtime(tree, project / 'runtime')
+    runtime = runtime_builder.build_runtime(tree, project / 'runtime', wheel_lock=wheel_lock, wheel_cache=cache)
     (project / 'runtime.json').write_text(json.dumps(runtime, separators=(',', ':')) + '\n')
     # Record all embedded regular-file contents. This is a build manifest, not
     # remote attestation; firmware must cover the kernel/initrd/cmdline chain.
@@ -230,6 +246,10 @@ def main():
     if args.operating:report['bootPurpose']='one-use operating PID-1 entry; protected execution still requires independent admission'
     report['nativeRuntime'] = runtime
     report['runtimeRecipeSHA256'] = digest(recipe)
+    report['runtimeProfile'] = args.runtime
+    if wheel_lock:
+        report['pythonWheels'] = {'lockSHA256': digest(wheel_lock), 'recipeSHA256': digest(wheel_recipe),
+                                 'packages': len(wheel_builder.load_lock(wheel_lock)['packages'])}
     report['vmBudget']={'profile':vm_budget.value,'minimumMemoryBytes':vm_budget.minimum_memory,
         'minimumCPUs':vm_budget.minimum_cpus,'rootFilePageBytes':root_pages,'rootEntries':len(payload)+1}
     (out / 'build.json').write_text(json.dumps(report, indent=2) + '\n')

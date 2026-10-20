@@ -117,7 +117,7 @@ def validate_boot_result(report, budget, result):
             raise ValueError('Guest workflow acceptance checks did not pass: ' + name)
     group_cases={
         'group':('cannabis.guest-group-check.v1',{'twoRankTcpComputation','perRankCiphertextReconstruction',
-            'unapprovedSocketRefusals','privateTunDeviceHidden','wholeTreeCleanup'}),
+            'unapprovedSocketRefusals','privateTunDeviceHidden','privateInterfaceQueryAndMutationRefusal','wholeTreeCleanup'}),
         'groupFailure':('cannabis.guest-group-failure-check.v1',{'pumpDeath','queuedHeartbeatStall','inputEof',
             'invalidFrame','wrongRankPacket','serviceExpiry','namespaceReplacement','nonPrivateDescriptor',
             'creationFailureCleanup','ownerDeath','cancellation','wholeTreeCleanup'})}
@@ -126,6 +126,20 @@ def validate_boot_result(report, budget, result):
                   'hardwareValidated':False,'realPaidJob':False}
         if result.get(name+'Checks')!=expected:
             raise ValueError('Protected group acceptance checks did not pass: '+name)
+    if report.get('runtimeProfile') == 'pytorch-cpu':
+        pytorch_cases={
+            'single':('cannabis.guest-pytorch-check.v1',{'singleProcessTraining','encryptedInputAndResult',
+                'numericCheckpointReconstruction','wholeTreeCleanup'}),
+            'group':('cannabis.guest-group-check.v1',{'twoRankGlooTraining','synchronizedWeights',
+                'numericCheckpointReconstruction','perRankCiphertextReconstruction','unapprovedSocketRefusals',
+                'privateTunDeviceHidden','privateInterfaceQueryAndMutationRefusal','wholeTreeCleanup'})}
+        expected={name:{'schema':schema,'kernel':report['kernelRelease'],
+                       'checks':{case:True for case in cases},'hardwareValidated':False,'realPaidJob':False}
+                  for name,(schema,cases) in pytorch_cases.items()}
+        if result.get('pytorchChecks') != expected:
+            raise ValueError('Complete CPU PyTorch training checks did not pass')
+    elif result.get('pytorchChecks') is not None:
+        raise ValueError('Unexpected PyTorch evidence in the minimal runtime')
     job_cases = {'childCountBound', 'parentEntryRejected', 'retainedLeafHandlesAfterParentCleanup',
         'partialLeafCleanup', 'aggregateOOMKillsAllLeaves', 'aggregatePIDLimit', 'pinnedControlAndWorkloadCompletion',
         'busyControlExitRefused', 'stoppedControlAndDetachedWorkloadRetired', 'wholeTreeDeadline',
