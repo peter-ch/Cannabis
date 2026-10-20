@@ -201,7 +201,10 @@ def main():
     # TCG intentionally cannot provide confidential-hardware acceptance evidence.
     command = [qemu, '-machine', 'q35,accel=tcg', '-cpu', 'max', '-smp', str(reference['cpus']), '-m', str(reference['memoryMiB']), '-nodefaults', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-serial', 'stdio', '-no-reboot', '-kernel', str(image / 'vmlinuz'), '-initrd', str(image / 'initramfs.cpio.gz'), '-append', cmdline]
     capacity_refusals={}
-    for name,option,value in [('insufficientMemory','-m',min(2048,budget.minimum_memory//1024**2-128)),
+    # The refusal VM must unpack the selected image before PID 1 can reject its
+    # complete reservation. A fixed 2 GiB VM cannot even unpack larger runtime
+    # images; test just below this profile's actual minimum instead.
+    for name,option,value in [('insufficientMemory','-m',budget.minimum_memory//1024**2-128),
                               ('insufficientCPUs','-smp',budget.minimum_cpus-1)]:
         changed=list(command);changed[changed.index(option)+1]=str(value)
         refusal_log=out/(name+'.log')
