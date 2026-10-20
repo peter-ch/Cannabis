@@ -345,7 +345,8 @@ python3 scripts/verify-operating-boot.py \
 Add `--accelerator kvm` for the same explicitly selected ordinary KVM checks.
 
 It sends only invalid owned public requests. It requires public staging followed
-by refusal, malformed/oversized prefix refusal, bounded stalled intake, and
+by refusal, a valid fragmented prefix that waits for its remainder before staging,
+malformed/oversized prefix refusal, bounded stalled intake, and
 shutdown when the port or required network device is absent or the device identity
 differs. The kernel console must remain silent. A local
 QMP connection observes the
@@ -354,6 +355,14 @@ host termination, reset or panic does not substitute for the expected power-off.
 QMP issues no VM-control or memory-read command. The NIC uses a restricted user
 backend with external access disabled. No shared filesystem, customer key,
 authorized job or real payment participates in these refusal checks.
+
+The stalled-prefix case requires bounded, quiet guest shutdown. It does not infer
+the guest's intake deadline from the host's receipt of `READY`: that message can
+be buffered, and the host observer can be descheduled. The separate component
+checks exercise the guest monotonic intake deadline directly. The fragmented
+case checks that a partial valid prefix stays open during a host-observed pause
+and is staged after its remainder arrives. Neither observation establishes
+trusted time against a hostile hypervisor.
 
 These paths still require actual confidential hardware, reviewed production
 authorities, an integrated successful operating job, authenticated network and

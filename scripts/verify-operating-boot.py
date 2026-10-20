@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import select
 import shutil
 import signal
 import socket
@@ -52,7 +53,7 @@ def main():
     if cmdline!='console=null panic=-1 quiet loglevel=0 init=/init':raise ValueError('Require the private operating console policy')
     out.mkdir(parents=True)
     checks={}
-    for mode in ['unapproved-launch','malformed-prefix','oversized-prefix','stalled-prefix','missing-port','missing-network','wrong-network']:
+    for mode in ['unapproved-launch','fragmented-launch','malformed-prefix','oversized-prefix','stalled-prefix','missing-port','missing-network','wrong-network']:
         serial=out/(mode+'-serial.log');log=out/(mode+'-qemu.log')
         with tempfile.TemporaryDirectory(prefix='cannabis-boot-') as directory:
             sockpath=Path(directory)/'control.sock'
@@ -108,11 +109,19 @@ def main():
                             greeting.extend(chunk)
                         if bytes(greeting)!=READY:raise ValueError('Unexpected public boot greeting')
                         ready_at=time.monotonic()
-                        if mode=='unapproved-launch':payload=encode_public_launch(b'{}',b'{}',b'{}')
+                        if mode in ['unapproved-launch','fragmented-launch']:payload=encode_public_launch(b'{}',b'{}',b'{}')
                         elif mode=='malformed-prefix':payload=b'X'*len(MAGIC)
                         elif mode=='oversized-prefix':payload=MAGIC+struct.pack('!III',2**32-1,2,2)
                         else:payload=MAGIC[:2]
-                        peer.sendall(payload)
+                        if mode=='fragmented-launch':
+                            peer.sendall(payload[:2])
+                            # Prove a valid partial prefix waits for more input.
+                            # This observation shares one host clock; it does not
+                            # infer when the guest's intake deadline started.
+                            if select.select([peer],[],[],2)[0] or proc.poll() is not None:
+                                raise ValueError('Partial public prefix responded or shut down before completion')
+                            peer.sendall(payload[2:])
+                        else:peer.sendall(payload)
                         while proc.poll() is None:
                             if time.monotonic()-started>120:raise TimeoutError('Operating refusal did not retire within its bound')
                             try:chunk=peer.recv(1024)
@@ -134,13 +143,17 @@ def main():
                     shutdowns=[row.get('data') for row in qmp_records if row.get('event')=='SHUTDOWN']
                     if shutdowns!=[{'guest':True,'reason':'guest-shutdown'}]:
                         raise ValueError('A normal guest power-off was not observed')
-                    if bytes(received)!=(STAGED if mode=='unapproved-launch' else b''):
+                    if bytes(received)!=(STAGED if mode in ['unapproved-launch','fragmented-launch'] else b''):
                         raise ValueError('Unexpected staging/refusal boundary')
                     after_ready=None if ready_at is None else time.monotonic()-ready_at
-                    if mode=='stalled-prefix' and after_ready<29:raise ValueError('Stalled input did not reach its intake deadline')
+                    # READY may be buffered, or this host process descheduled.
+                    # Its receipt is not the guest's deadline origin. Require
+                    # bounded shutdown here; the component checks exercise the
+                    # guest monotonic intake deadline directly.
                     checks[mode]={'poweredOff':True,'kernelConsoleSilent':True,
                         'shutdownEvent':shutdowns[0],
-                        'bootReady':ready_at is not None,'publicPrefixStaged':mode=='unapproved-launch',
+                        'bootReady':ready_at is not None,'publicPrefixStaged':mode in ['unapproved-launch','fragmented-launch'],
+                        'fragmentedPrefixVerified':mode=='fragmented-launch',
                         'elapsedSeconds':round(elapsed,3),'secondsAfterReady':None if after_ready is None else round(after_ready,3)}
                     print(json.dumps({'completed':mode,**checks[mode]}),flush=True)
                 finally:
@@ -151,6 +164,7 @@ def main():
         'image':report['outputs'],'referenceVM':reference,'checks':checks,'networkAttached':True,'externalNetworkEnabled':False,
         'hostFilesystemsAttached':False,'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0],
         'accelerator':args.accelerator,
+        'hostReadinessIsGuestDeadlineOrigin':False,
         'qmpScope':'Private local event observation only; no VM-control or memory-read command.',
         'hardwareValidated':False,'authorizedJobCompleted':False,'customerKeysUsed':False,'realPaidJob':False}
     (out/'verification.json').write_text(json.dumps(final,indent=2)+'\n')
