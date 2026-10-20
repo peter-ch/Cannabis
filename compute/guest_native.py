@@ -16,6 +16,8 @@ from .guest_deadline import ExecutionDeadline
 from .guest_resources import ResourceLimits
 from .guest_sandbox import NativeSandbox, ScratchLimits, tree_digest, _directory
 from .job_keys import RecoveredJobKey
+from .native_graph import SCHEMA as GRAPH_SCHEMA
+from .guest_graph import run_native_graph
 
 NATIVE_ADAPTER = 'native-linux-x86_64-v1'
 
@@ -72,6 +74,40 @@ class NativeTaskPlan:
         deadline.check()
         self._runtime, self._resources, self._used = runtime, resources, False
 
+    @contextmanager
+    def _outputs(self, parent, task, spec, staging, helper_limits, staging_limits, cancelled):
+        launch = task['launch']
+        if launch.get('schema') == GRAPH_SCHEMA:
+            yield run_native_graph(parent, self._root, self._runtime['digestSHA256'], task, spec['files'],
+                staging.path / 'inputs', staging.path / 'graph', limits=self._limits, scratch=self._scratch,
+                helper_limits=helper_limits, staging_limits=staging_limits, deadline=self._deadline, cancelled=cancelled)
+            return
+        if set(launch) - {'argv', 'environment', 'stdout', 'stderr'} or 'argv' not in launch:
+            raise ValueError('Unsupported native launch settings')
+        if 'environment' in launch and not isinstance(launch['environment'], dict):
+            raise ValueError('Native environment must be an explicit mapping')
+        log_names = [safe_name(launch[k]) for k in ('stdout', 'stderr') if k in launch]
+        if len(set(log_names)) != len(log_names) or any(name not in task['outputs'] for name in log_names):
+            raise ValueError('Returned logs must have distinct declared encrypted output paths')
+        with NativeSandbox(parent, self._root, staging.path / 'inputs', self._runtime['digestSHA256'],
+                self._limits, self._scratch, deadline=self._deadline) as sandbox:
+            executed = sandbox.run(launch['argv'], environment=launch.get('environment'), cancelled=cancelled)
+            if not executed['success']:
+                raise RuntimeError('Native task failed; no result accepted')
+            self._deadline.check(cancelled)
+            for stream in ('stdout', 'stderr'):
+                if stream in launch:
+                    target = sandbox.output_directory / launch[stream]
+                    current = sandbox.output_directory
+                    for part in Path(launch[stream]).parts[:-1]:
+                        current = current / part
+                        if not current.exists():
+                            current.mkdir(mode=0o700)
+                        if current.is_symlink() or not current.is_dir():
+                            raise ValueError('Unsafe output log directory')
+                    os.link(sandbox._path / stream, target, follow_symlinks=False)
+            yield sandbox.output_directory
+
     def run(self, parent, ciphertext, key, binding, destination, *, age, helper_limits, staging_limits, max_input_bytes, max_output_ciphertext_bytes, cancelled=None):
         """Consume one guest-opened job key; publish only fully sealed ciphertext.
 
@@ -115,36 +151,10 @@ class NativeTaskPlan:
                 raise ValueError('Private task differs from retained matching metadata')
             if task.get('dependsOn', []):
                 raise ValueError('Dependency tasks require authenticated input reconstruction before this adapter can run')
-            launch = task['launch']
-            if set(launch) - {'argv', 'environment', 'stdout', 'stderr'} or 'argv' not in launch:
-                raise ValueError('Unsupported native launch settings')
-            if 'environment' in launch and not isinstance(launch['environment'], dict):
-                raise ValueError('Native environment must be an explicit mapping')
-            log_names = [safe_name(launch[k]) for k in ('stdout', 'stderr') if k in launch]
-            if len(set(log_names)) != len(log_names) or any(name not in task['outputs'] for name in log_names):
-                raise ValueError('Returned logs must have distinct declared encrypted output paths')
-            with NativeSandbox(parent, self._root, staging.path / 'inputs', self._runtime['digestSHA256'],
-                    self._limits, self._scratch, deadline=self._deadline) as sandbox:
-                executed = sandbox.run(launch['argv'], environment=launch.get('environment'), cancelled=cancelled)
-                if not executed['success']:
-                    raise RuntimeError('Native task failed; no result accepted')
-                self._deadline.check(cancelled)
-                for stream in ('stdout', 'stderr'):
-                    if stream in launch:
-                        target = sandbox.output_directory / launch[stream]
-                        # Walk through real directories only: a customer can
-                        # otherwise leave a symlink aimed at the control plane.
-                        current = sandbox.output_directory
-                        for part in Path(launch[stream]).parts[:-1]:
-                            current = current / part
-                            if not current.exists():
-                                current.mkdir(mode=0o700)
-                            if current.is_symlink() or not current.is_dir():
-                                raise ValueError('Unsafe output log directory')
-                        os.link(sandbox._path / stream, target, follow_symlinks=False)
+            with self._outputs(parent, task, spec, staging, helper_limits, staging_limits, cancelled) as output_root:
                 receipt = run_guarded_helper(parent, helper_limits, {'operation': 'seal-result', 'spec': spec,
                     'taskId': task['id'], 'packageSHA256': binding['packageSHA256'],
-                    'root': str(sandbox.output_directory), 'recipient': key.result_recipient,
+                    'root': str(output_root), 'recipient': key.result_recipient,
                     'destination': str(staging.path / 'result.age'), 'attempt': binding['attempt'], 'rank': 0,
                     'age': age}, cancelled=cancelled, deadline=self._deadline)
             self._deadline.check(cancelled)

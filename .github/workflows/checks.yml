@@ -32,6 +32,8 @@ jobs:
       - run: npm test
       - name: Verify generic compute client and placement
         run: python -m unittest discover -s test -p 'test_compute_client.py' -v
+      - name: Verify private native step graph contracts
+        run: python -m unittest discover -s test -p 'test_native_graph.py' -v
       - name: Execute owned microjob fixtures and verify exact settlement
         run: npm run exercise:microjobs
       - name: Check guest image tooling syntax
@@ -130,6 +132,7 @@ jobs:
           sudo /usr/bin/python3 -I -B scripts/check-guest-boot.py --busybox /tmp/cannabis-runtime-image/bin/busybox
           sudo /usr/bin/python3 -I -B scripts/check-guest-runtime.py --image-root /tmp/cannabis-runtime-image
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-native.py
+          sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-graph.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-execution.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py --hosted

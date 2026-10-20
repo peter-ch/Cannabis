@@ -159,6 +159,7 @@ def main():
     for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'check-guest-guardian.py', 'compute-guest-guardian.py', 'check-guest-sandbox.py', 'compute-guest-sandbox.py', 'check-guest-native.py', 'compute-guest-helper.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs', 'compute-guest-control.py', 'check-guest-job.py', 'compute-guest-native-pipe.py', 'check-guest-execution.py', 'compute-guest-admission.py', 'compute-guest-session.mjs']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     copy_text(ROOT / 'scripts/check-guest-python.py', project / 'scripts/check-guest-python.py')
+    copy_text(ROOT / 'scripts/check-guest-graph.py', project / 'scripts/check-guest-graph.py')
     for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py','check-guest-runtime.py','check-guest-ciphertext.py','compute-guest-vm.py','check-guest-vm.py','compute-guest-boot.py','check-guest-boot.py']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in lock['guestServices']:

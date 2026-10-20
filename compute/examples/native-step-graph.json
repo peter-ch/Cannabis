@@ -1,0 +1,31 @@
+{
+  "schema": "cannabis.native-step-graph.v1",
+  "steps": [
+    {
+      "id": "prepare",
+      "dependsOn": [],
+      "inputs": [
+        {"package": "prepare.py", "destination": "prepare.py"},
+        {"package": "source.json", "destination": "source.json"}
+      ],
+      "launch": {"argv": ["/usr/bin/python3", "-I", "-B", "/input/prepare.py"]},
+      "outputs": ["prepared.json"],
+      "outputMaxBytes": 1048576
+    },
+    {
+      "id": "calculate",
+      "dependsOn": ["prepare"],
+      "inputs": [
+        {"package": "calculate.py", "destination": "calculate.py"},
+        {"step": "prepare", "output": "prepared.json", "destination": "prepared.json"}
+      ],
+      "launch": {"argv": ["/usr/bin/python3", "-I", "-B", "/input/calculate.py"], "stdout": "log.txt"},
+      "outputs": ["answer.json", "log.txt"],
+      "outputMaxBytes": 1048576
+    }
+  ],
+  "collect": [
+    {"step": "calculate", "output": "answer.json", "destination": "answer.json"},
+    {"step": "calculate", "output": "log.txt", "destination": "log.txt"}
+  ]
+}

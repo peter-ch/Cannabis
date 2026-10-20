@@ -29,6 +29,47 @@ The core client reconstructs files; it never imports returned Python, unpickles 
 
 ## Runtime adapters
 
+### Private step graphs on one worker
+
+The native Linux adapter now implements `cannabis.native-step-graph.v1` as an
+explicit private `launch` contract. This runs a bounded DAG **sequentially inside
+one protected worker booking**, using one pinned runtime. Each step has its own
+fresh sandbox. Only allowlisted package files and outputs of declared dependencies
+are copied into that step's read-only `/input`. Programs write to `/output`.
+The [step-graph example](../compute/examples/native-step-graph.json) shows the
+format; the named programs and their partition/reduction logic are supplied by
+the requester. Python is just the example interpreter.
+
+Declare each step's `id`, `dependsOn`, `inputs`, native `launch`, `outputs` and
+`outputMaxBytes`. Input mappings select either a `package` path or a preceding
+`step`/`output`, with an explicit destination. Final `collect` mappings must
+exactly cover the enclosing workload task's outputs. Paths, dependencies, cycles
+and final collection are checked before packaging and again inside the guest.
+There are at most 64 steps. The graph belongs inside **one** workload task;
+top-level dependencies between separately placed tasks are not silently folded
+into this booking.
+
+Every step uses the enclosing task's CPU, memory, process and scratch limits.
+One task wall allowance spans the whole graph, while the signed booking deadline
+bounds decoding, graph execution, encryption, publication and cleanup. All retained
+intermediate outputs, temporary input copies and the final collection share the
+already reserved staging filesystem; size and inode quotas are never multiplied
+by the number of steps. Size the staging allowance for all retained outputs plus
+the current input copy and final collection. A quota, cancellation, deadline or
+step failure rejects the entire result. Output links, hard links, devices and
+FIFOs are refused. No partial result is published or billed.
+
+Intermediate files stay inside protected guest storage. Only the declared final
+collection is encrypted to the requester and bound to the original package,
+task, rank and attempt. This requires a newly measured launcher containing the
+graph implementation; older image evidence does not qualify it. Actual hardware
+admission and independent review remain required. This path does not add
+cross-worker transfers, parallel step execution, accelerator admission, automatic
+partitioning or checkpoint migration. Those require their own compatible adapters
+and encrypted communication paths.
+
+### Adapter requirements
+
 The adapter identifier is an extensible name, not a built-in application allowlist. An operational adapter must implement:
 
 - **Inspect/export:** identify the environment and produce a consistent artifact set, with versions, architecture, device needs and pinned runtime.
