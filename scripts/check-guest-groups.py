@@ -52,10 +52,16 @@ if rank==0:
     client,_=server.accept();client.settimeout(15)
     value=int(client.recv(16));answer=value+17;client.sendall(str(answer).encode());client.close();server.close()
 else:
-    client=socket.socket();client.settimeout(1)
+    deadline=time.monotonic()+15
     for _ in range(100):
+        remaining=deadline-time.monotonic()
+        if remaining<=0: raise AssertionError('peer absent')
+        # A failed connect leaves the socket state unspecified. Each retry must
+        # own a new socket; reusing one can abort even after the peer is ready.
+        client=socket.socket();client.settimeout(min(1,remaining))
         try: client.connect((os.environ['MASTER_ADDR'],int(os.environ['MASTER_PORT'])));break
-        except (ConnectionRefusedError,TimeoutError): time.sleep(0.05)
+        except (ConnectionRefusedError,ConnectionAbortedError,TimeoutError):
+            client.close();time.sleep(min(0.05,max(0,deadline-time.monotonic())))
     else: raise AssertionError('peer absent')
     client.settimeout(15);client.sendall(b'25');answer=int(client.recv(16));client.close()
 assert answer==42

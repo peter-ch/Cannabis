@@ -167,8 +167,10 @@ profile. It attaches no NIC, disk, shared filesystem, monitor,
 QMP or debugger. Before the full boot, two separate guests must refuse insufficient
 RAM or CPUs and power off before the second root copy. Each negative boot has a
 two-minute deadline. The full boot retains its thirty-minute deadline for the
-expanded 134-case suite; individual component, workload and cleanup deadlines
-remain separate. Failure or timeout does not count as success. Keep the serial
+component suite. Runtime inventory verification allows ten minutes for the
+larger CPU PyTorch image and three minutes for the minimal runtime under
+emulation; customer workload and cleanup deadlines remain separate and unchanged.
+Failure or timeout does not count as success. Keep the serial
 logs and verification JSON private. Bounded phase names distinguish slow or
 stalled checks without customer content.
 

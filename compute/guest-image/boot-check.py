@@ -98,8 +98,11 @@ def main():
             capture_output=True, timeout=30, check=True)
         python_checks = json.loads(cached.stdout)
         phase('embedded_runtime_preparation')
+        # The larger optional runtime is inventoried repeatedly under CPU
+        # emulation. This bounds the owned component check, not customer work.
+        runtime_timeout = 600 if Path('/opt/cannabis/pytorch-cpu-wheels.json').exists() else 180
         runtime = subprocess.run(['/usr/bin/python3','-I','-B','/opt/cannabis/scripts/check-guest-runtime.py'],
-            capture_output=True, timeout=180)
+            capture_output=True, timeout=runtime_timeout)
         if runtime.returncode:
             print('CANNABIS_RUNTIME_FAILURE '+runtime.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
             raise RuntimeError('Embedded runtime preparation failed')
