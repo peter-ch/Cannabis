@@ -412,6 +412,52 @@
         "internalType": "bytes32",
         "name": "id",
         "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedTerms",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedOutput",
+        "type": "bytes32"
+      }
+    ],
+    "name": "approveResult",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32[]",
+        "name": "ids",
+        "type": "bytes32[]"
+      },
+      {
+        "internalType": "bytes32[]",
+        "name": "expectedTerms",
+        "type": "bytes32[]"
+      },
+      {
+        "internalType": "bytes32[]",
+        "name": "expectedOutputs",
+        "type": "bytes32[]"
+      }
+    ],
+    "name": "approveResults",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
       }
     ],
     "name": "cancel",
@@ -465,6 +511,29 @@
       },
       {
         "internalType": "bytes32",
+        "name": "expectedTerms",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "outputDigest",
+        "type": "bytes32"
+      }
+    ],
+    "name": "deliverResult",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
         "name": "encryptedReasonDigest",
         "type": "bytes32"
       }
@@ -480,9 +549,60 @@
         "internalType": "bytes32",
         "name": "id",
         "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedTerms",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedOutput",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "encryptedReasonDigest",
+        "type": "bytes32"
+      }
+    ],
+    "name": "disputeResult",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
       }
     ],
     "name": "finalizeExpired",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedTerms",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "enum ComputeEscrow.State",
+        "name": "expectedState",
+        "type": "uint8"
+      }
+    ],
+    "name": "finalizeExpiredState",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -732,6 +852,58 @@
     "name": "resolve",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedTerms",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedOutput",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedReason",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "grossPaid",
+        "type": "uint256"
+      }
+    ],
+    "name": "resolveDispute",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "termsCommitments",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {

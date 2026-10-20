@@ -110,6 +110,7 @@ export function createConsoleServer(observer,{results=null,provider=null,service
     ['/api/market/export',['planId',body=>market.exportPlan(body.planId)]],
     ['/api/market/inspect',['planId',body=>market.inspect(body.planId)]],
     ['/api/market/begin',['bookingId,method,planId,signer',body=>market.begin(body.planId,{method:body.method,actor:body.signer,bookingId:body.bookingId})]],
+    ['/api/market/decision',['decision,method,planId,signer',body=>market.begin(body.planId,{method:body.method,actor:body.signer,bookingId:null,decision:body.decision})]],
     ['/api/market/detail',['requestId',body=>market.detail(body.requestId)]],
     ['/api/market/handoff',['requestId',body=>market.handoff(body.requestId)]],
     ['/api/market/signature',['requestId,signature',body=>market.submitSignature(body.requestId,body.signature)]],
@@ -118,6 +119,7 @@ export function createConsoleServer(observer,{results=null,provider=null,service
     ['/api/market/action',['actionId',body=>market.action(body.actionId)]],
     ['/api/market/observe',['actionId',body=>market.observe(body.actionId)]],
     ['/api/market/wallet-refused',['actionId',body=>market.walletRefused(body.actionId)]],
+    ['/api/market/wallet-not-requested',['actionId',body=>market.walletNotRequested(body.actionId)]],
     ['/api/market/cancel',['requestId',body=>market.cancel(body.requestId)]]
   ]);
   const server=http.createServer({ requestTimeout: 5000, headersTimeout: 5000, maxHeaderSize: 8192 }, async (req, res) => {

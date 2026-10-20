@@ -32,7 +32,7 @@ for (const format of ['landscape', 'portrait']) {
 if (fs.existsSync(out)) {
   const resolved = fs.realpathSync(out);
   if (path.dirname(resolved) !== fs.realpathSync(root) || path.basename(resolved) !== 'dist-site') throw Error('Unexpected build-directory target');
-  fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 fs.mkdirSync(out, { recursive: true });
 fs.cpSync(path.join(root, 'web'), out, { recursive: true });
@@ -44,7 +44,7 @@ const walletSource={name:'shared-market-wallet',setup(builder){builder.onResolve
 });}};
 const bundled = await build({ absWorkingDir: root, entryPoints: [path.join(root, 'web/work.js')], outfile: path.join(out, 'work.js'), bundle: true, format: 'esm', platform: 'browser', target: 'es2023', minify: true, legalComments: 'linked', metafile: true,plugins:[walletSource] });
 bundleNotices(bundled.metafile, root, path.join(out, 'work.js.LEGAL.txt'));
-for(const name of ['work-results.js','work-approvals.js','work-inbox.js','work-relay.js','work-market.js','market-journal.js','market-order-form.js'])
+for(const name of ['work-results.js','work-approvals.js','work-inbox.js','work-relay.js','work-market.js','work-payment.js','market-journal.js','market-order-form.js'])
   if(fs.existsSync(path.join(out,name)))fs.unlinkSync(path.join(out,name)); // bundled; no bare npm imports
 buildMediaPages(out);
 fs.cpSync(path.join(root, 'docs'), path.join(out, 'docs'), { recursive: true });

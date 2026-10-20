@@ -1,8 +1,9 @@
 import { sha256, MAX_RESULT_BYTES } from './work-results.js';
-import { approvedArchiveDescriptors, openApprovedResults, MAX_RECOVERY_BYTES } from './work-approvals.js';
+import { approvedArchiveDescriptors, openVerifiedResultSet, MAX_RECOVERY_BYTES } from './work-approvals.js';
 import { BrowserResultInbox } from './work-inbox.js';
 import { downloadApprovedArchives, EncryptedDownloadCache } from './work-relay.js';
 import {initializeWorkMarket} from './work-market.js';
+import {clearPaymentResults,retainPaymentResults} from './work-payment.js';
 
 const $ = id => document.getElementById(id);
 const enc = new TextEncoder();
@@ -116,6 +117,7 @@ $('sign-in').addEventListener('click', () => action($('sign-in'), async () => {
 $('sign-out').addEventListener('click', () => action($('sign-out'), async () => { await api('auth/logout', { method: 'POST', body: {} }); signedIn(null); $('orders').replaceChildren(); feedback('Signed out.'); }));
 $('refresh-orders').addEventListener('click', () => action($('refresh-orders'), async () => renderOrders((await api('orders')).orders)));
 function clearResults({discardDownloads=true}={}) {
+  clearPaymentResults();
   resultGeneration++;resultController?.abort();resultController=null;
   if(discardDownloads)encryptedDownloads.clear();
   downloads.splice(0).forEach(URL.revokeObjectURL);$('results').replaceChildren();$('transfer-progress').textContent='';
@@ -194,7 +196,7 @@ $('results-form').addEventListener('submit', event => {
         encrypted.push(new Uint8Array(await file.arrayBuffer()));
       }
     }
-    const files = await openApprovedResults({bundle:snapshot.bundle,spec,packageSHA256,identity,encrypted});
+    const verified = await openVerifiedResultSet({bundle:snapshot.bundle,spec,packageSHA256,identity,encrypted}),files=verified.files;
     try {
       if(generation!==resultGeneration)throw Error('Result opening was cleared or superseded');
       await (await inbox()).useCurrent(snapshot,()=>{
@@ -211,6 +213,10 @@ $('results-form').addEventListener('submit', event => {
           $('results').append(a);
         }
       },{verified:true});
+      retainPaymentResults(snapshot,verified.archives,{assertCurrent,
+        useCurrent:async fn=>(await inbox()).useCurrent(snapshot,()=>{
+          if(generation!==resultGeneration)throw Error('Result selection was cleared or changed');return fn();
+        })});
     }catch(error){if(generation===resultGeneration)clearResults();throw error;}
     finally {for(const bytes of files.values())bytes.fill(0);if(generation===resultGeneration){encryptedDownloads.clear();resultController=null;}}
     feedback('Requester approvals, encrypted receipts, selected attempts and archive contents verified. Results decrypted locally. Review output quality before approving payment; no transaction was signed or sent.');

@@ -3,6 +3,8 @@
 import {Interface,TypedDataEncoder,sha256,toUtf8Bytes,getAddress,ZeroAddress} from 'ethers';
 import marketABI from '../compute/market-abi.json';
 import escrowABI from '../compute/escrow-abi.json';
+import {postDeliveryMethods,settlementDecision} from '../compute/settlement_decision.mjs';
+export {inspectResultCommitment} from '../compute/result_commitment.mjs';
 const market=new Interface(marketABI),escrow=new Interface(escrowABI),token=new Interface(['function approve(address,uint256) returns(bool)']);
 const check=v=>{if(!v)throw Error('Wallet review changed, expired or is unsupported. Review again.');};
 const exact=(v,keys)=>check(v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join()===[...keys].sort().join());
@@ -60,7 +62,7 @@ function checkReview(input,historical=false) {
       digest(s.orderId)&&digest(s.termsDigest)&&BigInt(s.grossBaseUnits)%100n===0n&&BigInt(s.serviceFeeBaseUnits)===BigInt(s.grossBaseUnits)/100n&&
       BigInt(s.workerBaseUnits)+BigInt(s.serviceFeeBaseUnits)===BigInt(s.grossBaseUnits));
     if(['reserveBatch','approveToken','fund','cancel'].includes(a.method))check(a.actor===s.requester);
-    else check(a.actor===s.requester||s.accounts.includes(a.actor));
+    else if(!postDeliveryMethods.includes(a.method))check(a.actor===s.requester||s.accounts.includes(a.actor));
     if(a.method==='reserveBatch') {
       const decoded=market.decodeFunctionData(a.method,tx.data);data=market.encodeFunctionData(a.method,[s.bookings,decoded[1]]);
     } else if(a.method==='activate') {
@@ -72,6 +74,10 @@ function checkReview(input,historical=false) {
       to=s.escrow;
       if(a.method==='fund'){data=escrow.encodeFunctionData('fund',[s.terms,s.accounts,s.shares]);value=s.asset==='ETH'?BigInt(s.grossBaseUnits):0n;}
       else if(['accept','cancel'].includes(a.method))data=escrow.encodeFunctionData(a.method,[s.orderId]);
+      else if(postDeliveryMethods.includes(a.method)) {
+        const selected=settlementDecision(a.method,s.decision,{requester:s.requester,...s.terms,termsDigest:s.termsDigest,acceptanceSHA256:s.acceptanceSHA256},a.actor);
+        check(same(selected.outcome,s.outcome));data=escrow.encodeFunctionData(selected.contractMethod,[s.orderId,...selected.args]);
+      }
       else if(a.method==='withdrawWorker'){check(s.accounts.includes(a.actor));data=escrow.encodeFunctionData(a.method,[s.orderId,a.actor]);}
       else if(a.method==='withdrawCredit')data=escrow.encodeFunctionData(a.method,[a.actor]);
       else check(false);
@@ -95,12 +101,13 @@ export class MarketWallet {
   clear() {if(this.#provider)for(const e of ['accountsChanged','chainChanged','disconnect'])this.#provider.removeListener(e,this.#onChange);
     this.#provider=undefined;++this.#epoch;++this.#selection;this.#accounts=[];this.#changed();}
   get accounts(){return [...this.#accounts];}
-  async #call(method,params,epoch,expiresAt,signal,connecting=false) {
+  async #call(method,params,epoch,expiresAt,signal,connecting=false,dispatch=null) {
     const provider=this.#provider,selection=this.#selection;
     const active=()=>check(provider&&this.#provider===provider&&this.#selection===selection&&(connecting||this.#epoch===epoch)&&
       !signal?.aborted&&Date.now()<expiresAt);
     active();let timer,abort;
-    const pending=Promise.resolve().then(()=>{active();return provider.request({method,...(params?{params}:{})});});
+    const invoke=()=>{active();return provider.request({method,...(params?{params}:{})});};
+    const pending=Promise.resolve().then(()=>dispatch?dispatch(invoke):invoke());
     const cancelled=new Promise((_,reject)=>{abort=()=>reject(Error('Wallet response is unavailable. Inspect wallet activity; submission may be uncertain.'));
       timer=setTimeout(abort,Math.max(1,expiresAt-Date.now()));signal?.addEventListener('abort',abort,{once:true});});
     try{const value=await Promise.race([pending,cancelled]);active();return value;}
@@ -114,7 +121,7 @@ export class MarketWallet {
     this.#accounts=current.map(getAddress);return this.accounts;
   }
   async #verify(review,epoch,signal) {
-    const call=(m,p)=>this.#call(m,p,epoch,review.expiresAt,signal);
+    const call=(m,p,dispatch=null)=>this.#call(m,p,epoch,review.expiresAt,signal,false,dispatch);
     const accounts=await call('eth_accounts');check(Array.isArray(accounts)&&accounts.length<=64&&accounts.map(getAddress).includes(review.action.actor));
     const chain=await call('eth_chainId');check(number(chain)&&BigInt(chain)===BigInt(review.deployment.chainId));
     const genesis=await call('eth_getBlockByNumber',['0x0',false]);check(genesis?.hash?.toLowerCase()===review.deployment.genesisHash);
@@ -125,17 +132,21 @@ export class MarketWallet {
     const call=await this.#verify(review,epoch,signal),signature=await call('eth_signTypedData_v4',[review.action.actor,JSON.stringify(review.action.typedData)]);
     check(typeof signature==='string'&&/^0x(?:[0-9a-fA-F]{2}){1,8192}$/.test(signature));await this.#verify(review,epoch,signal);return signature;
   }
-  async send(input,handoff,signal) {
-    const review=validateMarketReview(input),epoch=this.#epoch;
-    check(review.action.kind==='transaction'&&this.#accounts.includes(review.action.actor)&&handoff?.schema==='cannabis.market-wallet-handoff.v1'&&
-      /^[0-9a-f]{64}$/.test(handoff.id)&&handoff.review.id===review.id&&handoff.review.actionDigest===review.actionDigest&&same(handoff.transaction,review.action.transaction));
-    const call=await this.#verify(review,epoch,signal);
+  async send(input,handoff,signal,dispatch=null) {
+    let dispatched=false,review;const epoch=this.#epoch;
     // Once request() starts, expiry/cancellation cannot revoke a wallet prompt.
     // The backend has already retained submission-uncertain before this call.
     try {
-      const transactionHash=await call('eth_sendTransaction',[review.action.transaction]);check(digest(transactionHash?.toLowerCase()));
+      review=validateMarketReview(input);
+      check((dispatch===null||typeof dispatch==='function')&&review.action.kind==='transaction'&&this.#accounts.includes(review.action.actor)&&handoff?.schema==='cannabis.market-wallet-handoff.v1'&&
+        /^[0-9a-f]{64}$/.test(handoff.id)&&handoff.review.id===review.id&&handoff.review.actionDigest===review.actionDigest&&same(handoff.transaction,review.action.transaction));
+      const call=await this.#verify(review,epoch,signal);
+      const transactionHash=await call('eth_sendTransaction',[review.action.transaction],invoke=>{
+        const submit=()=>{dispatched=true;return invoke();};return dispatch?dispatch(submit):submit();
+      });check(digest(transactionHash?.toLowerCase()));
       return {transactionHash:transactionHash.toLowerCase(),walletReported:true};
     } catch(error) {
+      if(!dispatched)return {walletNotRequested:true};
       if(error?.code===4001&&this.#epoch===epoch&&!signal?.aborted&&Date.now()<review.expiresAt)return {walletRefused:true};
       throw Error('Submission may be uncertain. Inspect wallet activity and recover using its transaction hash.');
     }

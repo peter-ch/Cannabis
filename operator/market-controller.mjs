@@ -116,6 +116,7 @@ export class MarketController {
   reportHash(actionId,transactionHash) {this.#live();return this.#journal.reportHash(actionId,transactionHash);}
   action(actionId) {this.#live();return this.#journal.action(actionId);}
   walletRefused(actionId) {this.#live();return this.#journal.walletRefused(actionId);}
+  walletNotRequested(actionId) {this.#live();return this.#journal.walletNotRequested(actionId);}
   observe(actionId) {
     const a=this.#journal.action(actionId);check(a.transactionHash);const r=this.#new('transaction-observation',{planId:a.review.action.planId});
     this.#track(r,async()=>{const observation=await observeMarketTransaction(this.#c,a.review,a.transactionHash,this.#runtime(r));this.#runtime(r);

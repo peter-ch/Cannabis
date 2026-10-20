@@ -450,6 +450,44 @@ Canonical hash-bound observations use [EIP-1898](https://eips.ethereum.org/EIPS/
 RPC-reported finality is a disclosed trust assumption, not an independent local
 consensus proof. The controls remain part of the review branch until release.
 
+## Review delivery and settlement
+
+The review branch's order controls continue through delivery, explicit requester
+approval, dispute, adjudication and deadline finalization. Use the agreed role's
+wallet and inspect the current order first. Every action gets a fresh simulation,
+finite cost review and retained handoff. The [requester guide](website-orders.md#review-delivered-work)
+explains result review, deadline outcomes and the separate withdrawal step.
+
+Prepare an encrypted result-set commitment from the complete provider group:
+
+```sh
+node scripts/compute-result-commitment.mjs result-input.json new-result-set.json
+```
+
+The input contains exactly `configuration` (the reviewed market configuration),
+`plan` (the retained public order plan) and `archives`. Each archive entry has
+`approvalDigest` (a nonzero `0x` bytes32 requester approval), `ciphertextSHA256`
+(64 lowercase hexadecimal characters) and `ciphertextBytes` (a positive safe
+integer). The tool accepts at most 4,096 distinct entries and a 1 MiB input; it
+writes a new file without overwriting existing material. It performs no network
+request, decryption, attestation, signing or output-quality assessment.
+
+The resulting `cannabis.encrypted-result-set.v1` file contains exact order and
+deployment bindings, sorted encrypted archive commitments and `outputDigest`.
+Import it into the selected order's delivery form. Only the agreed delivery
+manager can publish it. Do not substitute decrypted archive hashes or private
+filenames. Requesters must independently authenticate receipts, reconstruct the
+original workload and review output quality before approving. In the website,
+approval is checked against the results authenticated on that same page; in the
+local console, use your independently reviewed requester client results.
+
+The guarded methods commit to exact agreed terms and expected output/dispute
+digests on chain. Expiry finalization additionally requires the selected phase.
+This prevents a delayed transaction from silently applying to a different phase
+or result. It requires the new reviewed escrow runtime. Older low-level methods
+remain available to deliberate contract callers; the new controls and batch
+approval CLI use the guarded methods. No contract is deployed for public use yet.
+
 ## Before a paid worker can start
 
 The Start paid worker control remains disabled in this release. The separate booked-listener controls do not establish paid admission. Admission needs a fresh vendor-verified hardware report bound to the approved guest and assignment, a measured isolated launcher, protected storage/devices/networking, cleanup and key retirement, reviewed payment contracts and provider terms, and a real end-to-end acceptance run. See [worker deployment](worker-deployment.md) and [confidential computation](confidential-compute.md).

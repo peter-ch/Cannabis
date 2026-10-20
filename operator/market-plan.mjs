@@ -4,6 +4,7 @@ import {AbiCoder,Interface,TypedDataEncoder,getAddress,keccak256,ZeroAddress,sha
 import {bookingPayload,prepareMarketTransaction} from '../compute/market.mjs';
 import {encodeProviderManifest} from '../compute/provider_manifest_model.mjs';
 import {publicOrderPlan,settlementForPlan,termsDigest} from '../compute/settlement.mjs';
+import {postDeliveryMethods,settlementDecision} from '../compute/settlement_decision.mjs';
 import escrowABI from '../compute/escrow-abi.json' with {type:'json'};
 
 export const check=v=>{if(!v)throw Error('Market plan or retained selection is invalid');};
@@ -81,7 +82,7 @@ export function prepareMarketPlan(configuration,input) {
 
 export function marketAction(configuration,retained,input,signatures={}) {
   const c=marketConfiguration(configuration),r=prepareMarketPlan(c,retained.plan);check(r.id===retained.id);
-  exact(input,['method','actor','bookingId']);address(input.actor);check(input.bookingId===null||hash(input.bookingId));
+  exact(input,['method','actor','bookingId',...(postDeliveryMethods.includes(input?.method)?['decision']:[])]);address(input.actor);check(input.bookingId===null||hash(input.bookingId));
   const {method,actor,bookingId}=input,p=r.plan,d=r.detail;let transaction,summary;
   const market=(name,args)=>prepareMarketTransaction(c,{from:actor,method:name,args}).transaction;
   const contract=(to,name,args,value='0')=>({chainId:c.chainId,from:actor,to,value,data:escrow.encodeFunctionData(name,args)});
@@ -115,6 +116,10 @@ export function marketAction(configuration,retained,input,signatures={}) {
       check(actor===d.requester||d.accounts.includes(actor));transaction=market(method,[d.bookings.map(b=>b.bookingId).sort()]);
     } else if(method==='cancel') {
       check(actor===d.requester);transaction=contract(d.asset.escrow,'cancel',[d.orderId]);
+    } else if(postDeliveryMethods.includes(method)) {
+      const decided=settlementDecision(method,input.decision,{requester:d.requester,...d.terms,termsDigest:d.termsDigest,acceptanceSHA256:p.job.acceptanceSHA256},actor);
+      transaction=contract(d.asset.escrow,decided.contractMethod,[d.orderId,...decided.args]);
+      summary={...summary,acceptanceSHA256:p.job.acceptanceSHA256,decision:decided.decision,outcome:decided.outcome};
     } else if(method==='withdrawWorker') {
       check(d.accounts.includes(actor));transaction=contract(d.asset.escrow,'withdrawWorker',[d.orderId,actor]);
     } else if(method==='withdrawCredit') {

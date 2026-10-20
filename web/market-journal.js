@@ -2,14 +2,16 @@
 // client lifetime. IndexedDB commits complete before a wallet handoff is returned.
 import {marketConfiguration,deployment,prepareMarketPlan,marketAction,check,canonical,sha,exact} from '../operator/market-plan.mjs';
 import {validateRetainedMarketReview} from '../operator/market-wallet-source.js';
+import {postDeliveryMethods} from '../compute/settlement_decision.mjs';
 const ACTIVE=new Set(['submission-uncertain','hash-reported','pending','included-unfinalized','not-observed']);
-const STATES=new Set([...ACTIVE,'confirmed','reverted','wallet-refused']);
+const STATES=new Set([...ACTIVE,'confirmed','reverted','wallet-refused','wallet-not-requested']);
 const MAX_PLANS=32,MAX_ACTIONS=256,MAX_BYTES=8*1024*1024,MAX_ACTION_BYTES=262144;
 const enc=new TextEncoder(),size=v=>enc.encode(canonical(v)).length;
 const key=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
 const id=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
 const hash=v=>typeof v==='string'&&/^0x[0-9a-f]{64}$/.test(v)&&!/^0x0+$/.test(v);
 const rejection='Wallet reported user rejection. This is not an on-chain failure proof.';
+const notRequested='Local wallet adapter reported no transaction request. This is not an on-chain failure proof.';
 const reviewKeys=['schema','id','planId','expiresAt','deployment','action','actionDigest','feePolicy','quote','chainId','genesisHash','market','hardwareValidated','executionAuthorized','keyReleaseAuthorized'];
 const quoteKeys=['estimatedGas','gasLimit','maxFeePerGas','maxPriorityFeePerGas','maximumGasWei','nativeValueWei','maximumTotalWei'];
 function retainedReview(input) {
@@ -38,8 +40,9 @@ function validate(c,row) {
       ...['previousReportedHashes','importedAt'].filter(k=>Object.hasOwn(a,k))]);
     check(id(a.id)&&STATES.has(a.state)&&size(a)<=MAX_ACTION_BYTES&&Number.isSafeInteger(a.createdAt)&&a.createdAt>0&&
       Number.isSafeInteger(a.updatedAt)&&a.updatedAt>=a.createdAt&&(a.transactionHash===null||hash(a.transactionHash)));
-    check(a.walletOutcome===null||a.walletOutcome===rejection);
+    check(a.walletOutcome===null||a.walletOutcome===rejection||a.walletOutcome===notRequested);
     if(a.state==='wallet-refused')check(a.transactionHash===null&&a.walletOutcome===rejection);
+    if(a.state==='wallet-not-requested')check(a.transactionHash===null&&a.walletOutcome===notRequested);
     if(['hash-reported','pending','included-unfinalized','not-observed','confirmed','reverted'].includes(a.state))check(hash(a.transactionHash));
     if(Object.hasOwn(a,'importedAt'))check(Number.isSafeInteger(a.importedAt)&&a.importedAt>0);
     if(Object.hasOwn(a,'previousReportedHashes'))check(Array.isArray(a.previousReportedHashes)&&a.previousReportedHashes.length<=8&&a.previousReportedHashes.every(hash));
@@ -49,7 +52,8 @@ function validate(c,row) {
     exact(r.quote,[...quoteKeys,'scope']);check(quoteKeys.every(k=>typeof r.quote[k]==='string'&&/^(0|[1-9][0-9]{0,77})$/.test(r.quote[k]))&&
       r.quote.scope==='This transaction only. Later funding, acceptance and activation need their own fresh reviews.');
     const signatures=Object.fromEntries(row.signatures.filter(s=>s.planId===p.id).map(s=>[s.bookingId,s.signature]));
-    const derived=marketAction(c,p,{method:r.action.method,actor:r.action.actor,bookingId:null},signatures);
+    const derived=marketAction(c,p,{method:r.action.method,actor:r.action.actor,bookingId:null,
+      ...(postDeliveryMethods.includes(r.action.method)?{decision:r.action.summary.decision}:{})},signatures);
     check(canonical(derived.summary)===canonical(r.action.summary));
     for(const k of ['from','to','data'])check(derived.transaction[k]===r.action.transaction[k]);
     for(const k of ['chainId','value'])check(BigInt(derived.transaction[k])===BigInt(r.action.transaction[k]));
@@ -77,7 +81,7 @@ function restore(c,row,input) {
     } else {
       a.observation=null;
       if(a.transactionHash)a.state='hash-reported';
-      else if(a.state!=='wallet-refused')a.state='submission-uncertain';
+      else if(!['wallet-refused','wallet-not-requested'].includes(a.state))a.state='submission-uncertain';
       a.importedAt=Date.now();row.actions.push(a);
     }
   }
@@ -157,14 +161,16 @@ export class BrowserMarketJournal {
   action(actionId){this.assertLive();check(id(actionId));const a=this.#row.actions.find(a=>a.id===actionId);check(a);return structuredClone(a);}
   #update(actionId,change){check(id(actionId));return this.#mutate(row=>{const a=row.actions.find(a=>a.id===actionId);check(a);change(a);a.updatedAt=Date.now();return a;});}
   reportHash(actionId,value){check(hash(value));return this.#update(actionId,a=>{
-    check(ACTIVE.has(a.state)||a.state==='wallet-refused');
+    check(ACTIVE.has(a.state)||['wallet-refused','wallet-not-requested'].includes(a.state));
     if(a.transactionHash&&a.transactionHash!==value){check(['hash-reported','not-observed'].includes(a.state)&&(!a.observation||a.observation.state==='not-observed'));
       a.previousReportedHashes??=[];check(a.previousReportedHashes.length<8);a.previousReportedHashes.push(a.transactionHash);}
     a.transactionHash=value;a.state='hash-reported';
   });}
   walletRefused(actionId){return this.#update(actionId,a=>{check(a.state==='submission-uncertain'&&a.transactionHash===null);
     a.state='wallet-refused';a.walletOutcome=rejection;});}
-  observe(actionId,observation){return this.#update(actionId,a=>{check(ACTIVE.has(a.state)&&a.transactionHash===observation.transactionHash&&STATES.has(observation.state)&&observation.state!=='wallet-refused');
+  walletNotRequested(actionId){return this.#update(actionId,a=>{check(a.state==='submission-uncertain'&&a.transactionHash===null);
+    a.state='wallet-not-requested';a.walletOutcome=notRequested;});}
+  observe(actionId,observation){return this.#update(actionId,a=>{check(ACTIVE.has(a.state)&&a.transactionHash===observation.transactionHash&&STATES.has(observation.state)&&!['wallet-refused','wallet-not-requested'].includes(observation.state));
     a.state=observation.state;a.observation=structuredClone(observation);});}
   exportRecovery(){this.assertLive();return {schema:'cannabis.browser-market-recovery.v1',deployment:deployment(this.#c),
     plans:structuredClone(this.#row.plans),signatures:structuredClone(this.#row.signatures),

@@ -42,6 +42,59 @@ The website does not instruct customers to send a job budget directly to the fou
 
 See [job payments](compute-payments.md) for acceptance, disputes and refunds, including the review-window deadline. The minimum atomic amount is a precision limit, not a promise that an on-chain transaction is economical. [Small jobs](microjobs.md) covers aggregated fees and low-cost settlement requirements.
 
+## Review delivered work
+
+The review branch adds **Delivery, review & settlement** to the selected order's
+wallet controls. Refresh the chain observation to see the delivered encrypted
+output commitment, review deadline, dispute commitment, adjudication deadline
+and actual settlement. These observations do not establish output quality.
+
+The delivery manager publishes a commitment to the complete encrypted result
+set. Each entry binds a requester approval digest, encrypted archive SHA-256 and
+byte length; the whole commitment also binds the chain/genesis, escrow,
+requester, order, agreed terms, encrypted package and policy. Entries are sorted
+by approval digest. It contains no private filenames, task instructions, content
+keys or decrypted outputs. A commitment file alone proves neither authentic
+execution nor completeness; the requester verifies these against their own
+approved workload and receipts.
+
+On this page, first authenticate and reconstruct the original results in the
+result panel. The payment flow requires current version-3 requester approvals
+for the selected order. Choose **Use authenticated results from this page** to
+derive the corresponding encrypted output commitment, and compare it with the
+delivery. Review the actual results against the agreed acceptance criteria,
+explicitly select the quality-acceptance checkbox, then review the wallet action.
+Decryption, download, selection and storage acknowledgement never pay by
+themselves. The optional commitment download lets you share encrypted-result
+metadata with the delivery manager; it is not a receipt of payment.
+
+Current local attempts are checked when preparing approval and again at the
+wallet-request boundary. Clearing results, switching orders or retiring an
+attempt prevents a new request based on that selection. Once a wallet prompt is
+open, later changes cannot revoke a submission. Recovery distinguishes a local
+adapter report that no transaction was requested from a user rejection and a
+possibly submitted transaction. Only a fresh canonical receipt confirms the
+chain result. Changes made on another device remain outside this browser's
+local history; use your latest requester records.
+
+**Approve reviewed results and full payment** settles the entire accepted budget.
+To contest delivery, prepare the reason privately in encrypted form and choose
+**Dispute within the review window** with its digest. Only the agreed adjudicator
+can resolve the dispute, choosing a gross accepted amount from zero to the
+funded budget. Every positive award must use multiples of 100 base units; exactly
+1% goes to the disclosed fee credit and 99% to the worker pool. The remainder is
+refunded as requester credit. Withdrawals are separate wallet actions.
+
+The original contract deadlines still apply. After an undisputed delivery's
+review deadline, anyone may finalize **full payment**, even without a separate
+requester approval. Expired unaccepted funding, active work without delivery or
+an unresolved dispute instead produces a full refund credit. Select the exact
+expected phase for finalization. The new guarded contract entry points bind the
+reviewed terms and result/dispute commitments, and expiry finalization also binds
+the phase; a changed commitment or phase makes that transaction revert rather
+than apply a different reviewed outcome. These controls require the corresponding
+reviewed contract deployment and do not enable a live service by configuration.
+
 ## Other cryptocurrencies
 
 Conversion is not enabled. Routing services can supply swap or bridge quotes and unsigned transactions; for example, the [LI.FI quote API](https://docs.li.fi/li.fi-api/li.fi-api/requesting-a-quote) exposes destination estimates, minimum amounts and a transaction request. This is a researched integration option, not a selected, endorsed or connected payment provider.

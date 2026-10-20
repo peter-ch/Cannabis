@@ -147,6 +147,21 @@ class ChainView {
         check(allowance===0n);
       }
     } else if(method==='cancel')check(order.stateNumber===1);
+    else if(['deliver','approve','dispute','resolve','finalizeExpiredState'].includes(method)) {
+      const selected=action.summary.decision,o=order.order;
+      check(bookings.every(v=>v.recorded&&v.activated)||method==='finalizeExpiredState'&&selected.expectedState===1);
+      if(method==='deliver')check(order.stateNumber===2&&b.timestamp<Number(o.terms.deliverBy));
+      else if(method==='approve'||method==='dispute') {
+        check(order.stateNumber===3&&o.outputDigest===selected.outputDigest);
+        if(method==='dispute')check(b.timestamp<Number(o.reviewBy));
+      } else if(method==='resolve')check(order.stateNumber===4&&o.outputDigest===selected.outputDigest&&
+        o.disputeDigest===selected.reasonDigest&&b.timestamp<Number(o.resolveBy));
+      else {
+        check(order.stateNumber===selected.expectedState);
+        const deadline={1:o.terms.acceptBy,2:o.terms.deliverBy,3:o.reviewBy,4:o.resolveBy}[order.stateNumber];
+        check(BigInt(deadline)>0n&&BigInt(b.timestamp)>=BigInt(deadline));
+      }
+    }
     else if(method==='withdrawWorker')check(order.stateNumber===5&&(await this.order(plan,this.finalized)).stateNumber===5&&
       BigInt(order.workers.find(w=>w.account===action.actor)?.dueBaseUnits??'0')>0n);
     const credit=(await this.call(escrow,d.asset.escrow,'credits',[action.actor],b))[0];

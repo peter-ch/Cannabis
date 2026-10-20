@@ -114,9 +114,10 @@ export async function prepareBatchApproval(options) {
   }
   const c=await connect(options);
   try {
-    await c.contract.approveBatch.staticCall(ids,{from:requester});
+    const expectedTerms=options.approvals.map(a=>a.expectedTermsDigest),expectedOutputs=options.approvals.map(a=>a.expectedOutputDigest);
+    await c.contract.approveResults.staticCall(ids,expectedTerms,expectedOutputs,{from:requester});
     return {status:'UNSIGNED_COMPUTE_BATCH_APPROVAL',orders:reviewed,grossAtomic:gross.toString(),founderFeeAtomic:(gross/100n).toString(),
-      transaction:transaction(c,requester,c.escrow,c.contract.interface.encodeFunctionData('approveBatch',[ids])),sent:false,
+      transaction:transaction(c,requester,c.escrow,c.contract.interface.encodeFunctionData('approveResults',[ids,expectedTerms,expectedOutputs])),sent:false,
       review:[...review,'Verify and accept every private result before signing; this command cannot judge output quality']};
   }finally{c.provider.destroy();}
 }

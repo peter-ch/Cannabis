@@ -8,7 +8,7 @@ import {randomBytes} from 'node:crypto';
 import {marketConfiguration,deployment,prepareMarketPlan,check,canonical,sha,hash,exact} from './market-plan.mjs';
 
 const active=new Set(['submission-uncertain','hash-reported','pending','included-unfinalized','not-observed']);
-const terminal=new Set(['confirmed','reverted','wallet-refused']);
+const terminal=new Set(['confirmed','reverted','wallet-refused','wallet-not-requested']);
 const id=()=>randomBytes(32).toString('hex'),validID=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
 const MAX_PLANS=128,MAX_ACTIONS=1024,MAX_JSON=262144,MAX_BYTES=32*1024*1024;
 function location(file,create) {
@@ -107,7 +107,7 @@ export class MarketJournal {
       this.#db.prepare('UPDATE actions SET state=?,body=?,updated=? WHERE id=?').run(value.state,body,value.updatedAt,key);return value;});
   }
   reportHash(key,value) {
-    hash(value);return this.#update(key,a=>{check(active.has(a.state)||a.state==='wallet-refused');
+    hash(value);return this.#update(key,a=>{check(active.has(a.state)||['wallet-refused','wallet-not-requested'].includes(a.state));
       if(a.transactionHash!==null&&a.transactionHash!==value) {
         // Correct an unverified pasted hash without forgetting prior candidates.
         // A verified pending/included transaction cannot be replaced here.
@@ -119,6 +119,10 @@ export class MarketJournal {
   walletRefused(key) {
     return this.#update(key,a=>{check(a.state==='submission-uncertain'&&a.transactionHash===null);
       a.state='wallet-refused';a.walletOutcome='Wallet reported EIP-1193 user rejection. This is not an on-chain failure proof.';return a;});
+  }
+  walletNotRequested(key) {
+    return this.#update(key,a=>{check(a.state==='submission-uncertain'&&a.transactionHash===null);
+      a.state='wallet-not-requested';a.walletOutcome='Local wallet adapter reported no transaction request. This is not an on-chain failure proof.';return a;});
   }
   observe(key,observation) {
     return this.#update(key,a=>{check(active.has(a.state)&&a.transactionHash===observation.transactionHash&&

@@ -122,7 +122,7 @@ test('runtime, fee, nonce and wallet binding failures never become another trans
   const handoff=(await waitRequest(f.seller,f.seller.handoff(review.id),'handed-off')).result;
   const original=injected.request;
   injected.request=async input=>input.method==='eth_chainId'?'0x1':original(input);
-  await assert.rejects(wallet.send(review,handoff));assert.ok(!calls.includes('eth_sendTransaction'));
+  assert.deepEqual(await wallet.send(review,handoff),{walletNotRequested:true});assert.ok(!calls.includes('eth_sendTransaction'));
   injected.request=async input=>{if(input.method==='eth_sendTransaction')throw Object.assign(Error('Rejected'),{code:4001});return original(input);};
   assert.deepEqual(await wallet.send(review,handoff),{walletRefused:true});f.seller.walletRefused(handoff.id);wallet.clear();
   for(const change of [c=>c.marketCodeHash=nonce(),c=>c.feeLimits.maxTotalWei='1']) {

@@ -117,8 +117,8 @@ export async function approvedArchiveDescriptors(input) {
     ciphertextSHA256:receipts[i].ciphertextSHA256,ciphertextBytes:receipts[i].ciphertextBytes});
   return descriptors;
 }
-export async function openApprovedResults({encrypted,...input}) {
-  const {spec,packageSHA256,identity,receipts}=await checkedReceiptSet(input);
+export async function openVerifiedResultSet({encrypted,...input}) {
+  const {bundle,spec,packageSHA256,identity,receipts}=await checkedReceiptSet(input);
   requireValue(Array.isArray(encrypted)&&encrypted.length===receipts.length&&encrypted.every(b=>b instanceof Uint8Array)&&
     encrypted.reduce((n,b)=>n+b.length,0)<=MAX_RESULT_BYTES,'Select one encrypted archive per approved receipt, within 64 MiB');
   const files=new Map();
@@ -129,5 +129,8 @@ export async function openApprovedResults({encrypted,...input}) {
     results.push({receipt,bytes});
   }
   requireValue(files.size===0);
-  return openResults({spec,packageSHA256,identity,results});
+  const opened=await openResults({spec,packageSHA256,identity,results});
+  return {files:opened,archives:receipts.map((r,i)=>({approvalDigest:bundle.entries[i].approval.digest,
+    ciphertextSHA256:r.ciphertextSHA256,ciphertextBytes:r.ciphertextBytes}))};
 }
+export async function openApprovedResults(input){return (await openVerifiedResultSet(input)).files;}

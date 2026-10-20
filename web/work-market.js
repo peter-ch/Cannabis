@@ -2,8 +2,9 @@ import {MarketController} from '../operator/market-controller.mjs';
 import {marketConfiguration,deployment,sha,check} from '../operator/market-plan.mjs';
 import {inspectMarketNetwork} from '../operator/market-chain.mjs';
 import {BrowserMarketJournal} from './market-journal.js';
-import {initializeMarket,renderMarket,setMarketConnected,setMarketControl,loadMarketPlan} from '../operator/market.js';
+import {initializeMarket,renderMarket,setMarketConnected,setMarketControl,loadMarketPlan,invalidateMarketResults} from '../operator/market.js';
 import {initializeOrderForm,setOrderMarket,retainOfferObservation} from './market-order-form.js';
+import {reviewedResultCommitment,onPaymentResultsChanged} from './work-payment.js';
 const $=id=>document.getElementById(id);
 let candidate=null,client=null,journal=null,opening=false,generation=0,selectionGeneration=0,connectionAbort=null;
 const say=text=>{$('direct-market-message').textContent=text;};
@@ -22,10 +23,12 @@ function refresh() {
 const routes={network:(c,b)=>c.network(),offers:(c,b)=>c.discover(b),bookings:(c,b)=>c.bookings(b.bookingIds),
   import:(c,b)=>c.importPlan(b.plan),plan:(c,b)=>c.plan(b.planId),export:(c,b)=>c.exportPlan(b.planId),inspect:(c,b)=>c.inspect(b.planId),
   begin:(c,b)=>c.begin(b.planId,{method:b.method,actor:b.signer,bookingId:b.bookingId}),detail:(c,b)=>c.detail(b.requestId),
+  decision:(c,b)=>c.begin(b.planId,{method:b.method,actor:b.signer,bookingId:null,decision:b.decision}),
   handoff:(c,b)=>c.handoff(b.requestId),signature:(c,b)=>c.submitSignature(b.requestId,b.signature),
   'import-signature':(c,b)=>c.importSignature(b.planId,b.bookingId,b.signer,b.signature),
   'report-hash':(c,b)=>c.reportHash(b.actionId,b.transactionHash),action:(c,b)=>c.action(b.actionId),
-  observe:(c,b)=>c.observe(b.actionId),'wallet-refused':(c,b)=>c.walletRefused(b.actionId),cancel:(c,b)=>c.cancel(b.requestId)};
+  observe:(c,b)=>c.observe(b.actionId),'wallet-refused':(c,b)=>c.walletRefused(b.actionId),
+  'wallet-not-requested':(c,b)=>c.walletNotRequested(b.actionId),cancel:(c,b)=>c.cancel(b.requestId)};
 async function closeMarket() {
   ++generation;connectionAbort?.abort();setMarketConnected(false);setMarketControl({market:false});
   const previous=client;client=null;const previousJournal=journal;journal=null;
@@ -51,10 +54,18 @@ async function openMarket(mode) {
   finally{if(generation===version){opening=false;connectionAbort=null;controls();}}
 }
 export async function initializeWorkMarket() {
+  onPaymentResultsChanged(invalidateMarketResults);
   initializeOrderForm(async plan=>{check(client);const owner=client,retained=await owner.importPlan(plan);check(client===owner);refresh();loadMarketPlan(owner.plan(retained.id));
     $('market-plan').focus({preventScroll:true});});
   await initializeMarket(refresh,{adapter:{control,call:async(name,body)=>{check(client&&Object.hasOwn(routes,name));journal.assertLive();return routes[name](client,body);},
-    offers:retainOfferObservation,recovery:()=>{check(journal);return journal.exportRecovery();}}});
+    offers:retainOfferObservation,recovery:()=>{check(journal);return journal.exportRecovery();},
+    resultCommitment:async plan=>{check(client&&candidate);return (await reviewedResultCommitment(candidate,plan)).commitment;},
+    reviewDecision:async(plan,method,decision)=>{
+      if(method!=='approve')return null;check(client&&candidate);const owner=client;
+      const review=await reviewedResultCommitment(candidate,plan);check(client===owner&&review.commitment.outputDigest===decision.outputDigest);
+      return {assertCurrent:async()=>{check(client===owner);await review.assertCurrent();check(client===owner);},
+        dispatch:submit=>review.dispatch(()=>{check(client===owner);return submit();})};
+    }}});
   $('direct-market-configuration').addEventListener('change',async()=>{
     const version=++selectionGeneration,file=$('direct-market-configuration').files[0];candidate=null;controls();
     $('direct-market-selection').replaceChildren();$('direct-market-pins').textContent='';
