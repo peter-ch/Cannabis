@@ -49,12 +49,13 @@ else:
     else:
         raise AssertionError('Standalone task acquired route query access')
 data = json.loads(Path('/input/training.json').read_text())
+assert type(data['collectiveTimeoutSeconds']) is int and data['collectiveTimeoutSeconds'] in (60, 300)
 x = torch.from_numpy(np.array(data['x'][rank::world], dtype=np.float32)).reshape(-1, 1)
 y = torch.from_numpy(np.array(data['y'][rank::world], dtype=np.float32)).reshape(-1, 1)
 model = torch.nn.Linear(1, 1)
 if world > 1:
     assert os.environ['GLOO_SOCKET_IFNAME'] == 'cannabis0'
-    dist.init_process_group('gloo', init_method='env://', timeout=timedelta(seconds=60))
+    dist.init_process_group('gloo', init_method='env://', timeout=timedelta(seconds=data['collectiveTimeoutSeconds']))
     model = DistributedDataParallel(model)
 optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
 initial = float(torch.nn.functional.mse_loss(model(x), y).detach())

@@ -214,12 +214,12 @@ def main():
             pytorch_checks={
                 'single':owned_group_checks('pytorch','cannabis.guest-pytorch-check.v1',
                     ('singleProcessTraining','encryptedInputAndResult','numericCheckpointReconstruction','wholeTreeCleanup'),
-                    300,arguments=('--runtime','/opt/cannabis/runtime','--age','/usr/local/bin/age')),
+                    1200,arguments=('--runtime','/opt/cannabis/runtime','--age','/usr/local/bin/age','--emulated')),
                 'group':owned_group_checks('groups','cannabis.guest-group-check.v1',
                     ('twoRankGlooTraining','synchronizedWeights','numericCheckpointReconstruction',
                      'perRankCiphertextReconstruction','unapprovedSocketRefusals','privateTunDeviceHidden',
                      'privateInterfaceQueryAndMutationRefusal','wholeTreeCleanup'),
-                    360,tools=True,arguments=('--pytorch-runtime','/opt/cannabis/runtime'))}
+                    1500,tools=True,arguments=('--pytorch-runtime','/opt/cannabis/runtime','--emulated'))}
         group_failure_checks=owned_group_checks('group-failures','cannabis.guest-group-failure-check.v1',
             ('pumpDeath','queuedHeartbeatStall','inputEof','invalidFrame','wrongRankPacket','serviceExpiry',
              'namespaceReplacement','nonPrivateDescriptor','creationFailureCleanup','ownerDeath','cancellation','wholeTreeCleanup'),180)

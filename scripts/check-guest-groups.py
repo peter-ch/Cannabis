@@ -72,7 +72,7 @@ print('owned rank',rank,'completed')
 def sha(file):
     with Path(file).open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
 
-def run(parent,base,tools,*,pytorch_runtime=None):
+def run(parent,base,tools,*,pytorch_runtime=None,emulated=False):
     module_spec=importlib.util.spec_from_file_location('owned_group_runtime',ROOT/'scripts/check-guest-sandbox.py')
     module=importlib.util.module_from_spec(module_spec);module_spec.loader.exec_module(module)
     if pytorch_runtime is None:
@@ -92,8 +92,8 @@ def run(parent,base,tools,*,pytorch_runtime=None):
     if pytorch_runtime is not None:
         sys.path.insert(0,str(ROOT/'test/helpers'))
         import pytorch_fixture
-        pytorch_fixture.prepare(source)
-        resources.update(memoryMiB=512,scratchMiB=32,wallSeconds=120)
+        pytorch_fixture.prepare(source,collective_timeout=300 if emulated else 60)
+        resources.update(memoryMiB=512,scratchMiB=32,wallSeconds=600 if emulated else 120)
         spec['files']=['program.py','training.json']
         task=spec['tasks'][0]
         task['launch']['environment']=pytorch_fixture.ENVIRONMENT
@@ -117,8 +117,8 @@ def run(parent,base,tools,*,pytorch_runtime=None):
              'tools':{'pythonSHA256':sha(PYTHON),'ageSHA256':sha(tools/'age'),'ageKeygenSHA256':sha(tools/'age-keygen')},
              'group':{'protocol':'cannabis.group-tls-ip.v1','bindHost':'127.0.0.1','port':29501,'maxBufferedBytes':131072,'maxTrafficBytes':1048576}}
     if pytorch_runtime is not None:
-        profile['total'].update(memory_bytes=2048*MIB,processes=256,wall_seconds=240)
-        profile['control']['wall_seconds']=240
+        profile['total'].update(memory_bytes=2048*MIB,processes=256,wall_seconds=900 if emulated else 240)
+        profile['control']['wall_seconds']=900 if emulated else 240
         profile['processLimit']=64
         profile['group']['maxTrafficBytes']=16*MIB
     storages=[];scopes=[];processes=[];requester=None
@@ -129,7 +129,7 @@ def run(parent,base,tools,*,pytorch_runtime=None):
             storages.append(GuestCiphertextStorage(files,CiphertextLimits(**profile['ciphertext'])))
             shutil.copyfile(base/'input.age',files['ciphertext']);Path(files['ciphertext']).chmod(0o400)
             executions.append({'profile':profile,'source':{'python':PYTHON,'rootfs':str(base/'root'),'age':str(tools/'age'),**files}})
-        lifetime=240 if pytorch_runtime is not None else 120
+        lifetime=(900 if emulated else 240) if pytorch_runtime is not None else 120
         start,end=int(time.time())-1,int(time.time())+lifetime
         # The checkout may belong to an unprivileged CI user. The trusted
         # control program must still have its own root-owned pinned file.
@@ -162,7 +162,7 @@ def run(parent,base,tools,*,pytorch_runtime=None):
         channels=[receive(proc)['channelJwk'] for proc in processes]
         requester=subprocess.Popen([str(tools/'node'),str(ROOT/'test/helpers/group_native_requester.mjs')],
                                    stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
-        send(requester,{'executions':executions,'channelJwks':channels,
+        send(requester,{'executions':executions,'channelJwks':channels,'serviceSeconds':900 if emulated else 300,
                        'workload':{'id':spec['id'],'ciphertextSHA256':binding['packageSHA256'],'policySHA256':spec['policySHA256']}})
         approval=receive(requester)
         for proc in processes:send(proc,approval)
@@ -206,7 +206,10 @@ def run(parent,base,tools,*,pytorch_runtime=None):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--tools',type=Path,required=True)
-    parser.add_argument('--pytorch-runtime',type=Path);args=parser.parse_args()
+    parser.add_argument('--pytorch-runtime',type=Path)
+    parser.add_argument('--emulated',action='store_true',help='Use bounded owned training budgets for CPU emulation')
+    args=parser.parse_args()
+    if args.emulated and args.pytorch_runtime is None:parser.error('--emulated requires --pytorch-runtime')
     base=Path('/run')/('cannabis-group-check-'+uuid.uuid4().hex);parent=Path('/sys/fs/cgroup')/base.name
     base.mkdir(mode=0o700);parent.mkdir(mode=0o700);libc=ctypes.CDLL(None,use_errno=True)
     assert libc.unshare(0x20000)==0 and libc.mount(None,b'/',None,0x4000|0x40000,None)==0
@@ -217,7 +220,7 @@ def main():
         tools=base/'tools';tools.mkdir()
         for name in ['node','age','age-keygen']:
             shutil.copyfile(args.tools/name,tools/name);(tools/name).chmod(0o755)
-        checks=run(parent,base,tools,pytorch_runtime=args.pytorch_runtime)
+        checks=run(parent,base,tools,pytorch_runtime=args.pytorch_runtime,emulated=args.emulated)
         print(json.dumps({'schema':'cannabis.guest-group-check.v1','checks':checks,'hardwareValidated':False,'realPaidJob':False}))
     finally:
         if any(p.is_dir() for p in parent.iterdir()):

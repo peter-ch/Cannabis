@@ -23,16 +23,16 @@ import pytorch_fixture
 MIB = 1024**2
 
 
-def run(parent, base, runtime_source, age):
+def run(parent, base, runtime_source, age, *, emulated=False):
     shutil.copytree(runtime_source, base / 'runtime', symlinks=True)
     runtime = {'adapter': NATIVE_ADAPTER, 'architecture': 'x86_64', 'os': 'linux',
                'digestSHA256': tree_digest(base / 'runtime')}
     source = base / 'input'
     source.mkdir()
-    pytorch_fixture.prepare(source)
+    pytorch_fixture.prepare(source, collective_timeout=300 if emulated else 60)
     owner_secret, owner_public = _new_identity(age)
     job_secret, job_public = _new_identity(age)
-    resources = {'cpus': 1, 'memoryMiB': 512, 'scratchMiB': 32, 'wallSeconds': 120, 'nodes': 1}
+    resources = {'cpus': 1, 'memoryMiB': 512, 'scratchMiB': 32, 'wallSeconds': 600 if emulated else 120, 'nodes': 1}
     spec = {'schema': 'cannabis.workload.v1', 'id': 'owned-pytorch-training',
         'policySHA256': '12' * 32, 'resultRecipient': owner_public, 'files': ['program.py', 'training.json'],
         'tasks': [{'id': 'training', 'runtime': runtime, 'resources': resources,
@@ -45,7 +45,7 @@ def run(parent, base, runtime_source, age):
         'runtimeSHA256': runtime['digestSHA256'], 'taskSHA256': task_binding_sha256(package['ciphertextSHA256'], 0),
         'attempt': 1, 'worldSize': 1, 'rank': 0, 'acceleratorClass': 'cpu'}
     key = RecoveredJobKey(job_secret, spec['id'], binding['packageSHA256'], spec['policySHA256'], job_public, owner_public)
-    deadline = ExecutionDeadline.from_service_interval(int(time.time()) - 1, int(time.time()) + 180)
+    deadline = ExecutionDeadline.from_service_interval(int(time.time()) - 1, int(time.time()) + (900 if emulated else 180))
     plan = NativeTaskPlan(base / 'runtime', runtime, resources, process_limit=64, scratch_inodes=2048, deadline=deadline)
     result = plan.run(parent, base / 'input.age', key, binding, base / 'result.age', age=age,
         helper_limits=ResourceLimits(1000, 256 * MIB, 64, 60), staging_limits=ScratchLimits(16 * MIB, 1024),
@@ -64,6 +64,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--age', required=True)
+    parser.add_argument('--emulated', action='store_true', help='Use bounded owned-fixture budgets for CPU emulation')
     args = parser.parse_args()
     enter_private_mount_namespace()
     base = Path('/run') / ('cannabis-pytorch-check-' + uuid.uuid4().hex)
@@ -74,7 +75,7 @@ def main():
                        b'size=2048m,nr_inodes=50000,mode=0700,noswap'))
     try:
         (parent / 'cgroup.subtree_control').write_text('+cpu +memory +pids')
-        checks = run(parent, base, args.runtime, args.age)
+        checks = run(parent, base, args.runtime, args.age, emulated=args.emulated)
         print(json.dumps({'schema': 'cannabis.guest-pytorch-check.v1', 'checks': checks,
                           'hardwareValidated': False, 'realPaidJob': False}))
     finally:

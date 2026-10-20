@@ -10,9 +10,11 @@ ENVIRONMENT = {'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1', 'OPENBLAS_NUM_THR
                'PYTHONDONTWRITEBYTECODE': '1'}
 
 
-def prepare(source):
+def prepare(source, *, collective_timeout=60):
+    assert type(collective_timeout) is int and collective_timeout in (60, 300)
     shutil.copyfile(ROOT / 'test/fixtures/pytorch-training.py', source / 'program.py')
-    (source / 'training.json').write_text(json.dumps({'x': [-3, -1, 1, 3], 'y': [-7, -1, 5, 11]}))
+    (source / 'training.json').write_text(json.dumps({'x': [-3, -1, 1, 3], 'y': [-7, -1, 5, 11],
+                                                   'collectiveTimeoutSeconds': collective_timeout}))
 
 
 def verify(directory, rank, world):

@@ -165,20 +165,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--timeout', type=int, default=1800)
+    parser.add_argument('--timeout', type=int, help='Bounded boot deadline; defaults to the selected runtime profile')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0,str(root))
     from compute.guest_vm import VmBudget
     image, out = args.image.resolve(), args.output.resolve()
-    if sys.platform != 'linux' or not 30 <= args.timeout <= 1800:
-        raise ValueError('Use Linux and a 30..1800 second boot deadline')
+    if sys.platform != 'linux' or args.timeout is not None and not 30 <= args.timeout <= 3600:
+        raise ValueError('Use Linux and a bounded 30..3600 second boot deadline')
     if out.exists() or root == out or root in out.parents:
         raise ValueError('Require a new private output directory')
     qemu = shutil.which('qemu-system-x86_64')
     if not qemu:
         raise ValueError('Install qemu-system-x86_64')
     report = json.loads((image / 'build.json').read_text())
+    maximum_timeout = 3600 if report.get('runtimeProfile') == 'pytorch-cpu' else 1800
+    if args.timeout is None:
+        args.timeout = maximum_timeout
+    elif args.timeout > maximum_timeout:
+        raise ValueError('Boot deadline exceeds the selected runtime profile')
     if (report['schema'] != 'cannabis.guest-image-build.v1' or report['executionAuthorized'] is not False
             or report.get('operatingEntryConfigured') is not False):
         raise ValueError('Require the component acceptance image')

@@ -166,10 +166,14 @@ four vCPUs and 4 GiB of RAM for the minimal runtime, or 8 GiB for the CPU PyTorc
 profile. It attaches no NIC, disk, shared filesystem, monitor,
 QMP or debugger. Before the full boot, two separate guests must refuse insufficient
 RAM or CPUs and power off before the second root copy. Each negative boot has a
-two-minute deadline. The full boot retains its thirty-minute deadline for the
-component suite. Runtime inventory verification allows ten minutes for the
+two-minute deadline. The full component boot allows thirty minutes for the minimal
+runtime and sixty minutes for the optional CPU PyTorch runtime. Runtime inventory verification allows ten minutes for the
 larger CPU PyTorch image and three minutes for the minimal runtime under
-emulation; customer workload and cleanup deadlines remain separate and unchanged.
+emulation. Owned PyTorch fixtures explicitly select an emulation budget of ten
+minutes for the workload within a fifteen-minute shared service interval, with
+five minutes for collective rendezvous. Ordinary kernel/CI checks retain their
+shorter budgets. These fixture settings do not change production enforcement:
+each real job must still finish within its approved workload and shared deadlines.
 Failure or timeout does not count as success. Keep the serial
 logs and verification JSON private. Bounded phase names distinguish slow or
 stalled checks without customer content.
