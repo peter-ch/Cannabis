@@ -1095,8 +1095,12 @@ test('dependent launch preserves signed input after the upstream booking ends an
 });
 
 test('requester workflow runs the complete funded dependency plan over TLS and recovers without relaunch',async t=>{
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),'cannabis-workflow-')),age=process.env.CANNABIS_AGE||'age',
-    python=process.env.CANNABIS_PYTHON||'python',fixtureScript=path.resolve('test/helpers/dependency_bundle_fixture.py');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'cannabis-workflow-')),ageCommand=process.env.CANNABIS_AGE||'age',
+    pythonCommand=process.env.CANNABIS_PYTHON||'python',fixtureScript=path.resolve('test/helpers/dependency_bundle_fixture.py');
+  const python=execFileSync(pythonCommand,['-c','import sys; print(sys.executable)'],{encoding:'utf8',windowsHide:true}).trim(),
+    age=path.isAbsolute(ageCommand)?ageCommand:execFileSync(python,['-c','import shutil, sys; print(shutil.which(sys.argv[1]) or "")',ageCommand],
+      {encoding:'utf8',windowsHide:true}).trim();
+  assert.ok(path.isAbsolute(python)&&path.isAbsolute(age),'Owned workflow requires resolved Python and age executables');
   const fixture=(action,extra={})=>{
     const input=Buffer.from(JSON.stringify({root,age,action,...extra}));
     try{return JSON.parse(execFileSync(python,[fixtureScript],{input,encoding:'utf8',windowsHide:true,stdio:['pipe','pipe','ignore'],timeout:60000,maxBuffer:1024*1024}));}
@@ -1169,8 +1173,7 @@ test('requester workflow runs the complete funded dependency plan over TLS and r
   const cert=path.join(root,'fixture-ca.pem');fs.writeFileSync(cert,tlsFixture.cert);
   const spec={schema:'cannabis.requester-workflow.v1',proofFile:write('lease.json',d.proof),descriptorFile:path.join(root,'job/descriptor.json'),
     manifestFile:path.join(root,'workload.json'),ciphertextFile:path.join(root,'job/workload.age'),directory:path.join(root,'requester'),
-    keySource:{python:process.platform==='win32'?execFileSync('where.exe',['python'],{encoding:'utf8'}).trim().split(/\r?\n/)[0]:execFileSync('which',['python3'],{encoding:'utf8'}).trim(),
-      age,identity:path.join(root,'owner.key'),capsule:path.join(root,'job/job-key.age'),descriptor:path.join(root,'job/descriptor.json')},
+    keySource:{python,age,identity:path.join(root,'owner.key'),capsule:path.join(root,'job/job-key.age'),descriptor:path.join(root,'job/descriptor.json')},
     reconstruction:{python:'',age,identity:path.join(root,'owner.key')},resultRecipient:packaged.spec.resultRecipient,maxParallel:1,maxStoredBytes:64*1024**2,
     assignments:assignments.map(a=>({reservationId:a.r.reservationId,origin:listener.origin,resultOrigin,
       consentFile:write('consent-'+a.task+'.json',a.signed),initializationFile:write('init-'+a.task+'.json',a.initialization),
