@@ -46,6 +46,8 @@ jobs:
         run: python -m unittest discover -s test -p 'test_guest_execution.py' -v
       - name: Verify measured whole-guest budget accounting
         run: python -m unittest discover -s test -p 'test_guest_vm.py' -v
+      - name: Verify host capacity selection
+        run: python -m unittest discover -s test -p 'test_host_capacity.py' -v
       - name: Verify pinned wheel extraction boundaries
         run: python -m unittest discover -s test -p 'test_guest_wheels.py' -v
       - name: Verify encrypted input storage limits and retained admission

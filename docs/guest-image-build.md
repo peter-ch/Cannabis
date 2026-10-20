@@ -162,7 +162,8 @@ python3 scripts/verify-guest-boot.py \
 ```
 
 This uses QEMU's ordinary TCG CPU emulation and the measured reference profile:
-four vCPUs and 4 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor,
+four vCPUs and 4 GiB of RAM for the minimal runtime, or 8 GiB for the CPU PyTorch
+profile. It attaches no NIC, disk, shared filesystem, monitor,
 QMP or debugger. Before the full boot, two separate guests must refuse insufficient
 RAM or CPUs and power off before the second root copy. Each negative boot has a
 two-minute deadline. The full boot retains its thirty-minute deadline for the
@@ -679,8 +680,11 @@ to a fixed Python/QEMU process, then to the existing encrypted session relay.
 waits for checked local VM termination before returning. This source is under
 integration, with no successful hardware launch or paid-worker admission claimed.
 
-The first host profile supports EPYC-Milan SNP, at least four vCPUs and 4096 MiB
-guest memory. It pins QEMU, stateless OVMF, kernel, initramfs, command line and the
+The first host profile supports EPYC-Milan SNP and at least four vCPUs. Preparation
+selects guest memory from the retained operating image's measured budget: 4096 MiB
+for the minimal runtime or 8192 MiB for CPU PyTorch. It checks that the build record
+matches the actual kernel, initramfs and command-line hashes and that the selected
+CPU count covers the budget. It pins QEMU, stateless OVMF, kernel, initramfs, command line and the
 matching measurement candidate. Root-owned artifacts and parent directories are
 required. QEMU's [SNP object](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html#object-SevSnpGuestProperties)
 requires a supporting build; the adapter also checks the actual KVM/SEV devices
@@ -700,8 +704,10 @@ finite limits covering the selected host profile, and zero swap. The adapter
 locks its actual inode for one VM at a time and refuses residual child groups.
 It neither creates nor resizes ancestors or moves unrelated processes. Its own
 VM leaf enforces the configured limits. Boot/executable snapshots are copied and
-sealed only after joining that leaf. The default preparation reserves a 6 GiB
-VM-process ceiling, including the 4 GiB guest, boot copies and QEMU headroom.
+sealed only after joining that leaf. Preparation reserves the selected guest
+memory plus 2 GiB for boot copies and QEMU headroom: a 6 GiB host process ceiling
+for the minimal runtime or 10 GiB for CPU PyTorch. The retained profile independently
+checks that its ceiling covers the actual artifact snapshots and QEMU overhead.
 
 The VM receives only fixed devices, the measured control-plane network, inherited
 local control sockets and public initialization `HOST_DATA`. No customer-content
