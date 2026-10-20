@@ -5,6 +5,7 @@ import {bookingPayload,prepareMarketTransaction} from '../compute/market.mjs';
 import {encodeProviderManifest} from '../compute/provider_manifest_model.mjs';
 import {publicOrderPlan,settlementForPlan,termsDigest} from '../compute/settlement.mjs';
 import {postDeliveryMethods,settlementDecision} from '../compute/settlement_decision.mjs';
+import {executionPlanForOrder,matchExecutionBookings,assertExecutionSettlement} from '../compute/execution_plan.mjs';
 import escrowABI from '../compute/escrow-abi.json' with {type:'json'};
 
 export const check=v=>{if(!v)throw Error('Market plan or retained selection is invalid');};
@@ -56,13 +57,19 @@ export function prepareMarketPlan(configuration,input) {
       [c.nativeEscrow,c.cannabisEscrow].includes(m.offer.escrow)&&m.offerId===keccak256(coder.encode(['address','bytes32'],[p.provider,p.nonce])));
     detail={offerId:m.offerId,manifestHash:encoded.manifestHash,manifestBytes:new TextDecoder('utf-8',{fatal:true}).decode(encoded.bytes),offer:{...m.offer,manifestHash:encoded.manifestHash}};
   } else if(p.kind==='order') {
-    exact(p,['schema','kind','asset','job','settlement','bookings']);const asset=assetFor(c,p.asset);
+    const planned=p.job?.schema==='cannabis.compute.order.v3';
+    exact(p,['schema','kind','asset','job','settlement','bookings',...(planned?['executionPlan']:[])]);const asset=assetFor(c,p.asset);
     // Universal public commitments only; legacy workload plans contain code/args.
-    check(p.job?.schema==='cannabis.compute.order.v2');
+    check(['cannabis.compute.order.v2','cannabis.compute.order.v3'].includes(p.job?.schema));
     exact(p.settlement,['workers','deliveryManager','adjudicator','acceptBy','deliverBy','reviewSeconds','disputeSeconds']);
     check(Array.isArray(p.settlement.workers)&&p.settlement.workers.length<=64);
     for(const w of p.settlement.workers)exact(w,['account','shareBps']);
     const s=settlementForPlan(p.job,p.settlement,publicOrderPlan(p.job));address(s.requester);
+    const executionPlan=planned?executionPlanForOrder(p.executionPlan,p.job,{...c,escrow:asset.escrow,token:asset.token}):null;
+    if(executionPlan) {
+      matchExecutionBookings(executionPlan,p.bookings);
+      assertExecutionSettlement(executionPlan,s);
+    }
     const digest=termsDigest({chainId:c.chainId,escrow:asset.escrow,token:asset.token,founderRecipient:c.founderRecipient,...s});
     const orderId=keccak256(coder.encode(['string','uint256','address','address','bytes32'],['Cannabis compute order v1',c.chainId,asset.escrow,s.requester,s.terms.jobHash]));
     check(Array.isArray(p.bookings)&&p.bookings.length>0&&p.bookings.length<=64);
@@ -75,7 +82,8 @@ export function prepareMarketPlan(configuration,input) {
       check(BigInt(b.start)>=BigInt(s.terms.acceptBy)&&BigInt(b.end)<=BigInt(s.terms.deliverBy));gross+=BigInt(b.gross);
       return {...payload,bookingId:payload.digest};
     });
-    check(gross===BigInt(s.terms.budget));detail={...s,asset,orderId,termsDigest:digest,bookings};
+    check(gross===BigInt(s.terms.budget));detail={...s,asset,orderId,termsDigest:digest,bookings,
+      ...(executionPlan?{executionPlanSHA256:executionPlan.digestSHA256,plannedTasks:executionPlan.plan.requirements.length,plannedRanks:executionPlan.plan.assignments.length}:{})};
   } else check(false);
   return json({schema:'cannabis.market-retained-plan.v1',id:sha({deployment:deployment(c),plan:p}),deployment:deployment(c),plan:p,detail});
 }
@@ -94,6 +102,7 @@ export function marketAction(configuration,retained,input,signatures={}) {
     transaction=market(method,method==='publishOffer'?[p.nonce,d.offer]:[d.offerId]);summary={offerId:d.offerId,nonce:p.nonce,...d.offer};
   } else {
     summary={orderId:d.orderId,asset:p.asset,requester:d.requester,escrow:d.asset.escrow,termsDigest:d.termsDigest,
+      ...(d.executionPlanSHA256?{executionPlanSHA256:d.executionPlanSHA256,plannedTasks:d.plannedTasks,plannedRanks:d.plannedRanks}:{}),
       grossBaseUnits:d.terms.budget,serviceFeeBaseUnits:(BigInt(d.terms.budget)/100n).toString(),workerBaseUnits:(BigInt(d.terms.budget)*99n/100n).toString(),
       terms:d.terms,accounts:d.accounts,shares:d.shares,bookings:d.bookings.map(b=>b.value)};
     if(method==='signBooking') {

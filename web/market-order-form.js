@@ -51,6 +51,8 @@ export function initializeOrderForm(acceptPlan) {
     try {
       check(configuration&&observation&&manifests.size);const version=epoch,snapshot=observation;
       const job=await json($('direct-order-job').files[0],8192);check(version===epoch&&snapshot===observation);const planned=publicOrderPlan(job);
+      if(job.schema==='cannabis.compute.order.v3')throw Object.assign(Error('Preassigned bookings required'),
+        {userMessage:'This job commits to specific task and worker bookings. Import the complete public market plan prepared by your compute client.'});
       const asset=$('direct-order-asset').value,escrow=asset==='ETH'?configuration.nativeEscrow:configuration.cannabisEscrow;
       const start=seconds($('direct-order-start').value),end=seconds($('direct-order-end').value),holdUntil=seconds($('direct-order-hold').value),now=Math.floor(Date.now()/1000);
       check(end>start&&start>now&&holdUntil>now&&holdUntil<=now+1800&&holdUntil<=start);

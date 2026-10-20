@@ -16,17 +16,18 @@ export function quotePayment(totalBudget) {
     feeAppliesTo: policy.feeAppliesTo, paymentQuantumAtomic: '100', networkFeesIncluded: false };
 }
 export function publicOrderPlan(job) {
-  if (job?.schema !== 'cannabis.compute.order.v2') throw Error('Require a public encrypted-commitment order');
-  const keys=['schema','id','requester','packageSHA256','policySHA256','acceptanceSHA256','payment'];
+  if (!['cannabis.compute.order.v2','cannabis.compute.order.v3'].includes(job?.schema)) throw Error('Require a public encrypted-commitment order');
+  const planned=job.schema==='cannabis.compute.order.v3';
+  const keys=['schema','id','requester','packageSHA256','policySHA256','acceptanceSHA256','payment',...(planned?['executionPlanSHA256']:[])];
   if(Object.keys(job).sort().join()!==keys.sort().join() || typeof job.id!=='string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(job.id))throw Error('Invalid universal compute order');
   const requester=getAddress(job.requester);
-  if(requester===zero || ['packageSHA256','policySHA256','acceptanceSHA256'].some(k=>typeof job[k]!=='string'||!/^[0-9a-f]{64}$/.test(job[k])||/^0+$/.test(job[k])))throw Error('Requester and encrypted workload commitments required');
+  if(requester===zero || ['packageSHA256','policySHA256','acceptanceSHA256',...(planned?['executionPlanSHA256']:[])].some(k=>typeof job[k]!=='string'||!/^[0-9a-f]{64}$/.test(job[k])||/^0+$/.test(job[k])))throw Error('Requester and encrypted workload commitments required');
   const p=job.payment;
   if(!p || Object.keys(p).sort().join()!==['totalBudget','feeBasisPoints','founderRecipient'].sort().join() || p.feeBasisPoints!==100 || getAddress(p.founderRecipient)!==getAddress(policy.founderRecipient))throw Error('Universal order must use the published fee policy');
   const payment=quotePayment(p.totalBudget);
-  const jobHash=keccak256(coder.encode(['string','string','address','bytes32','bytes32','bytes32','uint256','uint16','address'],
-    ['Cannabis arbitrary workload order v2',job.id,requester,'0x'+job.packageSHA256,'0x'+job.policySHA256,'0x'+job.acceptanceSHA256,payment.totalAtomic,100,payment.founderRecipient]));
-  return {schema:'cannabis.compute.order-plan.v2',jobHash,job:structuredClone(job),payment,executionAuthorized:false,keyReleaseAuthorized:false,fundsMoved:false};
+  const jobHash=keccak256(coder.encode(['string','string','address','bytes32','bytes32','bytes32','uint256','uint16','address',...(planned?['bytes32']:[])],
+    ['Cannabis arbitrary workload order '+(planned?'v3':'v2'),job.id,requester,'0x'+job.packageSHA256,'0x'+job.policySHA256,'0x'+job.acceptanceSHA256,payment.totalAtomic,100,payment.founderRecipient,...(planned?['0x'+job.executionPlanSHA256]:[])]));
+  return {schema:'cannabis.compute.order-plan.'+(planned?'v3':'v2'),jobHash,job:structuredClone(job),payment,executionAuthorized:false,keyReleaseAuthorized:false,fundsMoved:false};
 }
 function timestamp(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) throw Error('Use explicit UTC deadlines');

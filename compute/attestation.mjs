@@ -94,6 +94,10 @@ export function marketAttestationBinding(proof, context, bookingId, run, now = s
   exact(run, ['runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass']);
   const lease = verifyMarketLeaseProof(proof, context), reservation = lease.reservations.find(r => r.reservationId === bookingId);
   if (!reservation || !Number.isSafeInteger(now) || reservation.end <= now) throw Error('Unknown or elapsed market booking');
+  if(lease.executionPlan) {
+    const planned=lease.assignments.find(a=>a.reservationId===bookingId);
+    if(!planned||canonical(planned.run)!==canonical(run))throw Error('Run differs from the complete booked execution plan');
+  } else if(run.worldSize!==1||run.rank!==0)throw Error('A coordinated group requires a complete committed execution plan');
   const binding = { chainId: context.chainId, escrow: lease.escrow, orderId: lease.orderId,
     leaseDigest: lease.digest, reservationId: bookingId, packageSHA256: lease.job.packageSHA256, policySHA256: lease.job.policySHA256, ...run };
   validateAttestationBinding(binding); return binding;

@@ -7,6 +7,7 @@ import { readFundedEscrowAtAnchor, readCurrentEscrow } from './finality.mjs';
 import { settlementTerms, termsDigest } from '../scripts/compute-escrow.mjs';
 import { policy } from '../scripts/compute-plan.mjs';
 import { validateWalletApprovals } from './wallet_signatures.mjs';
+import { executionPlanForOrder, matchExecutionBookings, plannedRun } from './execution_plan.mjs';
 
 const coder = AbiCoder.defaultAbiCoder();
 const seconds = () => Math.floor(Date.now() / 1000);
@@ -33,14 +34,16 @@ function retainedRecord(r) { return plain({ bookingId: r.bookingId, booking: r.b
 export function verifyMarketLeaseProof(input, context) {
   if (Buffer.byteLength(JSON.stringify(input)) > 1024 * 1024) throw Error('Market lease proof exceeds bound');
   const p = structuredClone(input);
-  exact(p, ['schema', 'chainId', 'market', 'token', 'escrow', 'job', 'settlement', 'bookings', 'fundedAnchor']);
-  if (p.schema !== 'cannabis.market-lease.v1' || !integer(p.chainId) || p.chainId < 1 || p.chainId !== context.chainId ||
+  const planned=p?.schema==='cannabis.market-lease.v2';
+  exact(p, ['schema', 'chainId', 'market', 'token', 'escrow', 'job', 'settlement', 'bookings', 'fundedAnchor',...(planned?['executionPlan']:[])]);
+  if (!['cannabis.market-lease.v1','cannabis.market-lease.v2'].includes(p.schema) || !integer(p.chainId) || p.chainId < 1 || p.chainId !== context.chainId ||
       address(p.market) !== getAddress(context.market) || getAddress(p.token) !== getAddress(context.token) ||
-      p.job?.schema !== 'cannabis.compute.order.v2') throw Error('Market lease domain differs');
+      p.job?.schema !== (planned?'cannabis.compute.order.v3':'cannabis.compute.order.v2')) throw Error('Market lease domain differs');
   address(p.escrow);
   exact(p.settlement, ['workers', 'deliveryManager', 'adjudicator', 'acceptBy', 'deliverBy', 'reviewSeconds', 'disputeSeconds']);
   if (Array.isArray(p.settlement.workers)) for (const w of p.settlement.workers) exact(w, ['account', 'shareBps']);
   const terms = settlementTerms(p.job, p.settlement);
+  const executionPlan=planned?executionPlanForOrder(p.executionPlan,p.job,{...context,escrow:p.escrow}):null;
   const digest = termsDigest({ chainId: p.chainId, escrow: p.escrow, token: p.token, founderRecipient: policy.founderRecipient, ...terms });
   const orderId = keccak256(coder.encode(['string', 'uint256', 'address', 'address', 'bytes32'],
     ['Cannabis compute order v1', p.chainId, p.escrow, terms.requester, terms.terms.jobHash]));
@@ -71,16 +74,25 @@ export function verifyMarketLeaseProof(input, context) {
   if (total !== BigInt(terms.terms.budget) || prices.size !== terms.accounts.length ||
       terms.accounts.some((a, i) => !prices.has(a) || total * BigInt(terms.shares[i]) !== prices.get(a) * 10000n))
     throw Error('Incomplete market booking group or incorrect worker prices');
+  let assignments;
+  if(executionPlan) {
+    assignments=matchExecutionBookings(executionPlan,p.bookings.map(r=>r.booking)).map((a,i)=>{
+      const r=p.bookings[i];
+      if(r.resource.provider!==a.provider||r.resource.serviceHash!==a.serviceSHA256)
+        throw Error('Planned rank differs from the booked provider or service');
+      return {reservationId:r.bookingId,task:a.task,run:plannedRun(executionPlan.plan.requirements[a.task],a)};
+    });
+  }
   exact(p.fundedAnchor, ['number', 'hash', 'timestamp']);
   if (!integer(p.fundedAnchor.number) || !hash(p.fundedAnchor.hash) || !integer(p.fundedAnchor.timestamp) || p.fundedAnchor.timestamp < 1)
     throw Error('Invalid market funding anchor');
   // The legacy field name leaseDigest now commits a distinct versioned domain,
   // market contract and full sorted booking group, not a local ledger identifier.
-  const leaseDigest = keccak256(coder.encode(['string', 'uint256', 'address', 'address', 'bytes32', 'bytes32', 'bytes32[]'],
-    ['Cannabis on-chain booking group v1', p.chainId, p.market, p.escrow, orderId, digest, p.bookings.map(r => r.bookingId)]));
+  const leaseDigest = keccak256(coder.encode(['string', 'uint256', 'address', 'address', 'bytes32', 'bytes32', 'bytes32[]',...(planned?['bytes32']:[])],
+    ['Cannabis on-chain booking group '+(planned?'v2':'v1'), p.chainId, p.market, p.escrow, orderId, digest, p.bookings.map(r => r.bookingId),...(planned?['0x'+executionPlan.digestSHA256]:[])]));
   return { schema: p.schema, digest: leaseDigest, orderId, termsDigest: digest, market: p.market, escrow: p.escrow,
     requester: terms.requester, job: p.job, providers: terms.accounts, shares: terms.shares, reservations,
-    fundedAnchor: p.fundedAnchor, proof: p, executionAuthorized: false, keyReleaseAuthorized: false };
+    ...(planned?{executionPlan,assignments}:{}),fundedAnchor: p.fundedAnchor, proof: p, executionAuthorized: false, keyReleaseAuthorized: false };
 }
 
 function checkMarket(snapshot, lease) {
@@ -95,16 +107,19 @@ function checkEscrow(snapshot, lease) {
     throw Error('Market funding must remain a matching fully accepted active order');
 }
 function configuration(proof, network) {
-  const lease = verifyMarketLeaseProof(proof, { chainId: network.chainId, market: network.market, token: network.token });
+  const lease = verifyMarketLeaseProof(proof, { chainId: network.chainId, market: network.market, token: network.token,genesisHash:network.genesisHash });
   if (lease.escrow !== getAddress(network.escrow)) throw Error('Market lease escrow differs from approved network');
   return lease;
 }
 
-export async function createMarketLeaseProof(network, { job, settlement, bookingIds }, clock = seconds) {
+export async function createMarketLeaseProof(network, { job, settlement, bookingIds, executionPlan }, clock = seconds) {
+  const planned=job?.schema==='cannabis.compute.order.v3';
+  if(planned)executionPlanForOrder(executionPlan,job,network);
+  else if(executionPlan!==undefined)throw Error('An execution plan requires a committed v3 order');
   const market = await readMarketBookings(network, { bookingIds: [...bookingIds].sort() }, clock);
-  const proof = { schema: 'cannabis.market-lease.v1', chainId: network.chainId, market: getAddress(network.market),
+  const proof = { schema: 'cannabis.market-lease.'+(planned?'v2':'v1'), chainId: network.chainId, market: getAddress(network.market),
     token: getAddress(network.token), escrow: getAddress(network.escrow), job: structuredClone(job), settlement: structuredClone(settlement),
-    bookings: market.bookings.map(retainedRecord), fundedAnchor: market.finalizedBlock };
+    ...(planned?{executionPlan:structuredClone(executionPlan)}:{}),bookings: market.bookings.map(retainedRecord), fundedAnchor: market.finalizedBlock };
   const lease = configuration(proof, network); checkMarket(market, lease);
   const escrow = await readFundedEscrowAtAnchor({ ...network, orderId: lease.orderId, fundedAnchor: proof.fundedAnchor }, clock);
   checkEscrow(escrow, lease);

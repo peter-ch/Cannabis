@@ -8,6 +8,7 @@ import { guestInitialization } from './guest_initialization.mjs';
 import { configuredMarketAttestationBinding } from './attestation.mjs';
 import { verifyMarketLeaseProof, readMarketLeaseState } from './market_lease.mjs';
 import { nativeServiceCommitment } from './guest_execution.mjs';
+import { assertPlannedService } from './execution_plan.mjs';
 
 const fail=()=>{throw Error('Booked guest launch consent differs from the approved assignment');};
 const exact=(v,fields)=>{if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).sort().join()!==[...fields].sort().join())fail();};
@@ -33,6 +34,7 @@ function describe(configuration,initialization,proof) {
     c.validFrom>r.start||c.validUntil<r.end||c.execution.profile.runtime.digestSHA256!==b.runtimeSHA256)fail();
   const service=nativeServiceCommitment(c.execution);
   if(service.serviceSHA256!==r.serviceSHA256||service.units!==r.units)fail();
+  assertPlannedService(lease,r.reservationId,c.execution.profile,c.network);
   const run=Object.fromEntries(['runtimeSHA256','taskSHA256','attempt','rank','worldSize','acceleratorClass'].map(k=>[k,b[k]]));
   // Offline preparation is allowed before service starts; it never authorizes a
   // launch. Actual consent verification requires the live reserved interval.

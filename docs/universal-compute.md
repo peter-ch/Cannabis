@@ -29,6 +29,58 @@ The core client reconstructs files; it never imports returned Python, unpickles 
 
 ## Runtime adapters
 
+### Bind task and rank bookings before funding
+
+A `cannabis.execution-plan.v1` commits the entire public task graph and every
+rank assignment. Build it from the requester's saved package descriptor, with
+the reviewed network, provider, service digest, booking nonce, offer, interval
+and exact gross price for every rank. It contains public runtime/resource
+metadata and opaque task indices; customer commands, file names and outputs stay
+in the encrypted workload. Keep the original descriptor and independently check
+it against the packaged workload before signing; a worker-supplied descriptor
+does not establish the original contract.
+
+The plan requires one booked service unit per rank, all ranks present exactly
+once, and one common attempt and window for each coordinated group. A successor
+starts after its dependencies' reserved windows. Every window must cover the
+task wall allowance. Duplicate booking nonces, missing ranks, changed resources,
+cycles and early successors are refused. The atomic market path supports at
+most **64 rank bookings** and therefore at most 64 distinct worker recipients,
+within the escrow's 128-recipient limit. These are contract limits, unrelated to
+the configurable community enrollment minimum. Larger workloads are rejected,
+not truncated or automatically split into separately funded orders.
+
+The offline preparation commands are:
+
+```sh
+node scripts/compute-execution-plan.mjs prepare context.json inputs.json
+node scripts/compute-execution-plan.mjs commit-order context.json order-input.json
+node scripts/compute-execution-plan.mjs market-plan market-context.json market-input.json
+```
+
+For `prepare`, the context contains `chainId`, `genesisHash`, `market`, `escrow`,
+`token` and `requester`; input contains `descriptor` and `assignments`. Each
+assignment contains `task`, `rank`, `attempt`, `acceleratorClass`, `provider`,
+`serviceSHA256` and its public `booking`. The returned `plan` is the complete
+execution plan. `commit-order` takes an agreed v2 `job` and `executionPlan`, checks
+the total without changing the price, and returns a v3 order that commits the
+plan digest. It never overwrites an existing plan commitment. `market-plan` takes
+`asset`, that v3 `job`, `executionPlan` and `settlement`, with the reviewed market
+console configuration. Its output is directly importable through **Open an
+offer, order or shared plan** on the website or worker console. The simpler
+provider selection form remains for orders without preassigned task bookings.
+
+The funded v3 job hash and the resulting v2 market lease both bind the plan.
+The complete lease matches each rank to the actual booked provider and service;
+requester/provider consent also compares the selected runtime, resources and
+network. A v3 order cannot fall back to an unplanned lease. Revised attempts,
+providers or assignments require a revised plan and order commitment, with
+explicit review of old-order refunds, replacement costs and new signatures.
+These offline commitments do not reserve capacity, prove hardware, transfer
+dependency outputs or authorize payment. Fresh chain observations and protected
+execution remain required; cross-worker dataflow and collective networking are
+still release work.
+
 ### Private step graphs on one worker
 
 The native Linux adapter now implements `cannabis.native-step-graph.v1` as an

@@ -20,8 +20,9 @@ export class GuestFunding {
     const configured=assignment.schema==='cannabis.guest-initialization.v2';
     const keys = ['proof', 'context', 'network', 'provider', 'resourceId', 'serviceSHA256',...(configured?['consent']:[])];
     if (!options || Object.keys(options).sort().join() !== keys.sort().join()) throw Error('Require approved guest funding configuration');
-    this.#market = options.proof?.schema === 'cannabis.market-lease.v1';
+    this.#market = ['cannabis.market-lease.v1','cannabis.market-lease.v2'].includes(options.proof?.schema);
     const lease = this.#market ? verifyMarketLeaseProof(options.proof, options.context) : verifyLeaseProof(options.proof, options.context);
+    if(lease.executionPlan&&!configured)throw Error('Planned funding requires jointly approved guest configuration');
     const reservation = lease.reservations.find(r => r.reservationId === b.reservationId);
     if (options.context.chainId !== b.chainId || lease.digest !== b.leaseDigest || lease.orderId !== b.orderId ||
         lease.escrow !== b.escrow || lease.requester !== assignment.requester || lease.job.id !== assignment.jobId ||

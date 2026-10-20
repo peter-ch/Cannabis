@@ -6,10 +6,11 @@ import { Contract, FetchRequest, JsonRpcProvider, getAddress, keccak256, toBeHex
 import escrowABI from '../compute/escrow-abi.json' with { type: 'json' };
 import {planJob} from './compute-plan.mjs';
 import {policy,publicOrderPlan,settlementForPlan,termsDigest} from '../compute/settlement.mjs';
+import {executionPlanForOrder,assertExecutionSettlement} from '../compute/execution_plan.mjs';
 const erc20 = ['function balanceOf(address) view returns(uint256)', 'function allowance(address,address) view returns(uint256)', 'function approve(address,uint256) returns(bool)'];
 const zero = '0x0000000000000000000000000000000000000000';
 export function planSettlementJob(job) {
-  return job?.schema==='cannabis.compute.order.v2'?publicOrderPlan(job):planJob(job);
+  return ['cannabis.compute.order.v2','cannabis.compute.order.v3'].includes(job?.schema)?publicOrderPlan(job):planJob(job);
 }
 export function settlementTerms(job,settlement) {return settlementForPlan(job,settlement,planSettlementJob(job));}
 export {termsDigest};
@@ -44,7 +45,11 @@ const review=[
   'Re-check state and simulate each transaction immediately before wallet signing'
 ];
 export async function prepareFunding(options){
-  const terms=settlementTerms(options.job,options.settlement),c=await connect(options);
+  const executionPlan=options.job?.schema==='cannabis.compute.order.v3'
+    ? executionPlanForOrder(options.executionPlan,options.job,options):null;
+  const terms=settlementTerms(options.job,options.settlement);
+  if(executionPlan)assertExecutionSettlement(executionPlan,terms);
+  const c=await connect(options);
   try{
     const latest=await c.provider.getBlock('latest');
     if(terms.terms.acceptBy<=latest.timestamp || terms.terms.deliverBy>latest.timestamp+90*86400)throw Error('Deadlines are expired or exceed the contract horizon');
@@ -66,6 +71,7 @@ export async function prepareFunding(options){
     }
     return serialize({name:'Cannabis',status:'UNSIGNED_COMPUTE_FUNDING',orderId:id,termsDigest:termsDigest({...c,...terms}),
       chainId:c.chainId,escrow:c.escrow,token:c.token,assetSymbol:c.native?'ETH':'Cannabis',...terms,transactions,
+      ...(executionPlan?{executionPlan:executionPlan.plan}:{}),
       fundingSimulated:allowance>=budget,sent:false,executionAuthorized:false,keyReleaseAuthorized:false,review});
   }finally{c.provider.destroy();}
 }

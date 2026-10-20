@@ -100,6 +100,10 @@ class ChainView {
         BigInt(v.start)>=BigInt(o.start)&&BigInt(v.end)<=BigInt(o.end)&&BigInt(v.units)<=BigInt(o.units)&&
         BigInt(v.gross)===BigInt(o.grossPerUnitSecond)*(BigInt(v.end)-BigInt(v.start))*BigInt(v.units));
       const provider=selected.resource.provider;groups.set(provider,(groups.get(provider)??0n)+BigInt(v.gross));
+      if(plan.plan.executionPlan) {
+        const a=plan.plan.executionPlan.assignments.find(a=>a.booking.reservationId===v.reservationId);
+        check(a&&a.provider===provider&&a.serviceSHA256===selected.resource.serviceHash);
+      }
       const record=await this.call(market,this.c.market,'bookings',[expected.bookingId],b);
       const recorded=record.booking.offerId!=='0x'+'0'.repeat(64);
       if(recorded)check(same(record.booking.toObject(true),v));

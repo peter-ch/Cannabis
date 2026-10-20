@@ -37,6 +37,7 @@ import {validateProviderReview} from '../operator/provider-wallet.js';
 import {sendLaunchHandoff,receiveLaunchHandoff,consumeLaunchHandoff,inspectLaunchHandoff} from '../compute/launch_handoff.mjs';
 import {stageOperatingGuest,relayOperatingGuest} from '../operator/guest-boot-channel.mjs';
 import {operatingBootFixture} from './helpers/operating_boot_fixture.mjs';
+import {inspectExecutionPlan,taskCommitment} from '../compute/execution_plan.mjs';
 
 const h = n => '0x' + n.toString(16).padStart(64, '0');
 const utc = n => new Date(n * 1000).toISOString().replace('.000Z', 'Z');
@@ -89,7 +90,7 @@ contract MarketConsentWallet {
 });
 after(() => { provider?.destroy(); node?.child.kill(); });
 
-async function setup({ token = false, activate = true, execution, contractProvider = false } = {}) {
+async function setup({ token = false, activate = true, execution, contractProvider = false, planned = false } = {}) {
   await provider.send('evm_revert', [initial]); initial = await provider.send('evm_snapshot', []);
   let time = (await provider.getBlock('latest')).timestamp;
   await provider.send('evm_setNextBlockTimestamp', [time + 1]); await provider.send('evm_mine', []); ++time;
@@ -112,6 +113,18 @@ async function setup({ token = false, activate = true, execution, contractProvid
     payment: { totalBudget: formatUnits(20000n, 18), feeBasisPoints: 100, founderRecipient: policy.founderRecipient } };
   const settlement = { workers: addresses.map(account => ({ account, shareBps: 5000 })), deliveryManager: addresses[0],
     adjudicator: await judge.getAddress(), acceptBy: utc(time + 800), deliverBy: utc(end + 60), reviewSeconds: 86400, disputeSeconds: 86400 };
+  let executionPlan;
+  if(planned) {
+    executionPlan=inspectExecutionPlan({schema:'cannabis.execution-plan.v1',chainId:31337,genesisHash:network.genesisHash,
+      market:network.market,escrow:network.escrow,token:network.token,requester:account,jobId:job.id,packageSHA256:job.packageSHA256,policySHA256:job.policySHA256,
+      requirements:addresses.map((_,task)=>({task,taskSHA256:taskCommitment(job.packageSHA256,task),dependsOn:[],
+        runtime:{adapter:'native-linux-x86_64-v1',architecture:'x86_64',os:'linux',digestSHA256:h(73).slice(2)},
+        resources:{cpus:1,memoryMiB:128,scratchMiB:8,wallSeconds:60,nodes:1}})),
+      assignments:addresses.map((provider,i)=>({task:i,rank:0,attempt:1,acceleratorClass:'cpu',provider,serviceSHA256:h(20+i),
+        booking:{reservationId:h(50+i),offerId:keccak256(coder.encode(['address','bytes32'],[provider,h(40+i)])),
+          start:String(start),end:String(end),units:'1',gross:'10000',holdUntil:String(time+600)}}))}).plan;
+    job.schema='cannabis.compute.order.v3';job.executionPlanSHA256=inspectExecutionPlan(executionPlan).digestSHA256;
+  }
   const terms = settlementTerms(job, settlement), orderId = await escrow.orderId(account, terms.terms.jobHash);
   const digest = termsDigest({ chainId: 31337, escrow: network.escrow, token: network.token, founderRecipient: policy.founderRecipient, ...terms });
   const bookings = [], signatures = [], ids = [];
@@ -132,9 +145,10 @@ async function setup({ token = false, activate = true, execution, contractProvid
   for (let i=0;i<workers.length;++i) await workerCall(i,escrow,'accept',[orderId]);
   if (activate) await (await market.activate(ids.sort())).wait();
   time = (await provider.getBlock('latest')).timestamp;
-  const input = { job, settlement, bookingIds: ids };
+  const input = { job, settlement, bookingIds: ids,...(planned?{executionPlan}:{}) };
   const proof = activate ? await createMarketLeaseProof(network, input, clock) : null;
-  const run = { runtimeSHA256: execution?.profile.runtime.digestSHA256??h(73).slice(2), taskSHA256: h(74).slice(2), attempt: 1, rank: 0, worldSize: 1, acceleratorClass: 'cpu' };
+  const run = planned?verifyMarketLeaseProof(proof,context).assignments[0].run:
+    { runtimeSHA256: execution?.profile.runtime.digestSHA256??h(73).slice(2), taskSHA256: h(74).slice(2), attempt: 1, rank: 0, worldSize: 1, acceleratorClass: 'cpu' };
   const setTime = async value => { time = value; await provider.send('evm_setNextBlockTimestamp', [time]); await provider.send('evm_mine', []); };
   return { network, context, input, proof, clock, setTime, start, end, escrow, orderId, ids, run, addresses, workerCall };
 }
@@ -146,6 +160,26 @@ function guest(d, proof = d.proof, changes = {}) {
   const options = { proof, context: d.context, network: d.network, provider: r.provider, resourceId: r.resourceId, serviceSHA256: r.serviceSHA256, ...changes };
   return { lease, r, initialization, funding: new GuestFunding(options, initialization, { clock: d.clock }) };
 }
+
+test('planned task and rank assignments survive actual isolated funding and reject substitutions', async () => {
+  for(const token of [false,true]) {
+    const d=await setup({token,planned:true});await d.setTime(d.start+1);
+    const lease=verifyMarketLeaseProof(d.proof,{...d.context,genesisHash:d.network.genesisHash});
+    assert.equal(lease.schema,'cannabis.market-lease.v2');assert.equal(lease.assignments.length,2);
+    const state=await readMarketLeaseState(d.proof,d.network,d.clock);
+    assert.equal(state.leaseDigest,lease.digest);assert.equal(state.executionAuthorized,false);
+    const binding=marketAttestationBinding(d.proof,d.context,lease.assignments[0].reservationId,d.run,d.clock());
+    assert.equal(binding.taskSHA256,d.run.taskSHA256);
+    for(const change of [{attempt:2},{taskSHA256:lease.assignments[1].run.taskSHA256},{runtimeSHA256:'99'.repeat(32)}])
+      assert.throws(()=>marketAttestationBinding(d.proof,d.context,lease.assignments[0].reservationId,{...d.run,...change},d.clock()),/complete booked execution plan/);
+    const changed=structuredClone(d.proof);changed.executionPlan.assignments[0].attempt=2;
+    assert.throws(()=>verifyMarketLeaseProof(changed,d.context));
+    const downgraded=structuredClone(d.proof);downgraded.schema='cannabis.market-lease.v1';delete downgraded.executionPlan;
+    assert.throws(()=>verifyMarketLeaseProof(downgraded,d.context));
+    await assert.rejects(createMarketLeaseProof(d.network,{...d.input,bookingIds:[d.ids[0]]},d.clock));
+    await assert.rejects(readMarketLeaseState(d.proof,{...d.network,genesisHash:h(998)},d.clock));
+  }
+});
 
 test('a complete ETH or token market group independently funds the retained guest without a capacity database', async () => {
   for (const token of [false, true]) {

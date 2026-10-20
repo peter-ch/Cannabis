@@ -50,7 +50,7 @@ export async function readRetainedLaunch() {
   return prepareGuestLaunch(value.signed,value.initialization,value.request);
 }
 export function publicLaunchAdmission(launch) {
-  if(launch.funding?.proof?.schema!=='cannabis.market-lease.v1'||launch.initialization?.schema!=='cannabis.guest-initialization.v2'||
+  if(!['cannabis.market-lease.v1','cannabis.market-lease.v2'].includes(launch.funding?.proof?.schema)||launch.initialization?.schema!=='cannabis.guest-initialization.v2'||
     launch.initialization.binding.configurationSHA256!==launch.configurationSHA256||
     launch.funding.consent?.schema!=='cannabis.guest-launch-consent.v1')fail();
   const service=nativeServiceCommitment(launch.execution);
