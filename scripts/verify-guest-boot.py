@@ -117,7 +117,7 @@ def validate_boot_result(report, budget, result):
             raise ValueError('Guest workflow acceptance checks did not pass: ' + name)
     group_cases={
         'group':('cannabis.guest-group-check.v1',{'twoRankTcpComputation','perRankCiphertextReconstruction',
-            'unapprovedSocketRefusals','privateTunDeviceHidden','wholeTreeCleanup'}),
+            'unapprovedSocketRefusals','privateTunDeviceHidden','privateInterfaceQueryAndMutationRefusal','wholeTreeCleanup'}),
         'groupFailure':('cannabis.guest-group-failure-check.v1',{'pumpDeath','queuedHeartbeatStall','inputEof',
             'invalidFrame','wrongRankPacket','serviceExpiry','namespaceReplacement','nonPrivateDescriptor',
             'creationFailureCleanup','ownerDeath','cancellation','wholeTreeCleanup'})}
@@ -126,6 +126,20 @@ def validate_boot_result(report, budget, result):
                   'hardwareValidated':False,'realPaidJob':False}
         if result.get(name+'Checks')!=expected:
             raise ValueError('Protected group acceptance checks did not pass: '+name)
+    if report.get('runtimeProfile') == 'pytorch-cpu':
+        pytorch_cases={
+            'single':('cannabis.guest-pytorch-check.v1',{'singleProcessTraining','encryptedInputAndResult',
+                'numericCheckpointReconstruction','wholeTreeCleanup'}),
+            'group':('cannabis.guest-group-check.v1',{'twoRankGlooTraining','synchronizedWeights',
+                'numericCheckpointReconstruction','perRankCiphertextReconstruction','unapprovedSocketRefusals',
+                'privateTunDeviceHidden','privateInterfaceQueryAndMutationRefusal','wholeTreeCleanup'})}
+        expected={name:{'schema':schema,'kernel':report['kernelRelease'],
+                       'checks':{case:True for case in cases},'hardwareValidated':False,'realPaidJob':False}
+                  for name,(schema,cases) in pytorch_cases.items()}
+        if result.get('pytorchChecks') != expected:
+            raise ValueError('Complete CPU PyTorch training checks did not pass')
+    elif result.get('pytorchChecks') is not None:
+        raise ValueError('Unexpected PyTorch evidence in the minimal runtime')
     job_cases = {'childCountBound', 'parentEntryRejected', 'retainedLeafHandlesAfterParentCleanup',
         'partialLeafCleanup', 'aggregateOOMKillsAllLeaves', 'aggregatePIDLimit', 'pinnedControlAndWorkloadCompletion',
         'busyControlExitRefused', 'stoppedControlAndDetachedWorkloadRetired', 'wholeTreeDeadline',
@@ -151,20 +165,29 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--timeout', type=int, default=1800)
+    parser.add_argument('--accelerator', choices=('tcg', 'kvm'), default='tcg',
+                        help='Ordinary VM acceleration for software checks; neither option supplies confidential admission')
+    parser.add_argument('--timeout', type=int, help='Bounded boot deadline; defaults to the selected runtime profile')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0,str(root))
     from compute.guest_vm import VmBudget
     image, out = args.image.resolve(), args.output.resolve()
-    if sys.platform != 'linux' or not 30 <= args.timeout <= 1800:
-        raise ValueError('Use Linux and a 30..1800 second boot deadline')
+    if sys.platform != 'linux' or args.timeout is not None and not 30 <= args.timeout <= 3600:
+        raise ValueError('Use Linux and a bounded 30..3600 second boot deadline')
     if out.exists() or root == out or root in out.parents:
         raise ValueError('Require a new private output directory')
     qemu = shutil.which('qemu-system-x86_64')
     if not qemu:
         raise ValueError('Install qemu-system-x86_64')
+    if args.accelerator == 'kvm' and not os.access('/dev/kvm', os.R_OK | os.W_OK):
+        raise ValueError('Selected KVM checks require access to /dev/kvm; no emulation fallback')
     report = json.loads((image / 'build.json').read_text())
+    maximum_timeout = 3600 if report.get('runtimeProfile') == 'pytorch-cpu' else 1800
+    if args.timeout is None:
+        args.timeout = maximum_timeout
+    elif args.timeout > maximum_timeout:
+        raise ValueError('Boot deadline exceeds the selected runtime profile')
     if (report['schema'] != 'cannabis.guest-image-build.v1' or report['executionAuthorized'] is not False
             or report.get('operatingEntryConfigured') is not False):
         raise ValueError('Require the component acceptance image')
@@ -184,10 +207,14 @@ def main():
     out.mkdir(parents=True)
     log = out / 'serial.log'
     # No disks, shared filesystem, NIC, monitor, QMP, GDB or incoming migration.
-    # TCG intentionally cannot provide confidential-hardware acceptance evidence.
-    command = [qemu, '-machine', 'q35,accel=tcg', '-cpu', 'max', '-smp', str(reference['cpus']), '-m', str(reference['memoryMiB']), '-nodefaults', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-serial', 'stdio', '-no-reboot', '-kernel', str(image / 'vmlinuz'), '-initrd', str(image / 'initramfs.cpio.gz'), '-append', cmdline]
+    # Ordinary TCG and KVM checks cannot provide confidential-hardware acceptance.
+    # Select exactly one accelerator; failure must not silently change the run.
+    command = [qemu, '-machine', 'q35,accel=' + args.accelerator, '-cpu', 'max', '-smp', str(reference['cpus']), '-m', str(reference['memoryMiB']), '-nodefaults', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-serial', 'stdio', '-no-reboot', '-kernel', str(image / 'vmlinuz'), '-initrd', str(image / 'initramfs.cpio.gz'), '-append', cmdline]
     capacity_refusals={}
-    for name,option,value in [('insufficientMemory','-m',min(2048,budget.minimum_memory//1024**2-128)),
+    # The refusal VM must unpack the selected image before PID 1 can reject its
+    # complete reservation. A fixed 2 GiB VM cannot even unpack larger runtime
+    # images; test just below this profile's actual minimum instead.
+    for name,option,value in [('insufficientMemory','-m',budget.minimum_memory//1024**2-128),
                               ('insufficientCPUs','-smp',budget.minimum_cpus-1)]:
         changed=list(command);changed[changed.index(option)+1]=str(value)
         refusal_log=out/(name+'.log')
@@ -216,7 +243,7 @@ def main():
         raise ValueError('Guest boot check failed; inspect private serial log')
     result = json.loads(lines[0])
     validate_boot_result(report, budget, result)
-    final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'referenceVM':reference, 'earlyCapacityRefusals':capacity_refusals, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}
+    final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'accelerator':args.accelerator, 'image':report['outputs'], 'result':result, 'referenceVM':reference, 'earlyCapacityRefusals':capacity_refusals, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}
     (out / 'verification.json').write_text(json.dumps(final,indent=2)+'\n')
     print(json.dumps(final))
 

@@ -24,6 +24,66 @@ python3 scripts/build-guest-image.py \
 
 Use fresh, separate output directories outside the public repository. An existing output is refused. Every package/download hash and the service hashes are checked before use. Package maintainer scripts and npm lifecycle scripts are not executed. The builder restores the merged `/usr` directory layout after package extraction and computes module dependencies for the pinned kernel.
 
+## CPU PyTorch runtime
+
+The default `--runtime native` includes Python's standard library. Select
+`--runtime pytorch-cpu` to embed the separately pinned CPU PyTorch and NumPy
+runtime, including its complete Python wheel dependency closure. The lock at
+`compute/guest-image/pytorch-cpu-wheels.json` records exact versions, upstream
+URLs, sizes, SHA-256 hashes and package metadata. Assembly verifies those pins,
+rejects unsafe paths, special files and collisions, and retains package licenses.
+It extracts wheel contents without running package or installer code. Runtime
+startup still executes the pinned libraries, including their normal Python
+startup hooks; this is part of the runtime that must be reviewed.
+
+```sh
+python3 scripts/build-guest-image.py \
+  --runtime pytorch-cpu \
+  --guest-services /work/cannabis-agent-build/guest-agent-artifacts-first \
+  --cache /work/cannabis-image-downloads \
+  --output /work/cannabis-pytorch-first
+```
+
+This selection embeds `vm-profile-pytorch-cpu.json`: a four-CPU, 8 GiB reference
+VM, a 2 GiB root ceiling and a 2 GiB aggregate job ceiling. Its boot reservation
+includes both early root copies and a 512 MiB compressed-archive allowance.
+Every native runtime inventory is bounded at 1 GiB and 50,000 entries; actual
+bytes and the exact digest are checked before execution. The minimal profile
+retains its smaller ceilings. These are separate measured images and require
+separate repeated-build, boot and hardware qualification evidence.
+
+The PyTorch image uses the existing native adapters and its **own inventory
+digest**. It does not add a scheduler or a central service. A single-process
+task invokes `/usr/bin/python3 -I -B /input/train.py`; a distributed task uses
+`native-group-linux-x86_64-v1` and `attested-tls-ip-v1`. Each rank receives its
+bound `RANK`, `WORLD_SIZE`, `MASTER_ADDR`, `MASTER_PORT` and
+`GLOO_SOCKET_IFNAME=cannabis0`. Initialize PyTorch with the CPU Gloo backend and
+`env://`; run one process per admitted rank. Reserve worker memory, threads and
+scratch space explicitly, and declare every returned checkpoint and log as an
+encrypted output.
+
+Owned component checks train a small neural layer in one process and across two
+Gloo ranks, reconstruct encrypted numeric checkpoints and verify predictions on
+unseen inputs. These checks use disposable fixture identities and data. They
+do not establish hardware confidentiality, a paying customer or independent
+review. Actual support remains conditional on admission of the exact runtime
+image. CUDA, ROCm, other accelerators, JIT/toolchain extensions and automatic
+partitioning are separate capabilities; this CPU recipe supplies none of them.
+
+PyTorch's distributed primitives do not provide their own confidentiality or
+authorization. Cannabis runs them inside the private namespace and authenticated
+encrypted group transport; exposing Gloo or TCPStore on the host network is not
+an alternative. See the [upstream security guidance](https://github.com/pytorch/pytorch/blob/main/SECURITY.md).
+
+The group syscall profile permits `NETLINK_ROUTE` solely inside the retained
+private network namespace so glibc/Gloo can enumerate its interfaces. The kernel
+checks `CAP_NET_ADMIN` for route/link mutations; workloads run with all
+capabilities dropped in a child user namespace and cannot administer the owning
+network namespace. Component checks verify that only `lo` and `cannabis0` appear,
+an attempted link change returns `EPERM`, and other netlink protocols, raw IP,
+packet, IPv6 and vsock sockets remain refused. Standalone tasks retain no netlink
+access. This additional kernel interface requires review with the measured image.
+
 The image embeds fixed consent verification code with no universal signer file.
 The [fixed session entry](guest-initialization.md#fixed-session-entry-and-signed-configuration)
 requires the exact funded assignment and separate requester/provider consent over
@@ -101,15 +161,31 @@ python3 scripts/verify-guest-boot.py \
   --output /work/cannabis-image-first-boot
 ```
 
-This uses QEMU's ordinary TCG CPU emulation and the measured reference profile:
-four vCPUs and 4 GiB of RAM. It attaches no NIC, disk, shared filesystem, monitor,
+By default this uses QEMU's ordinary TCG CPU emulation and the measured reference profile:
+four vCPUs and 4 GiB of RAM for the minimal runtime, or 8 GiB for the CPU PyTorch
+profile. It attaches no NIC, disk, shared filesystem, monitor,
 QMP or debugger. Before the full boot, two separate guests must refuse insufficient
 RAM or CPUs and power off before the second root copy. Each negative boot has a
-two-minute deadline. The full boot retains its thirty-minute deadline for the
-expanded 134-case suite; individual component, workload and cleanup deadlines
-remain separate. Failure or timeout does not count as success. Keep the serial
+two-minute deadline. The full component boot allows thirty minutes for the minimal
+runtime and sixty minutes for the optional CPU PyTorch runtime. Runtime inventory verification allows ten minutes for the
+larger CPU PyTorch image and three minutes for the minimal runtime under
+emulation. Owned PyTorch fixtures explicitly select an emulation budget of ten
+minutes for the workload within a fifteen-minute shared service interval, with
+five minutes for collective rendezvous. Ordinary kernel/CI checks retain their
+shorter budgets. These fixture settings do not change production enforcement:
+each real job must still finish within its approved workload and shared deadlines.
+Failure or timeout does not count as success. Keep the serial
 logs and verification JSON private. Bounded phase names distinguish slow or
 stalled checks without customer content.
+
+On a Linux host with working KVM and permission to access `/dev/kvm`, add
+`--accelerator kvm` to use ordinary hardware acceleration. Both boot-verification
+commands support this option and record the selected accelerator. Selection is
+explicit: unavailable KVM fails without falling back to emulation. The image,
+guest resource profile, startup checks, cleanup assertions and time limits stay
+the same. This can avoid emulation delays on a busy development machine. Retain
+earlier failures; a later pass does not erase them. Neither TCG nor ordinary KVM
+establishes confidential hardware admission or authorizes customer-key release.
 
 Inside the VM, the entry point mounts ephemeral runtime storage, disables core dumps and further kernel-module loading, checks embedded files, exercises the Python extensions and age executable, and starts the actual attestation agent and REST bridge on loopback. Both production CPU probes must reject the unsupported sample profile with their exact structured refusal. Import errors, missing libraries and unexpected success fail the check. No hardware evidence, channel key, job key or customer computation is requested. The services are terminated and the VM powers off.
 
@@ -266,8 +342,11 @@ python3 scripts/verify-operating-boot.py \
   --output /work/cannabis-operating-refusals
 ```
 
+Add `--accelerator kvm` for the same explicitly selected ordinary KVM checks.
+
 It sends only invalid owned public requests. It requires public staging followed
-by refusal, malformed/oversized prefix refusal, bounded stalled intake, and
+by refusal, a valid fragmented prefix that waits for its remainder before staging,
+malformed/oversized prefix refusal, bounded stalled intake, and
 shutdown when the port or required network device is absent or the device identity
 differs. The kernel console must remain silent. A local
 QMP connection observes the
@@ -276,6 +355,14 @@ host termination, reset or panic does not substitute for the expected power-off.
 QMP issues no VM-control or memory-read command. The NIC uses a restricted user
 backend with external access disabled. No shared filesystem, customer key,
 authorized job or real payment participates in these refusal checks.
+
+The stalled-prefix case requires bounded, quiet guest shutdown. It does not infer
+the guest's intake deadline from the host's receipt of `READY`: that message can
+be buffered, and the host observer can be descheduled. The separate component
+checks exercise the guest monotonic intake deadline directly. The fragmented
+case checks that a partial valid prefix stays open during a host-observed pause
+and is staged after its remainder arrives. Neither observation establishes
+trusted time against a hostile hypervisor.
 
 These paths still require actual confidential hardware, reviewed production
 authorities, an integrated successful operating job, authenticated network and
@@ -300,19 +387,22 @@ The check deliberately does not treat execution on real SNP/TDX hardware as an a
 
 ## Resource enforcement inside the guest
 
-The image now embeds `vm-profile.json` from `compute/guest-image/vm-profile.json`.
+The image embeds the selected runtime's budget as `vm-profile.json`. The default
+uses `compute/guest-image/vm-profile.json`; the CPU PyTorch selection uses
+`compute/guest-image/vm-profile-pytorch-cpu.json`.
 Early boot checks the kernel's memory and allowed-CPU views before duplicating the
 root. The root and `/run`, `/tmp` and `/dev/shm` receive the profile's explicit byte
 and inode ceilings, with swap disabled. The builder rejects an image whose
 page-rounded file data, entry count or compressed archive exceed those allowances.
 
-The current CPU profile budgets a 1 GiB root, 128/64/16 MiB volatile mounts,
+The default native profile budgets a 1 GiB root, 128/64/16 MiB volatile mounts,
 256 MiB for the outer launcher, up to 1 GiB for the job and 512 MiB of kernel/PID-1
 headroom. Boot also budgets the temporary second root and a 256 MiB compressed
 archive allowance. Its peak requires at least 3,280 MiB in the guest's `MemTotal`
 view. The four-vCPU reference also covers the job's 3,000 millicpu ceiling, the
 outer launcher's 500 and 500 for kernel/supervisor activity. These are limits for
 this measured CPU profile, not a promise of dedicated host cores or service backing.
+The separate CPU PyTorch profile is described [above](#cpu-pytorch-runtime).
 
 `VmAdmission` retains the outer launcher's actual cgroup, checks its CPU/memory/PID
 and swap controls, and refuses a launcher outside it, changed mounts or controls,
@@ -616,8 +706,11 @@ to a fixed Python/QEMU process, then to the existing encrypted session relay.
 waits for checked local VM termination before returning. This source is under
 integration, with no successful hardware launch or paid-worker admission claimed.
 
-The first host profile supports EPYC-Milan SNP, at least four vCPUs and 4096 MiB
-guest memory. It pins QEMU, stateless OVMF, kernel, initramfs, command line and the
+The first host profile supports EPYC-Milan SNP and at least four vCPUs. Preparation
+selects guest memory from the retained operating image's measured budget: 4096 MiB
+for the minimal runtime or 8192 MiB for CPU PyTorch. It checks that the build record
+matches the actual kernel, initramfs and command-line hashes and that the selected
+CPU count covers the budget. It pins QEMU, stateless OVMF, kernel, initramfs, command line and the
 matching measurement candidate. Root-owned artifacts and parent directories are
 required. QEMU's [SNP object](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html#object-SevSnpGuestProperties)
 requires a supporting build; the adapter also checks the actual KVM/SEV devices
@@ -637,8 +730,10 @@ finite limits covering the selected host profile, and zero swap. The adapter
 locks its actual inode for one VM at a time and refuses residual child groups.
 It neither creates nor resizes ancestors or moves unrelated processes. Its own
 VM leaf enforces the configured limits. Boot/executable snapshots are copied and
-sealed only after joining that leaf. The default preparation reserves a 6 GiB
-VM-process ceiling, including the 4 GiB guest, boot copies and QEMU headroom.
+sealed only after joining that leaf. Preparation reserves the selected guest
+memory plus 2 GiB for boot copies and QEMU headroom: a 6 GiB host process ceiling
+for the minimal runtime or 10 GiB for CPU PyTorch. The retained profile independently
+checks that its ceiling covers the actual artifact snapshots and QEMU overhead.
 
 The VM receives only fixed devices, the measured control-plane network, inherited
 local control sockets and public initialization `HOST_DATA`. No customer-content

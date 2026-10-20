@@ -11,6 +11,24 @@ import types
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 module=types.ModuleType('cannabis_host');module.__path__=[str(ROOT/'operator')];sys.modules['cannabis_host']=module
 from cannabis_host.snp_profile import SnpProfile,root_file,root_directory,read_fd,MAXIMUM,unique
+from compute.guest_vm import VmBudget
+
+
+def image_memory(build,boot,cpus):
+    """Select capacity from the exact retained operating image, never a default."""
+    if (build.get('schema')!='cannabis.guest-image-build.v1'
+            or build.get('operatingEntryConfigured') is not True
+            or build.get('executionAuthorized') is not False):
+        raise ValueError('Require the recorded operating image')
+    budget=VmBudget(build['vmBudget']['profile'])
+    if (type(cpus) is not int or not budget.minimum_cpus<=cpus<=256
+            or build['vmBudget']['minimumMemoryBytes']!=budget.minimum_memory
+            or build['vmBudget']['minimumCPUs']!=budget.minimum_cpus):
+        raise ValueError('Recorded guest capacity differs')
+    for name,key in [('kernel','vmlinuz'),('initramfs','initramfs.cpio.gz'),('cmdline','cmdline')]:
+        if build['outputs'][key]!={k:boot[name][k] for k in ['bytes','sha256']}:
+            raise ValueError('Image capacity record refers to different boot artifacts')
+    return budget.value['referenceVM']['memoryMiB']
 
 
 def main():
@@ -40,12 +58,17 @@ def main():
     try:reference=json.loads(read_fd(reference_fd,65536),object_pairs_hook=unique)
     finally:os.close(reference_fd)
     cpus=reference['vcpus']
+    build_fd=root_file(str(args.image/'build.json'),65536)
+    try:build=json.loads(read_fd(build_fd,65536),object_pairs_hook=unique)
+    finally:os.close(build_fd)
+    boot={name:artifact(p,name) for name,p in [('firmware',args.firmware),('kernel',args.image/'vmlinuz'),
+               ('initramfs',args.image/'initramfs.cpio.gz'),('cmdline',args.image/'cmdline')]}
+    memory_mib=image_memory(build,boot,cpus)
     profile={'schema':'cannabis.host-snp-profile.v1','qemu':artifact(args.qemu,'qemu'),
-        'boot':{name:artifact(p,name) for name,p in [('firmware',args.firmware),('kernel',args.image/'vmlinuz'),
-               ('initramfs',args.image/'initramfs.cpio.gz'),('cmdline',args.image/'cmdline')]},
-        'reference':artifact(args.reference,'reference'),'machine':args.machine,'cpu':reference['vcpuType'],'cpus':cpus,'memoryMiB':4096,
+        'boot':boot,
+        'reference':artifact(args.reference,'reference'),'machine':args.machine,'cpu':reference['vcpuType'],'cpus':cpus,'memoryMiB':memory_mib,
         'snp':{'cbitpos':args.cbitpos,'reducedPhysBits':args.reduced_phys_bits,'policy':0x30000},
-        'limits':{'cpu_millis':cpus*1000+500,'memory_bytes':6*1024**3,'processes':128,'wall_seconds':3600},
+        'limits':{'cpu_millis':cpus*1000+500,'memory_bytes':memory_mib*1024**2+2*1024**3,'processes':128,'wall_seconds':3600},
         'cgroupParent':str(args.cgroup_parent)}
     if grouped:
         profile['schema']='cannabis.host-snp-profile.v2'
@@ -65,6 +88,7 @@ def main():
     finally:os.close(directory)
     retained=SnpProfile(str(out))
     try:print(json.dumps({'profile':str(out),'expectedLaunchDigest':retained.reference['expectedLaunchDigest'],
+        'memoryMiB':retained.value['memoryMiB'],'hostMemoryBytes':retained.limits.memory_bytes,
         'hardwareValidated':False,'executionAuthorized':False,'vmStarted':False}))
     finally:retained.close()
 

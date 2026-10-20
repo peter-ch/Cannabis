@@ -46,6 +46,10 @@ jobs:
         run: python -m unittest discover -s test -p 'test_guest_execution.py' -v
       - name: Verify measured whole-guest budget accounting
         run: python -m unittest discover -s test -p 'test_guest_vm.py' -v
+      - name: Verify host capacity selection
+        run: python -m unittest discover -s test -p 'test_host_capacity.py' -v
+      - name: Verify pinned wheel extraction boundaries
+        run: python -m unittest discover -s test -p 'test_guest_wheels.py' -v
       - name: Verify encrypted input storage limits and retained admission
         run: sudo /usr/bin/python3 -I -B scripts/check-guest-ciphertext.py
       - name: Check bounded result volume and restart recovery
@@ -117,6 +121,17 @@ jobs:
                   shutil.copytree(legacy, merged, symlinks=True, dirs_exist_ok=True)
                   shutil.rmtree(legacy)
                   legacy.symlink_to('usr/' + name)
+          wheel_spec = importlib.util.spec_from_file_location('guest_wheels', 'scripts/build-guest-wheels.py')
+          wheels = importlib.util.module_from_spec(wheel_spec)
+          wheel_spec.loader.exec_module(wheels)
+          wheel_lock = pathlib.Path('compute/guest-image/pytorch-cpu-wheels.json')
+          for entry in wheels.load_lock(wheel_lock)['packages']:
+              builder.download(entry, cache)
+          runtime_spec = importlib.util.spec_from_file_location('runtime_recipe', 'scripts/build-guest-runtime.py')
+          runtime = importlib.util.module_from_spec(runtime_spec)
+          runtime_spec.loader.exec_module(runtime)
+          runtime.build_runtime(tree, pathlib.Path('/tmp/cannabis-pytorch-runtime'),
+                                wheel_lock=wheel_lock, wheel_cache=cache)
           PY
       - name: Exercise native guest filesystem, syscall, network and storage isolation
         run: |
@@ -142,6 +157,8 @@ jobs:
           sudo install -m 755 "$(command -v age)" /tmp/cannabis-group-tools/age
           sudo install -m 755 "$(command -v age-keygen)" /tmp/cannabis-group-tools/age-keygen
           sudo /usr/bin/python3 -I -B scripts/check-guest-groups.py --tools /tmp/cannabis-group-tools
+          sudo /usr/bin/python3 -I -B scripts/check-guest-pytorch.py --runtime /tmp/cannabis-pytorch-runtime --age /tmp/cannabis-group-tools/age
+          sudo /usr/bin/python3 -I -B scripts/check-guest-groups.py --tools /tmp/cannabis-group-tools --pytorch-runtime /tmp/cannabis-pytorch-runtime
           sudo /usr/bin/python3 -I -B scripts/check-guest-group-failures.py
           sudo /usr/bin/python3 -I -B scripts/check-funded-groups.py --tools /tmp/cannabis-group-tools
       - run: npm audit --audit-level=high

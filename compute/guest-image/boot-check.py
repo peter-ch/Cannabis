@@ -44,10 +44,11 @@ def owned_workflow_checks(name, modes, timeout, extra_summary=None):
             'paymentAccepted': False}
 
 
-def owned_group_checks(name, schema, cases, timeout, tools=False):
+def owned_group_checks(name, schema, cases, timeout, tools=False, arguments=()):
     phase(name)
     command=['/usr/bin/python3','-I','-B','/opt/cannabis/scripts/check-guest-'+name+'.py']
     if tools: command+=['--tools','/usr/local/bin']
+    command+=list(arguments)
     checked=subprocess.run(command,capture_output=True,timeout=timeout)
     if checked.returncode:
         print('CANNABIS_GROUP_FAILURE '+checked.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
@@ -97,8 +98,11 @@ def main():
             capture_output=True, timeout=30, check=True)
         python_checks = json.loads(cached.stdout)
         phase('embedded_runtime_preparation')
+        # The larger optional runtime is inventoried repeatedly under CPU
+        # emulation. This bounds the owned component check, not customer work.
+        runtime_timeout = 600 if Path('/opt/cannabis/pytorch-cpu-wheels.json').exists() else 180
         runtime = subprocess.run(['/usr/bin/python3','-I','-B','/opt/cannabis/scripts/check-guest-runtime.py'],
-            capture_output=True, timeout=180)
+            capture_output=True, timeout=runtime_timeout)
         if runtime.returncode:
             print('CANNABIS_RUNTIME_FAILURE '+runtime.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
             raise RuntimeError('Embedded runtime preparation failed')
@@ -204,7 +208,18 @@ def main():
             900)
         group_checks=owned_group_checks('groups','cannabis.guest-group-check.v1',
             ('twoRankTcpComputation','perRankCiphertextReconstruction','unapprovedSocketRefusals',
-             'privateTunDeviceHidden','wholeTreeCleanup'),180,tools=True)
+             'privateTunDeviceHidden','privateInterfaceQueryAndMutationRefusal','wholeTreeCleanup'),180,tools=True)
+        pytorch_checks=None
+        if Path('/opt/cannabis/pytorch-cpu-wheels.json').exists():
+            pytorch_checks={
+                'single':owned_group_checks('pytorch','cannabis.guest-pytorch-check.v1',
+                    ('singleProcessTraining','encryptedInputAndResult','numericCheckpointReconstruction','wholeTreeCleanup'),
+                    1200,arguments=('--runtime','/opt/cannabis/runtime','--age','/usr/local/bin/age','--emulated')),
+                'group':owned_group_checks('groups','cannabis.guest-group-check.v1',
+                    ('twoRankGlooTraining','synchronizedWeights','numericCheckpointReconstruction',
+                     'perRankCiphertextReconstruction','unapprovedSocketRefusals','privateTunDeviceHidden',
+                     'privateInterfaceQueryAndMutationRefusal','wholeTreeCleanup'),
+                    1500,tools=True,arguments=('--pytorch-runtime','/opt/cannabis/runtime','--emulated'))}
         group_failure_checks=owned_group_checks('group-failures','cannabis.guest-group-failure-check.v1',
             ('pumpDeath','queuedHeartbeatStall','inputEof','invalidFrame','wrongRankPacket','serviceExpiry',
              'namespaceReplacement','nonPrivateDescriptor','creationFailureCleanup','ownerDeath','cancellation','wholeTreeCleanup'),180)
@@ -226,7 +241,7 @@ def main():
             print('CANNABIS_LAUNCHER_FAILURE '+launcher.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
             raise RuntimeError('Outer launch transport checks failed')
         launcher_checks=json.loads(launcher.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'graphChecks': graph_checks, 'dependenciesChecks': dependency_checks, 'groupChecks':group_checks, 'groupFailureChecks':group_failure_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'runtimeChecks':runtime_checks, 'ciphertextChecks':ciphertext_checks, 'vmChecks':vm_checks, 'supervisionChecks':supervision_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'graphChecks': graph_checks, 'dependenciesChecks': dependency_checks, 'groupChecks':group_checks,'pytorchChecks':pytorch_checks, 'groupFailureChecks':group_failure_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'runtimeChecks':runtime_checks, 'ciphertextChecks':ciphertext_checks, 'vmChecks':vm_checks, 'supervisionChecks':supervision_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:

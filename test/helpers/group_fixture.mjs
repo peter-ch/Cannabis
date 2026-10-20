@@ -31,11 +31,12 @@ export function syntheticGroupEAR(key,policy,challenge,channel,now) {
   const body=[{alg:'ES256',typ:'JWT'},claims].map(v=>Buffer.from(JSON.stringify(v)).toString('base64url')).join('.');
   return body+'.'+sign('sha256',Buffer.from(body),{key:key.privateKey,dsaEncoding:'ieee-p1363'}).toString('base64url');
 }
-export async function groupFixture({now=Math.floor(Date.now()/1000),nodes=2,executions,workload,channelJwks,realTime=false}={}) {
+export async function groupFixture({now=Math.floor(Date.now()/1000),nodes=2,executions,workload,channelJwks,realTime=false,serviceSeconds=300}={}) {
   if(![2,4].includes(nodes))throw Error('Owned fixture supports two or four ranks');
+  if(!Number.isSafeInteger(serviceSeconds)||serviceSeconds<30||serviceSeconds>3600)throw Error('Require bounded owned service duration');
   const clock=realTime?()=>Math.floor(Date.now()/1000):()=>now;
   const requester=Wallet.createRandom(),providers=Array.from({length:nodes},()=>Wallet.createRandom()),signer=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
-  const c=launchFixture().configuration,start=now-5,end=now+300;
+  const c=launchFixture().configuration,start=now-5,end=now+serviceSeconds;
   c.schema='cannabis.guest-launch-configuration.v3';c.context={chainId:31337,market:Wallet.createRandom().address,token:ZeroAddress};
   c.network.market=c.context.market;c.network.marketCodeHash=h(99);c.validFrom=start;c.validUntil=end;
   c.attestationPolicyTemplate.signingJwk=signer.publicKey.export({format:'jwk'});
@@ -43,7 +44,8 @@ export async function groupFixture({now=Math.floor(Date.now()/1000),nodes=2,exec
   const p=c.execution.profile;p.schema='cannabis.guest-native-service.v4';p.resources.nodes=nodes;
   p.runtime.adapter=GROUP_ADAPTER;p.runtime.collectiveBackend=GROUP_BACKEND;p.maxDependencyBytes=1024**2;p.ciphertext.dependencyBytes=1024**2;
   if(!executions)p.ciphertext.bytes+=1024**2;
-  p.group={protocol:'cannabis.group-tls-ip.v1',bindHost:'127.0.0.1',port:await port(),maxBufferedBytes:131072,maxTrafficBytes:1048576};
+  p.group={protocol:'cannabis.group-tls-ip.v1',bindHost:'127.0.0.1',port:await port(),
+    maxBufferedBytes:p.group?.maxBufferedBytes??131072,maxTrafficBytes:p.group?.maxTrafficBytes??1048576};
   const configurations=[];
   for(const [rank,provider] of providers.entries()) {
     const configuration=structuredClone(c);configuration.configurationId=h(100+rank);configuration.provider=provider.address;

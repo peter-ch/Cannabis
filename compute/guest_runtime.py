@@ -21,7 +21,7 @@ def image_runtime(file):
     if (value['schema'] != 'cannabis.guest-image-runtime.v1' or value['path'] != '/opt/cannabis/runtime'
             or value['runtime']['adapter'] != 'native-linux-x86_64-v1'
             or value['runtime']['architecture'] != 'x86_64' or value['runtime']['os'] != 'linux'
-            or type(value['fileBytes']) is not int or not 1 <= value['fileBytes'] <= 512 * 1024**2
+            or type(value['fileBytes']) is not int or not 1 <= value['fileBytes'] <= 1024**3
             or type(value['inventoryEntries']) is not int or not 1 <= value['inventoryEntries'] <= 50000):
         raise ValueError('Unsupported embedded runtime recipe')
     return value
@@ -38,7 +38,7 @@ def _mount(fd):
 
 class FrozenRuntime:
     """A checked read-only bind in the launcher's private mount namespace."""
-    def __init__(self, path, expected, *, max_bytes=512 * 1024**2, max_entries=50000):
+    def __init__(self, path, expected, *, max_bytes=1024**3, max_entries=50000):
         self.path, self._mounted, self._fd = Path(path), False, None
         self._expected, self._max_bytes, self._max_entries = expected, max_bytes, max_entries
         # Never let an operator-supplied path or inventory replace the signed

@@ -25,6 +25,7 @@ from cannabis_host.snp_profile import SnpProfile,COMMAND,SEALS
 from cannabis_host.host_vm import OwnedSnpVm,VmSlot,fork_qemu,request_checked
 from compute.guest_guardian import GuardedResources
 from compute.guest_deadline import ExecutionDeadline
+from compute.guest_vm import VmBudget
 
 
 class OrdinaryRefusalFixture(SnpProfile):
@@ -50,6 +51,14 @@ def fixture_files(root,parent):
         'guestImage':{key:{k:boot[name][k] for k in ['bytes','sha256']} for name,key in
             [('kernel','vmlinuz'),('initramfs','initramfs.cpio.gz'),('cmdline','cmdline')]}}
     (root/'reference.json').write_text(json.dumps(ref))
+    # The real preparer now binds capacity to the exact operating image record.
+    # Supply that record for these explicitly nonbootable owned artifacts too.
+    budget=VmBudget(json.loads((ROOT/'compute/guest-image/vm-profile.json').read_text()))
+    (root/'build.json').write_text(json.dumps({
+        'schema':'cannabis.guest-image-build.v1','operatingEntryConfigured':True,
+        'executionAuthorized':False,'outputs':ref['guestImage'],
+        'vmBudget':{'profile':budget.value,'minimumMemoryBytes':budget.minimum_memory,
+                    'minimumCPUs':budget.minimum_cpus}}))
     value={'schema':'cannabis.host-snp-profile.v1','qemu':record(Path('/usr/bin/qemu-system-x86_64')),
         'boot':boot,'reference':record(root/'reference.json'),'machine':'pc-q35-9.1','cpu':'EPYC-Milan','cpus':4,'memoryMiB':4096,
         'snp':{'cbitpos':51,'reducedPhysBits':1,'policy':0x30000},'cgroupParent':str(parent),
@@ -99,8 +108,12 @@ def main():
                 '--qemu',value['qemu']['path'],'--firmware',str(root/'firmware'),'--image',str(root),
                 '--reference',str(root/'reference.json'),'--machine','pc-q35-9.1','--cbitpos','51',
                 '--reduced-phys-bits','1','--cgroup-parent',str(parent),'--output',str(root/'prepared.json')],
-                capture_output=True,text=True,timeout=10,check=True)
-            assert json.loads(prepared.stdout)['vmStarted'] is False
+                capture_output=True,text=True,timeout=10)
+            if prepared.returncode:
+                raise RuntimeError('Owned profile preparation failed: '+prepared.stderr[-4096:])
+            prepared_result=json.loads(prepared.stdout)
+            assert prepared_result['vmStarted'] is False
+            assert prepared_result['memoryMiB']==4096 and prepared_result['hostMemoryBytes']==6*1024**3
             prepared_profile=SnpProfile(str(root/'prepared.json'));prepared_profile.close()
             checks['profilePreparationPinsExactArtifacts']=True
             profile=SnpProfile(str(file))
