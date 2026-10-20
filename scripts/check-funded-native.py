@@ -57,13 +57,33 @@ def public_launch_frame(fd):
     return value
 
 
+def isolated_network(libc):
+    original_network=os.readlink('/proc/self/ns/net')
+    assert libc.unshare(0x40000000)==0, 'Cannot isolate the owned network'
+    namespace=os.readlink('/proc/self/ns/net')
+    assert namespace!=original_network
+    subprocess.run(['/usr/sbin/ip','link','set','lo','up'],check=True)
+    links=json.loads(subprocess.check_output(['/usr/sbin/ip','-j','link'],text=True))
+    assert [link['ifname'] for link in links]==['lo']
+    assert json.loads(subprocess.check_output(['/usr/sbin/ip','-j','route'],text=True))==[]
+    # All descendants inherit a namespace with no external interfaces or routes.
+    with socket.socket() as probe:
+        probe.settimeout(0.2)
+        assert probe.connect_ex(('192.0.2.1',443))!=0
+    return namespace
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--tools',type=Path,help='Optional directory of already verified fixture tools')
     parser.add_argument('--node-path',type=Path,help='Optional directory of verified native Node dependencies')
     parser.add_argument('--runtime',type=Path,help='Optional built image runtime to copy into owned protected memory')
     parser.add_argument('--hosted',action='store_true',help='Include a separate ordinary session operator and encrypted HTTP relay')
+    parser.add_argument('--independent-network',action='store_true',
+                        help='Join discovery, relay replacement and recovery inside an owned loopback-only network namespace')
     args=parser.parse_args()
+    if args.independent_network and not args.hosted:
+        parser.error('--independent-network requires --hosted')
     spec=importlib.util.spec_from_file_location('owned_execution_fixture',ROOT/'scripts/check-guest-execution.py')
     fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
     base=Path('/run')/('cannabis-funded-native-'+uuid.uuid4().hex)
@@ -75,6 +95,7 @@ def main():
     assert libc.mount(b'tmpfs',os.fsencode(base),b'tmpfs',2|4,b'size=768m,nr_inodes=35000,mode=0700,noswap')==0
     chain=None;scope=None;chain_log=None;requester_proc=None;operator_proc=None;wire_fds=[];result_home=None;result_volume_ready=False
     try:
+        network_namespace=isolated_network(libc) if args.independent_network else None
         if args.hosted:
             result_home=Path(tempfile.mkdtemp(prefix='cannabis-funded-results-',dir='/var/tmp'))
             volume.create_volume(result_home,96*1024**2,4)
@@ -138,6 +159,13 @@ def main():
         if args.hosted:
             with socket.socket() as s:s.bind(('127.0.0.1',0));result_port=s.getsockname()[1]
             request['resultOrigin']=f'http://127.0.0.1:{result_port}'
+        if args.independent_network:
+            with socket.socket() as s:s.bind(('127.0.0.1',0));peer_port=s.getsockname()[1]
+            with socket.socket() as s:s.bind(('127.0.0.1',0));replacement_port=s.getsockname()[1]
+            request['independentNetwork']={
+                'peerOrigin':f'https://localhost:{peer_port}',
+                'replacementOrigin':f'http://127.0.0.1:{replacement_port}',
+                'recoveryScript':str(ROOT/'test/helpers/independent_result_recovery.mjs')}
         requester_proc=subprocess.Popen([str(tools/'node'),str(controller)],cwd=ROOT,env=env,
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,pass_fds=(requester_read,requester_write))
         for fd in [requester_read,requester_write]:os.close(fd);wire_fds.remove(fd)
@@ -172,6 +200,8 @@ def main():
                 config={'public':public,'origin':request['resultOrigin'],'spool':str(spool),'report':str(report_file),
                     'dispatchJournal':str(base/'dispatch.sqlite'),
                     'fds':{'guestRead':operator_read,'guestWrite':operator_write,'requesterRead':to_guest,'requesterWrite':from_guest}}
+                if args.independent_network:
+                    config['independentNetwork']={key:request['independentNetwork'][key] for key in ['peerOrigin','replacementOrigin']}
                 # Only public retained launch data and transport/storage handles.
                 # Owner custody paths and keys never enter this operator config.
                 operator_bytes=canonical(config)
@@ -216,6 +246,12 @@ def main():
             assert report['requesterChallengeHandedOff'] and report['operatingPrefixRetained'] and report['bootIntakeIsFixture']
             assert not report['guestCompletionObserved'] and not report['paymentAuthorized'] and not report['hardwareValidated']
             assert Path(report['sourceFile']).is_file() and Path(report['directory']).parent==spool
+            if args.independent_network:
+                assert report['originalRelayStopped'] and report['replacementCiphertextIdentical']
+                assert report['replacementStorageSignatureVerified'] and report['executions']==1
+                assert report['selectedPeerOrigin']==request['independentNetwork']['peerOrigin']
+                result['checks'].update(originalRelayStopped=True,replacementCiphertextIdentical=True,
+                                        replacementStorageSignatureVerified=True,oneExecutionAfterRecovery=True)
             result['checks'].update(separateSessionOperator=True,hostedSignatureForwarded=True,completeEncryptedSpoolRetained=True,
                                    bookedTLSProviderAuthenticated=True,bookedAssignmentRouted=True,peerListenerDisposed=True,
                                      durableDispatchRetained=True,restartedDispatchRefused=True,localSpoolReservationRetained=True,
@@ -230,6 +266,11 @@ def main():
         result['runtimeSource']='built image' if args.runtime else 'owned fixture'
         result['runtimeSHA256']=profile['runtime']['digestSHA256']
         result['kernel']=os.uname().release
+        if args.independent_network:
+            assert os.readlink('/proc/self/ns/net')==network_namespace
+            assert json.loads(subprocess.check_output(['/usr/sbin/ip','-j','route'],text=True))==[]
+            result['checks'].update(isolatedLoopbackNetwork=True,noExternalRoutes=True,founderWebsiteUnavailable=True)
+            result['independenceScope']='Owned separate-process workflow; synthetic appraisal and disposable chain, not physical hardware admission'
         print(json.dumps(result))
     finally:
         if requester_proc and requester_proc.poll() is None:requester_proc.kill();requester_proc.wait(timeout=5)

@@ -38,13 +38,15 @@ for family,kind in [(socket.AF_INET6,socket.SOCK_STREAM),(socket.AF_INET,socket.
     except PermissionError: pass
     else: raise AssertionError('unapproved socket')
 if rank==0:
+    # Independent ranks do not reach their application listener simultaneously.
+    # Exercise requester retry while this peer has not yet started listening.
+    time.sleep(1)
     server=socket.socket();server.bind((os.environ['MASTER_ADDR'],int(os.environ['MASTER_PORT'])));server.listen(1);server.settimeout(15)
     client,_=server.accept();client.settimeout(15)
     value=int(client.recv(16));answer=value+17;client.sendall(str(answer).encode());client.close();server.close()
 else:
-    client=socket.socket();client.settimeout(1)
     for _ in range(100):
-        try: client.connect((os.environ['MASTER_ADDR'],int(os.environ['MASTER_PORT'])));break
+        try: client=socket.create_connection((os.environ['MASTER_ADDR'],int(os.environ['MASTER_PORT'])),timeout=1);break
         except (ConnectionRefusedError,TimeoutError): time.sleep(0.05)
     else: raise AssertionError('peer absent')
     client.settimeout(15);client.sendall(b'25');answer=int(client.recv(16));client.close()

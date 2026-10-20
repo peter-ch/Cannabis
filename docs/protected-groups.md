@@ -92,6 +92,8 @@ window, reopen workload keys or turn an old receipt into another execution.
 
 Each rank keeps its packet bridge alive until every rank has completed. Only
 after local namespace/pump cleanup does it return its encrypted result receipt.
+Delayed packet callbacks during successful retirement do not invalidate completed
+work; a broken bridge before all ranks finish still aborts the attempt.
 Reconstruction rejects ranks from different approved group starts. Stored output
 does not establish useful work or authorize payment: the requester must still
 verify results and explicitly accept the [payment](compute-payments.md).
