@@ -147,7 +147,10 @@ contract GroupKernelAsset is ERC20 { constructor() ERC20("Isolated group fixture
       const recovered=await inbox.recover(record.approvalDigest,loadResultKey);
       return {approval:record.expectedApproval,receipt:recovered.receipt,file:result.destination,
         selection:{approvalDigest:record.approvalDigest,receiptSHA256:recovered.receiptSHA256}};
-    }catch(error){coordinator.abort();throw error;}
+    }catch(error){
+      process.stderr.write('Owned group rank '+a.rank+' failed at '+(error.transportStage??'session')+': '+error.message+'\n');
+      coordinator.abort();throw error;
+    }
     finally{wire.close();}
   }));
   const assembled=inbox.useCurrent(results.map(r=>r.selection),approvals=>JSON.parse(execFileSync(input.custody.python,

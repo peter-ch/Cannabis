@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import tls from 'node:tls';
+import {PassThrough} from 'node:stream';
+import {setImmediate as nextTurn} from 'node:timers/promises';
 import {groupFixture} from './helpers/group_fixture.mjs';
 import {GuestGroupMesh,RequesterGroupReadiness,validateGroupPacket} from '../compute/group_mesh.mjs';
+import {GroupPacketPipe} from '../compute/group_packet_pipe.mjs';
 import {verifyGroupAdmission,groupDeliveryBinding} from '../compute/group_admission.mjs';
 import {WorkflowStore} from '../requester/workflow-store.mjs';
 import {workflowSigningSchema} from '../requester/workflow-wallet-schema.mjs';
@@ -49,6 +53,52 @@ for(const nodes of [2,4])test(`${nodes} ranks authenticate one roster/start and 
     assert.equal(f.received[rank][0].packet.subarray(28).toString(),'private rank message');
   }
   await Promise.all(f.meshes.map(m=>m.close()));assert.ok(f.meshes.every(m=>m.status.state==='complete'));
+});
+
+test('packet write completion during successful group retirement does not abort the result',async t=>{
+  const f=await prepared(t,2);
+  await Promise.all(f.meshes.map(m=>m.start(f.start)));
+  const input=new PassThrough(),output=new PassThrough(),pipe=new GroupPacketPipe(131072),failures=[];
+  pipe.bind(f.meshes[0]);pipe.attach(input,output,()=>failures.push('aborted'));
+  t.after(()=>pipe.close());
+  const original=tls.TLSSocket.prototype.write;
+  let release,forwarded;
+  const sent=new Promise(resolve=>{forwarded=resolve;});
+  t.mock.method(tls.TLSSocket.prototype,'write',function(bytes,...args){
+    // Forward the actual authenticated packet but hold its local completion.
+    // The all-rank DONE barrier may legitimately finish before this callback.
+    if(Buffer.isBuffer(bytes)&&bytes[0]===4&&bytes.subarray(5).equals(packet(0,1))){
+      const done=args.pop();
+      return original.call(this,bytes,...args,error=>{release=()=>done(error);forwarded();});
+    }
+    return original.call(this,bytes,...args);
+  });
+  const payload=packet(0,1),frame=Buffer.alloc(4+payload.length);
+  frame.writeUInt32BE(payload.length);payload.copy(frame,4);output.write(frame);
+  await sent;
+  await Promise.all([pipe.finish(),f.meshes[1].finish()]);
+  release();await nextTurn();
+  assert.equal(f.received[1].length,1);
+  assert.equal(f.meshes[0].status.state,'complete');
+  assert.deepEqual(failures,[]);
+});
+
+for(const fault of ['input-error','output-error','output-eof'])test(`packet bridge ${fault} before all ranks finish still aborts`,async t=>{
+  const f=await prepared(t,2);
+  await Promise.all(f.meshes.map(m=>m.start(f.start)));
+  const input=new PassThrough(),output=new PassThrough(),pipe=new GroupPacketPipe(131072),failures=[];
+  pipe.bind(f.meshes[0]);pipe.attach(input,output,()=>{
+    failures.push('aborted');f.meshes[0].close(Error('Owned premature bridge failure'));
+  });
+  t.after(()=>pipe.close());
+  const finishing=pipe.finish(),rejected=assert.rejects(finishing,/Protected group/);
+  assert.equal(f.meshes[0].status.state,'finishing');
+  if(fault==='input-error')input.destroy(Error('Owned premature input failure'));
+  else if(fault==='output-error')output.destroy(Error('Owned premature output failure'));
+  else output.end();
+  await rejected;
+  assert.ok(failures.length>0);
+  assert.equal(f.meshes[0].status.state,'failed');
 });
 
 test('changed peers, missing ranks, forged readiness, replayed starts and non-peer packets fail closed',async t=>{

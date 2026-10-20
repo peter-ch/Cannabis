@@ -11,6 +11,10 @@ export class GroupPacketPipe {
     check(Number.isInteger(maxBufferedBytes)&&maxBufferedBytes>=131072&&maxBufferedBytes<=8*1024*1024);
     this.#maximum=maxBufferedBytes;
   }
+  // Kernel TCP teardown can still have packet writes in flight after every
+  // application has completed. Only the authenticated all-rank barrier makes
+  // those late pipe/mesh closures harmless.
+  #fail(){if(!this.#closed&&!this.#retiring)this.#failed?.();}
   bind(mesh){check(!this.#mesh&&mesh instanceof GuestGroupMesh);this.#mesh=mesh;}
   metadata() {
     check(this.#mesh);this.#mesh.assertActive();const s=this.#mesh.status;
@@ -30,13 +34,13 @@ export class GroupPacketPipe {
         let settled=false;const done=error=>{if(settled)return;settled=true;this.#input.off('close',closed);error?reject(failure()):resolve();};
         const closed=()=>done(failure());this.#input.once('close',closed);this.#input.write(frame,done);
       });} finally {frame.fill(0);}
-    }catch(error){this.#failed?.();throw failure();}finally{this.#queued-=packet.length+4;}
+    }catch(error){if(this.#retiring)return;this.#fail();throw failure();}finally{this.#queued-=packet.length+4;}
   }
   attach(input,output,failed) {
     check(!this.#input&&!this.#closed&&this.#mesh&&input?.writable&&output?.readable&&typeof failed==='function');
     this.metadata();this.#input=input;this.#output=output;this.#failed=failed;
-    input.on('error',failed);output.on('error',failed);this.#attached.resolve();
-    this.#reader=this.#read();this.#reader.catch(()=>{if(!this.#closed)failed();});
+    input.on('error',()=>this.#fail());output.on('error',()=>this.#fail());this.#attached.resolve();
+    this.#reader=this.#read();this.#reader.catch(()=>this.#fail());
   }
   async #read() {
     let pending=Buffer.alloc(0);
@@ -58,7 +62,8 @@ export class GroupPacketPipe {
     } finally {pending.fill(0);}
   }
   async finish() {
-    check(!this.#closed&&!this.#retiring);await this.#mesh.finish();this.#retiring=true;await this.#mesh.close();
+    check(!this.#closed&&!this.#retiring);await this.#mesh.finish();
+    this.#mesh.assertActive();this.#retiring=true;await this.#mesh.close();
   }
   async close() {
     if(this.#closed)return;
