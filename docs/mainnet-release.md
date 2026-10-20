@@ -116,3 +116,54 @@ intervening sender transaction or failed creation invalidates the remaining
 predictions; stop and prepare a new reviewed plan. Never alter a nonce in the
 exported data to continue. Publish canonical addresses and live status only after
 the complete release and operating evidence have been verified.
+
+## Verify the deployed network
+
+After all five owner-signed creation transactions are finalized, retain the
+independently reviewed package hash and their hashes in deployment order.
+The read-only `verify:network-release` tool checks the complete release:
+
+~~~json
+{
+  "rpc": "https://YOUR_TRUSTED_ETHEREUM_RPC",
+  "manifestFile": "/absolute/protected/path/network-release.json",
+  "expectedPackageSHA256": "YOUR_SEPARATELY_REVIEWED_64_CHARACTER_SHA256",
+  "transactionHashes": [
+    "0xREGISTRAR_TRANSACTION_HASH",
+    "0xTOKEN_TRANSACTION_HASH",
+    "0xNATIVE_ESCROW_TRANSACTION_HASH",
+    "0xCANNABIS_ESCROW_TRANSACTION_HASH",
+    "0xMARKET_TRANSACTION_HASH"
+  ]
+}
+~~~
+
+~~~sh
+npm run verify:network-release -- --config /protected/deployed-config.json --out /protected/deployed-verification.json
+~~~
+
+The verifier reconstructs the unsigned package, recompiles its complete inline
+source using the exact compiler, and checks every canonical transaction and
+successful receipt. Sender, consecutive nonce, creation data, zero value,
+predicted address, block membership, ordering, type-2 fees and finalized inclusion
+must agree. It verifies the founder mint into the fixed vesting contract.
+
+All seven deployed runtime templates must match outside the compiler's declared
+immutable slots. Repeated immutable values must agree; fixed contract links,
+allocation constants, vesting dates, recipient and fee fields, claim scope and
+Semaphore group control are read from finalized state. These templates follow
+the [Solidity compiler output specification](https://docs.soliditylang.org/en/latest/using-the-compiler.html#output-description).
+The original creation data must also reproduce from the packaged compiler input.
+
+Normal later activity can change balances, enrollment, claim totals and escrow
+liabilities. The verifier checks the origin and fixed contract configuration
+without requiring those mutable values to remain at their initial zeroes.
+Historical package parsing is allowed here; it does not establish that the
+opening notice was published. Preparation and fee quoting retain their current
+seven-day notice requirement.
+
+The output records the selected RPC view and actual deployment network fees.
+It does not independently prove consensus, supply an audit, validate people,
+admit confidential hardware or establish paid service. Successful output retains
+`liveStatusAuthorized: false` and `sent: false`. Complete the separate operational
+and review requirements before publishing a live announcement.

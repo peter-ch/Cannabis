@@ -22,7 +22,7 @@ export function releaseGetters(plan) {
   add('token', 'enrollment() returns (address)', a.enrollment);
   add('token', 'founderVesting() returns (address)', a.founderVesting);
   add('token', 'claimScope() returns (uint256)', BigInt(keccak256(AbiCoder.defaultAbiCoder().encode(
-    ['string', 'uint256', 'address'], ['Cannabis community claim v1', 1, a.token]))));
+    ['string', 'uint256', 'address'], ['Cannabis community claim v1', plan.configuration.chainId, a.token]))));
   for (const role of ['token', 'enrollment']) add(role, 'semaphore() returns (address)', plan.dependencies.semaphore.address);
   for (const role of ['token', 'enrollment']) {
     add(role, 'groupId() returns (uint256)', 0);
