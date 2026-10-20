@@ -1,0 +1,986 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "contract ComputeEscrow",
+        "name": "native_",
+        "type": "address"
+      },
+      {
+        "internalType": "contract ComputeEscrow",
+        "name": "cannabis_",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "AlreadyUsed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "BookingLimit",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "CapacityExceeded",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "Expired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "FundingMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidShortString",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidTerms",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "str",
+        "type": "string"
+      }
+    ],
+    "name": "StringTooLong",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "Unauthorized",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "escrow",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "orderId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "requester",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32[]",
+        "name": "reservationIds",
+        "type": "bytes32[]"
+      }
+    ],
+    "name": "Activated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [],
+    "name": "EIP712DomainChanged",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "offerId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "resource",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "escrow",
+        "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "resource",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "escrow",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "policyHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "manifestHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "start",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "end",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint32",
+            "name": "units",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "grossPerUnitSecond",
+            "type": "uint256"
+          }
+        ],
+        "indexed": false,
+        "internalType": "struct ComputeMarket.Offer",
+        "name": "offer",
+        "type": "tuple"
+      }
+    ],
+    "name": "OfferPublished",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "offerId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "OfferWithdrawn",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "bookingId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "offerId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "requester",
+        "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "reservationId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "offerId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "requester",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "orderId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "termsDigest",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "start",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "end",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint32",
+            "name": "units",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "gross",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "holdUntil",
+            "type": "uint64"
+          }
+        ],
+        "indexed": false,
+        "internalType": "struct ComputeMarket.Booking",
+        "name": "booking",
+        "type": "tuple"
+      }
+    ],
+    "name": "Reserved",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "resource",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "provider",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "serviceHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "units",
+        "type": "uint32"
+      }
+    ],
+    "name": "ResourcePublished",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "BOOKING_TYPEHASH",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_BATCH",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_HOLD_SECONDS",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_HORIZON",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_RESOURCE_BOOKINGS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32[]",
+        "name": "ids",
+        "type": "bytes32[]"
+      }
+    ],
+    "name": "activate",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "activatedOrders",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "reservationId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "offerId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "requester",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "orderId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "termsDigest",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "start",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "end",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint32",
+            "name": "units",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "gross",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "holdUntil",
+            "type": "uint64"
+          }
+        ],
+        "internalType": "struct ComputeMarket.Booking",
+        "name": "booking",
+        "type": "tuple"
+      }
+    ],
+    "name": "bookingDigest",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "bookings",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "reservationId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "offerId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "requester",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "orderId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "termsDigest",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "start",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "end",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint32",
+            "name": "units",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "gross",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "holdUntil",
+            "type": "uint64"
+          }
+        ],
+        "internalType": "struct ComputeMarket.Booking",
+        "name": "booking",
+        "type": "tuple"
+      },
+      {
+        "internalType": "bool",
+        "name": "activated",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "cannabisEscrow",
+    "outputs": [
+      {
+        "internalType": "contract ComputeEscrow",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "eip712Domain",
+    "outputs": [
+      {
+        "internalType": "bytes1",
+        "name": "fields",
+        "type": "bytes1"
+      },
+      {
+        "internalType": "string",
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "version",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "chainId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "verifyingContract",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "salt",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "extensions",
+        "type": "uint256[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "resource",
+        "type": "bytes32"
+      }
+    ],
+    "name": "inventory",
+    "outputs": [
+      {
+        "internalType": "bytes32[]",
+        "name": "",
+        "type": "bytes32[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nativeEscrow",
+    "outputs": [
+      {
+        "internalType": "contract ComputeEscrow",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "offers",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "resource",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "address",
+        "name": "escrow",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "policyHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "manifestHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint64",
+        "name": "start",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint64",
+        "name": "end",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint64",
+        "name": "expiresAt",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint32",
+        "name": "units",
+        "type": "uint32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "grossPerUnitSecond",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "nonce",
+        "type": "bytes32"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "resource",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "escrow",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "policyHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "manifestHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "start",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "end",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "expiresAt",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint32",
+            "name": "units",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "grossPerUnitSecond",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct ComputeMarket.Offer",
+        "name": "offer",
+        "type": "tuple"
+      }
+    ],
+    "name": "publishOffer",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "resourceId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "serviceHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint32",
+        "name": "units",
+        "type": "uint32"
+      }
+    ],
+    "name": "publishResource",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "key",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "reservationId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "offerId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "address",
+            "name": "requester",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "orderId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "termsDigest",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint64",
+            "name": "start",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "end",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint32",
+            "name": "units",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint256",
+            "name": "gross",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint64",
+            "name": "holdUntil",
+            "type": "uint64"
+          }
+        ],
+        "internalType": "struct ComputeMarket.Booking[]",
+        "name": "requests",
+        "type": "tuple[]"
+      },
+      {
+        "internalType": "bytes[]",
+        "name": "signatures",
+        "type": "bytes[]"
+      }
+    ],
+    "name": "reserveBatch",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "provider",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "resourceId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "resourceKey",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "resources",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "provider",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "serviceHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint32",
+        "name": "units",
+        "type": "uint32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "usedReservationIds",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "id",
+        "type": "bytes32"
+      }
+    ],
+    "name": "withdrawOffer",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "withdrawnOffers",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

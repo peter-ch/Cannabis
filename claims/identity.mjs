@@ -110,7 +110,9 @@ export function claimScope(chainId, token) {
   return BigInt(keccak256(AbiCoder.defaultAbiCoder().encode(['string', 'uint256', 'address'], ['Cannabis community claim v1', chainId, address(token)]))).toString();
 }
 export function validateMembershipSnapshot(snapshot, context) {
-  exact(context, ['chainId', 'token', 'root', 'memberCount']);
+  const contextFields = ['chainId', 'token', 'root', 'memberCount'];
+  exact(context, Object.hasOwn(context ?? {}, 'minimumClaimMembers') ? [...contextFields, 'minimumClaimMembers'] : contextFields);
+  if (Object.hasOwn(context, 'minimumClaimMembers') && (!Number.isSafeInteger(context.minimumClaimMembers) || context.minimumClaimMembers < 1 || context.minimumClaimMembers > 990000 || context.memberCount < context.minimumClaimMembers)) throw Error('Membership is below the selected claim minimum');
   exact(snapshot, ['schema', 'chainId', 'token', 'root', 'commitments']);
   claimScope(context.chainId, context.token); decimal(context.root);
   if (snapshot.schema !== 'cannabis.membership-snapshot.v1' || snapshot.chainId !== context.chainId || address(snapshot.token) !== address(context.token) || snapshot.root !== context.root) throw Error('Membership context mismatch');
@@ -128,7 +130,8 @@ function pinnedArtifact(spec, maxBytes) {
   if (data.length !== spec.bytes || sha256(data) !== spec.sha256) throw Error('Proving artifact does not match its pin');
   return data; // Prove from these checked bytes, without reopening an attacker-replaceable path.
 }
-export async function generateClaimProof(options) {
+// Retain checked public inputs before a caller opens its device-held custody.
+export function createClaimProver(options) {
   const { snapshot, context, artifacts } = structuredClone({ snapshot: options.snapshot, context: options.context, artifacts: options.artifacts });
   const recipient = address(options.recipient), group = validateMembershipSnapshot(snapshot, context);
   exact(artifacts, ['depth', 'wasm', 'zkey']);
@@ -138,11 +141,14 @@ export async function generateClaimProof(options) {
   if (artifacts.depth !== proofDepth || artifacts.depth < 1 || artifacts.depth > 20) throw Error('Proving artifacts must match the complete group depth (minimum circuit depth one)');
   const wasm = pinnedArtifact(artifacts.wasm, 32 * 1024 * 1024);
   const zkey = pinnedArtifact(artifacts.zkey, 128 * 1024 * 1024);
-  return withIdentity(options, async identity => {
+  return custody => withIdentity(custody, async identity => {
     if (group.indexOf(identity.commitment) < 0) throw Error('Identity is not in this membership snapshot');
     const proof = await generateProof(identity, group, BigInt(recipient), claimScope(context.chainId, context.token), proofDepth, { wasm, zkey });
     if (!await verifyProof(proof)) throw Error('Generated proof failed verification');
     // No commitment, member index, Merkle path or identity secret in the public output.
     return proof;
   });
+}
+export async function generateClaimProof(options) {
+  return createClaimProver(options)(options);
 }

@@ -18,7 +18,9 @@ export const guideGroups = [
   ['compute', 'Useful computing', 'From a software task to an accepted result.', [
     ['useful-compute', 'Put compute to work', 'Explore the service, compatible hardware and useful workloads.'],
     ['compute-economy', 'The computing economy', 'How payments, service commitments and real delivery connect.'],
+    ['decentralized-compute', 'The decentralized market', 'Independent providers, shared on-chain capacity and direct wallet settlement.'],
     ['universal-compute', 'Package a workload', 'Runtime adapters, task graphs and requester-side result assembly.'],
+    ['requester-workflow', 'Run a booked workflow', 'Your local scheduler, wallet approvals, encrypted dependencies and recovery.'],
     ['compute-payments', 'Job payments', 'Budgets, acceptance, review windows, disputes and refunds.'],
     ['website-orders', 'Website orders', 'Guest recovery, optional accounts, payment readiness and local result decryption.'],
     ['microjobs', 'Small jobs', 'Exact fees and ways to reduce transaction overhead for small payments.'],
@@ -41,6 +43,7 @@ export const guideGroups = [
     ['guest-attestation', 'Guest evidence', 'Connect guest-held channels with hardware evidence.'],
     ['guest-initialization', 'Bind the guest assignment', 'Check the approved job before opening its evidence channel.'],
     ['guest-workload', 'The approved workload', 'Move from an attested session to the protected workload.'],
+    ['protected-groups', 'Protected worker groups', 'Approve complete peer groups, coordinate execution and recover each rank’s encrypted output.'],
     ['guest-service-build', 'Build guest services', 'Reproduce the pinned evidence-service binaries.'],
     ['guest-image-build', 'Build a guest image', 'Assemble and check the kernel and boot filesystem.'],
     ['guest-firmware', 'Build guest firmware', 'Pinned firmware builds and SNP reference measurements.']

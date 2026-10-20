@@ -14,12 +14,14 @@ function canonical(value) {
 export function guestInitialization(initialization) {
   const value = structuredClone(initialization);
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== fields.length || fields.some(k => !Object.hasOwn(value, k)) ||
-      value.schema !== 'cannabis.guest-initialization.v1' || !['snp', 'tdx'].includes(value.tee) ||
+      !['cannabis.guest-initialization.v1','cannabis.guest-initialization.v2'].includes(value.schema) || !['snp', 'tdx'].includes(value.tee) ||
       typeof value.jobId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value.jobId)) throw Error('Invalid guest initialization assignment');
   if (typeof value.requester !== 'string' || getAddress(value.requester) === ZeroAddress) throw Error('Invalid initialization requester');
   // Canonical addresses make equivalent input encodings produce one commitment.
   value.requester = getAddress(value.requester);
   validateAttestationBinding(value.binding);
+  if((value.schema==='cannabis.guest-initialization.v2')!==Object.hasOwn(value.binding,'configurationSHA256'))
+    throw Error('Initialization version differs from its configuration commitment');
   value.binding.escrow = getAddress(value.binding.escrow);
   const bytes = Buffer.from(canonical(value));
   const digest = createHash(value.tee === 'snp' ? 'sha256' : 'sha384').update(bytes).digest();

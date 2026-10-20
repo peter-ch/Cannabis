@@ -1,4 +1,5 @@
-// Preview exactly the public release website. No wallet, RPC or claim API.
+// Static website preview. Browser RPC is explicitly selected by its user; this
+// server exposes no wallet, RPC forwarding or claim API.
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
@@ -10,7 +11,7 @@ const mime = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': '
 const server = http.createServer((req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self'; media-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self'; media-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self' https: http://127.0.0.1:*; object-src 'none'; frame-ancestors 'none'; base-uri 'none'");
   if (req.headers.host !== '127.0.0.1:' + port) { res.writeHead(403).end(); return; }
   if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405).end(); return; }
   let file;

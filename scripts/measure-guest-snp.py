@@ -96,6 +96,13 @@ def main():
         raise ValueError('Firmware build does not match the pinned profile')
     if guest['schema'] != 'cannabis.guest-image-build.v1' or guest['executionAuthorized'] is not False:
         raise ValueError('Require the recorded guest component build')
+    sys.path.insert(0,str(ROOT))
+    from compute.guest_vm import VmBudget
+    budget=VmBudget(guest['vmBudget']['profile'])
+    if (guest['vmBudget']['minimumCPUs']!=budget.minimum_cpus
+            or guest['vmBudget']['minimumMemoryBytes']!=budget.minimum_memory
+            or args.vcpus<budget.minimum_cpus):
+        raise ValueError('SNP vCPUs cannot cover the measured guest budget')
     checked(firmware/'OVMF.fd',fw['output'])
     for name in ['vmlinuz','initramfs.cpio.gz','cmdline']:
         checked(image/name,guest['outputs'][name])

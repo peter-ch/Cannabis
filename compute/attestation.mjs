@@ -1,9 +1,10 @@
 // Requester-side appraisal of Trustee v0.22.0 EAR results. No secrets or key release.
 import { createHash, randomBytes } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
+import { openDurableDatabase } from './sqlite_runtime.mjs';
 import { importJWK, jwtVerify } from 'jose';
 import { getAddress } from 'ethers';
 import { inspectLease } from './leases.mjs';
+import { verifyMarketLeaseProof } from './market_lease.mjs';
 
 export const TRUSTEE_REVISION = '512fed65642015b849f38fb13bfdec7806639987';
 const PROFILE = 'tag:github.com,2024:confidential-containers/Trustee';
@@ -63,7 +64,9 @@ export function validateAttestationPolicy(policy) {
 }
 
 export function validateAttestationBinding(b) {
-  exact(b, ['chainId', 'escrow', 'orderId', 'leaseDigest', 'reservationId', 'packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass']);
+  const configured=Object.hasOwn(b??{},'configurationSHA256');
+  exact(b, ['chainId', 'escrow', 'orderId', 'leaseDigest', 'reservationId', 'packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass',...(configured?['configurationSHA256']:[])]);
+  if(configured)bytes32(b.configurationSHA256);
   integer(b.chainId, 1, Number.MAX_SAFE_INTEGER); address(b.escrow);
   for (const k of ['orderId', 'leaseDigest', 'reservationId']) bytes32(b[k]);
   for (const k of ['packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256']) hex(b[k], 32);
@@ -82,6 +85,30 @@ export function leaseAttestationBinding(ledger, leaseId, reservationId, run, now
   const binding = { chainId: ledger.context.chainId, escrow: record.escrow, orderId: record.orderId,
     leaseDigest: record.digest, reservationId, packageSHA256: job.packageSHA256, policySHA256: job.policySHA256, ...run };
   validateAttestationBinding(binding); return binding;
+}
+
+// The complete group digest commits the market and booking digests; each booking
+// commits its immutable offer/resource, requester, price and settlement terms.
+// No saved observation is a fresh chain check or permission to release keys.
+export function marketAttestationBinding(proof, context, bookingId, run, now = seconds()) {
+  exact(run, ['runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass']);
+  const lease = verifyMarketLeaseProof(proof, context), reservation = lease.reservations.find(r => r.reservationId === bookingId);
+  if (!reservation || !Number.isSafeInteger(now) || reservation.end <= now) throw Error('Unknown or elapsed market booking');
+  if(lease.executionPlan) {
+    const planned=lease.assignments.find(a=>a.reservationId===bookingId);
+    if(!planned||canonical(planned.run)!==canonical(run))throw Error('Run differs from the complete booked execution plan');
+  } else if(run.worldSize!==1||run.rank!==0)throw Error('A coordinated group requires a complete committed execution plan');
+  const binding = { chainId: context.chainId, escrow: lease.escrow, orderId: lease.orderId,
+    leaseDigest: lease.digest, reservationId: bookingId, packageSHA256: lease.job.packageSHA256, policySHA256: lease.job.policySHA256, ...run };
+  validateAttestationBinding(binding); return binding;
+}
+
+// The caller supplies the hash of its independently reviewed configuration.
+// Requester key approval later recomputes it from that full local configuration.
+export function configuredMarketAttestationBinding(proof,context,bookingId,run,configurationSHA256,now=seconds()) {
+  bytes32(configurationSHA256);
+  const binding={...marketAttestationBinding(proof,context,bookingId,run,now),configurationSHA256};
+  validateAttestationBinding(binding);return binding;
 }
 
 function validateChallenge(c, policyDigest, policy, now) {
@@ -213,7 +240,7 @@ export async function verifyTrusteeResult(token, policy, challenge, channelJwk, 
 export class AttestationLedger {
   constructor(file, policy, clock = seconds) {
     this.policy = structuredClone(policy); this.policyDigest = validateAttestationPolicy(this.policy); this.clock = clock;
-    this.db = new DatabaseSync(file, { timeout: 5000 });
+    this.db = openDurableDatabase(file, { timeout: 5000 });
     this.db.exec(`PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS attestation_settings (id INTEGER PRIMARY KEY CHECK(id=1), policyDigest TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS attestation_challenges (nonce TEXT PRIMARY KEY, body TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0, tokenSHA256 TEXT) STRICT;`);

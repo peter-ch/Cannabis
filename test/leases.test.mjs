@@ -7,7 +7,7 @@ import net from 'node:net';
 import http from 'node:http';
 import { createHash, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { ContractFactory, formatUnits, keccak256 } from 'ethers';
+import { ContractFactory, formatUnits, keccak256, ZeroAddress } from 'ethers';
 import { compile } from '../scripts/compile.mjs';
 import { startNode } from '../scripts/lib.mjs';
 import { CapacityLedger, offerPayload, reservationPayload } from '../compute/capacity.mjs';
@@ -21,10 +21,13 @@ import { policy } from '../scripts/compute-plan.mjs';
 import { guestInitialization } from '../compute/guest_initialization.mjs';
 import { exportLeaseProof, verifyLeaseProof } from '../compute/lease_proof.mjs';
 import { GuestFunding } from '../compute/guest_funding.mjs';
+import { nativeServiceCommitment } from '../compute/guest_execution.mjs';
+import { createResultKeyCustody, recoverRequesterResultKey } from '../compute/result_keys.mjs';
+import { openResultDelivery, sealResultDelivery } from '../compute/result_delivery.mjs';
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
 const utc=t=>new Date(t*1000).toISOString().replace('.000Z','Z');
-let node,provider,owner,first,second,resolver,asset,escrow,network,snapshot;
+let node,provider,owner,first,second,resolver,asset,escrow,network,nativeEscrow,nativeNetwork,snapshot;
 async function port(){return new Promise(resolve=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p));});});}
 function cleanTemp(dir){for(const name of fs.readdirSync(dir))fs.unlinkSync(path.join(dir,name));fs.rmdirSync(dir);}
 before(async()=>{
@@ -40,19 +43,29 @@ contract LeaseAsset is ERC20 { constructor() ERC20("Isolated lease verification"
   network={rpc:node.rpc,chainId:31337,token:await asset.getAddress(),escrow:await escrow.getAddress(),
     genesisHash:(await provider.getBlock(0)).hash,escrowCodeHash:keccak256(await provider.getCode(await escrow.getAddress())),
     tokenCodeHash:keccak256(await provider.getCode(await asset.getAddress())),finality:'rpc-finalized',maxFinalizedAgeSeconds:1800};
+  nativeEscrow=await new ContractFactory(artifacts.ComputeEscrow.abi,artifacts.ComputeEscrow.bytecode,owner).deploy(ZeroAddress,policy.founderRecipient);await nativeEscrow.waitForDeployment();
+  nativeNetwork={...network,token:ZeroAddress,escrow:await nativeEscrow.getAddress(),tokenCodeHash:null,
+    escrowCodeHash:keccak256(await provider.getCode(await nativeEscrow.getAddress()))};
   snapshot=await provider.send('evm_snapshot',[]);
 });
 after(()=>{provider?.destroy();node?.child.kill();});
 
-async function setup({file=':memory:',gross=[3000n,2000n],packageSHA256=h(80).slice(2)}={}) {
+async function setup({file=':memory:',gross=[3000n,2000n],packageSHA256=h(80).slice(2),serviceSHA256=h(20),native=false}={}) {
   await provider.send('evm_revert',[snapshot]);snapshot=await provider.send('evm_snapshot',[]);
+  // Restoring an old snapshot restores its block timestamp, while later mining
+  // may follow the advancing host clock. Start each owned fixture at an explicit
+  // chain time; otherwise slow suites can manufacture a future-block refusal.
+  const restored=(await provider.getBlock('latest')).timestamp;
+  await provider.send('evm_setNextBlockTimestamp',[restored+1]);await provider.send('evm_mine',[]);
   const now=(await provider.getBlock('latest')).timestamp;
-  const context={chainId:31337,registryId:h(1),token:network.token},ledger=new CapacityLedger(file,context);
+  assert.equal(now,restored+1);
+  const selectedNetwork=native?nativeNetwork:network;
+  const context={chainId:31337,registryId:h(1),token:selectedNetwork.token},ledger=new CapacityLedger(file,context);
   const signers=[first,second],requester=await owner.getAddress(),reservations=[];
   for(let i=0;i<2;i++) {
     const address=await signers[i].getAddress();
-    ledger.admitResource({provider:address,resourceId:h(10+i),serviceSHA256:h(20+i),units:1});
-    const offer={offerId:h(30+i),provider:address,resourceId:h(10+i),serviceSHA256:h(20+i),policySHA256:h(90),token:context.token,
+    ledger.admitResource({provider:address,resourceId:h(10+i),serviceSHA256:i===0?serviceSHA256:h(20+i),units:1});
+    const offer={offerId:h(30+i),provider:address,resourceId:h(10+i),serviceSHA256:i===0?serviceSHA256:h(20+i),policySHA256:h(90),token:context.token,
       windowStart:now+100,windowEnd:now+10000,expiresAt:now+1800,units:1,grossPerUnitSecond:(gross[i]/100n).toString(),feeBps:100,termsSHA256:h(40+i)};
     const op=offerPayload(context,offer),signed={offer,signature:await signers[i].signTypedData(op.domain,op.types,op.value)};
     const digest=ledger.addOffer(signed,now).offerDigest;
@@ -63,9 +76,9 @@ async function setup({file=':memory:',gross=[3000n,2000n],packageSHA256=h(80).sl
   const total=gross.reduce((a,b)=>a+b,0n);
   const job={schema:'cannabis.compute.order.v2',id:'private-workload',requester,packageSHA256,policySHA256:h(90).slice(2),acceptanceSHA256:h(91).slice(2),payment:{totalBudget:formatUnits(total,18),feeBasisPoints:100,founderRecipient:policy.founderRecipient}};
   const settlement={workers:[{account:await first.getAddress(),shareBps:6000},{account:await second.getAddress(),shareBps:4000}],deliveryManager:await first.getAddress(),adjudicator:await resolver.getAddress(),acceptBy:utc(now+700),deliverBy:utc(now+1200),reviewSeconds:86400,disputeSeconds:86400};
-  const request={leaseId:h(60),reservationIds:reservations.map(x=>x.reservation.reservationId),job,settlement,escrow:network.escrow,expiresAt:now+500};
+  const request={leaseId:h(60),reservationIds:reservations.map(x=>x.reservation.reservationId),job,settlement,escrow:selectedNetwork.escrow,expiresAt:now+500};
   const clock=()=>now+30;
-  return {ledger,context,now,clock,request,reservations};
+  return {ledger,context,now,clock,request,reservations,network:selectedNetwork};
 }
 async function sign(ledger,request,now) {
   const p=leasePayload(ledger,request,now);
@@ -73,9 +86,10 @@ async function sign(ledger,request,now) {
 }
 async function fund(request,{activate=true}={}) {
   const t=settlementTerms(request.job,request.settlement);
-  await (await escrow.fund(t.terms,t.accounts,t.shares)).wait();
-  const id=await escrow.orderId(t.requester,t.terms.jobHash);
-  if(activate){await (await escrow.connect(first).accept(id)).wait();await (await escrow.connect(second).accept(id)).wait();}
+  const native=request.escrow===nativeNetwork.escrow,selected=native?nativeEscrow:escrow;
+  await (await selected.fund(t.terms,t.accounts,t.shares,native?{value:t.terms.budget}:{})).wait();
+  const id=await selected.orderId(t.requester,t.terms.jobHash);
+  if(activate){await (await selected.connect(first).accept(id)).wait();await (await selected.connect(second).accept(id)).wait();}
   return id;
 }
 async function competing(setup,id,changes={},at=setup.now+601) {
@@ -265,14 +279,14 @@ function removeDeliveryFixture(directory) {
   assert.equal(path.dirname(resolved),fs.realpathSync(os.tmpdir()));assert.ok(path.basename(resolved).startsWith('cannabis-key-delivery-'));
   fs.rmSync(resolved,{recursive:true});
 }
-async function deliverySetup({maxTokenAgeSeconds=90}={}) {
+async function deliverySetup({maxTokenAgeSeconds=90,serviceSHA256,native=false}={}) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cannabis-key-delivery-'));
   let s,attestations;
   try {
     const info=JSON.parse(execFileSync(process.env.CANNABIS_PYTHON || 'python',['test/helpers/job_key_fixture.py',dir,h(90).slice(2)],{encoding:'utf8',windowsHide:true,timeout:30000}));
-    s=await setup({packageSHA256:info.descriptor.ciphertextSHA256});
+    s=await setup({packageSHA256:info.descriptor.ciphertextSHA256,serviceSHA256,native});
     const signed=await sign(s.ledger,s.request,s.now);await fund(s.request);
-    const lease=await promoteLease(s.ledger,signed,network,s.clock);
+    const lease=await promoteLease(s.ledger,signed,s.network,s.clock);
     let time=s.now+905;const clock=()=>time;
     await provider.send('evm_setNextBlockTimestamp',[time]);await provider.send('evm_mine',[]);
     const attestationPolicy={schema:'cannabis.attestation.trustee-policy.v1',issuer:'FixtureAS',signingJwk:verifierKey.publicKey.export({format:'jwk'}),
@@ -291,16 +305,92 @@ async function deliverySetup({maxTokenAgeSeconds=90}={}) {
     const approval={request,requesterSignature:await owner.signTypedData(payload.domain,payload.types,payload.value)};
     const d={...s,dir,info,lease,clock,time,challenge,guest,channel,request,payload,approval,attestations,attestationPolicy,initialization,
       setTime:t=>{time=t;},cleanup:()=>{attestations.close();s.ledger.close();removeDeliveryFixture(dir);}};
-    d.token=earFixture(d);d.network={...network,maxHeadAgeSeconds:120};
+    d.token=earFixture(d);d.network={...s.network,maxHeadAgeSeconds:120};
     d.load=expected=>recoverRequesterJobKey(info.source,expected);
     return d;
   } catch(error) {attestations?.close();s?.ledger.close();removeDeliveryFixture(dir);throw error;}
 }
 
 function guestFundingConfiguration(d) {
-  return { proof: exportLeaseProof(d.ledger, d.lease.leaseId), context: d.context, network: d.network,
-    provider: d.lease.reservations[0].provider, resourceId: h(10), serviceSHA256: h(20) };
+  const proof = exportLeaseProof(d.ledger, d.lease.leaseId);
+  return { proof, context: d.context, network: d.network,
+    provider: d.lease.reservations[0].provider, resourceId: h(10), serviceSHA256: proof.offers.find(p => p.offer.resourceId === h(10)).offer.serviceSHA256 };
 }
+
+test('native ETH funding retains signed asset and runtime pins through fresh guest key release',async()=>{
+  const d=await deliverySetup({native:true}),agent=await guestAgentFixture();let guest,p;
+  try {
+    assert.equal(d.context.token,ZeroAddress);
+    assert.equal(d.lease.finalityEvidence.runtimeCodeHashes.token,null);
+    const proof=exportLeaseProof(d.ledger,d.lease.leaseId);
+    assert.equal(verifyLeaseProof(proof,d.context).digest,d.lease.digest);
+    assert.throws(()=>verifyLeaseProof(proof,{...d.context,token:network.token}),/mismatch|domain|Token/);
+    for(const field of ['provider','token']) {
+      const altered={...proof.offers[0].offer,[field]:field==='provider'?ZeroAddress:network.token};
+      assert.throws(()=>offerPayload(d.context,altered),/Zero address|Token mismatch/);
+    }
+    assert.throws(()=>reservationPayload(d.context,{...proof.reservations[0].reservation,requester:ZeroAddress}),/Zero address/);
+    for(const change of [{tokenCodeHash:undefined},{tokenCodeHash:network.tokenCodeHash},{escrow:ZeroAddress},
+      {token:network.token,tokenCodeHash:null},{escrow:network.escrow,escrowCodeHash:network.escrowCodeHash}])
+      await assert.rejects(readFinalizedEscrow({...d.network,orderId:d.lease.orderId,...change},d.clock));
+    // Native reads still pin the escrow at canonical block hashes. They never
+    // pretend that the zero asset address contains an ERC-20 implementation.
+    const codeReads=[];
+    p=await proxy((request,response)=>{if(request.method==='eth_getCode')codeReads.push(request.params);return response;});
+    const options=guestFundingConfiguration(d);options.network.rpc=p.url;
+    guest=await GuestEvidenceSession.create({initialization:d.initialization,policy:d.attestationPolicy,challenge:d.challenge,
+      expectedBinding:d.challenge.binding,requester:d.payload.requester,jobId:d.payload.jobId,funding:options,agentUrl:agent.url},{clock:d.clock});
+    const evidence=await guest.evidence(),request={...d.request,channelJwk:evidence.channelJwk};
+    const payload=keyDeliveryPayload(d.ledger,d.attestations,request,d.clock());
+    const approval={request,requesterSignature:await owner.signTypedData(payload.domain,payload.types,payload.value)};
+    const record=await sealJobKeyDelivery(d.ledger,d.attestations,approval,earFixture({...d,channel:evidence.channelJwk}),
+      {...d.network,rpc:p.url},d.load,{clock:d.clock});
+    const prepared=await guest.prepare(record.envelope,payload,{python:d.info.source.python,age:d.info.source.age,
+      ciphertext:path.join(d.dir,'job/workload.age'),destination:path.join(d.dir,'native-prepared')},{maxBytes:1024*1024});
+    assert.equal(prepared.packageVerified,true);assert.equal(prepared.assignmentVerified,true);
+    assert.equal(prepared.executionAuthorized,false);
+    assert.ok(codeReads.length>=8);
+    for(const [account,tag] of codeReads){assert.equal(account.toLowerCase(),d.network.escrow.toLowerCase());assert.equal(tag.requireCanonical,true);}
+    assert.equal(guest.status.state,'consumed');
+    await assert.rejects(guest.open(record.envelope,payload),/closed|expired/);
+  }finally{guest?.close();await p?.close();await agent.close();d.cleanup();}
+});
+
+test('a funded native session retains its service commitment and cannot bypass readiness with open or prepare', async () => {
+  const limits = (cpu, memory, pids, wall) => ({cpu_millis:cpu,memory_bytes:memory*1024**2,processes:pids,wall_seconds:wall});
+  const execution = { profile:{schema:'cannabis.guest-native-service.v2',units:1,
+    runtime:{adapter:'native-linux-x86_64-v1',architecture:'x86_64',os:'linux',digestSHA256:'b'.repeat(64)},
+    resources:{cpus:1,memoryMiB:128,scratchMiB:8,wallSeconds:60,nodes:1},
+    total:{...limits(3000,1024,192,120),children:3},control:limits(1000,512,64,120),helper:limits(1000,256,64,60),
+    processLimit:32,scratchInodes:512,staging:{bytes:16*1024**2,inodes:1024},ciphertext:{bytes:8*1024**2,inodes:64,inputBytes:4*1024**2,outputBytes:4*1024**2},maxInputBytes:1024**2,
+    tools:{pythonSHA256:'22'.repeat(32),ageSHA256:'22'.repeat(32),ageKeygenSHA256:'22'.repeat(32)}},
+    source:Object.fromEntries(['python','rootfs','age','ciphertext','destination'].map(k=>[k,path.join(os.tmpdir(),'owned-unavailable-'+k)])) };
+  const d=await deliverySetup(nativeServiceCommitment(execution)),agent=await guestAgentFixture();let guest,legacy;
+  try {
+    const args={initialization:d.initialization,policy:d.attestationPolicy,challenge:d.challenge,expectedBinding:d.challenge.binding,
+      requester:d.payload.requester,jobId:d.payload.jobId,funding:guestFundingConfiguration(d),execution,agentUrl:agent.url};
+    const changed=structuredClone(execution);changed.profile.control.memory_bytes+=4096;
+    await assert.rejects(GuestEvidenceSession.create({...args,execution:changed},{clock:d.clock}),/signed service/);
+    await assert.rejects(GuestEvidenceSession.create({...args,funding:undefined},{clock:d.clock}),/signed funding/);
+    guest=await GuestEvidenceSession.create(args,{clock:d.clock});
+    legacy=await GuestEvidenceSession.create(args,{clock:d.clock});
+    const legacyEvidence=await legacy.evidence();
+    const legacyPayload=keyDeliveryPayload(d.ledger,d.attestations,{...d.request,channelJwk:legacyEvidence.channelJwk},d.clock());
+    await assert.rejects(legacy.executeNative('unopened',legacyPayload),/result channel/);
+    assert.equal(legacy.status.state,'closed');
+    execution.profile.control.memory_bytes+=4096;
+    const evidence=await guest.evidence();
+    await assert.rejects(guest.open('unopened',d.payload),/only through execution readiness/);
+    await assert.rejects(guest.prepare('unopened',d.payload,{}),/only through execution readiness/);
+    assert.equal(guest.status.state,'quoted');
+    const payload=keyDeliveryPayload(d.ledger,d.attestations,{...d.request,channelJwk:evidence.channelJwk,resultKeySHA256:h(777)},d.clock());
+    // Unavailable interpreter fails before key opening; external mutation did
+    // not change the signed service retained by the session.
+    await assert.rejects(guest.executeNative('unopened',payload),error=>!error.message.includes('signed service'));
+    assert.equal(guest.status.state,'closed');
+    assert.equal(d.attestations.db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name='key_deliveries'").get().n,0);
+  } finally {guest?.close();legacy?.close();await agent.close();d.cleanup();}
+});
 
 test('portable lease proofs independently verify all signatures, quotes and the complete provider bundle', async () => {
   const s = await setup();
@@ -341,6 +431,21 @@ test('guest funding rereads the original finalized anchor and fresh active escro
     assert.equal(checked.hardwareVerified, false); assert.equal(JSON.stringify(funding), '{}');
     d.setTime(d.now + 1000); assert.throws(() => funding.assertWindow(), /expired/);
     d.setTime(d.time); await assert.rejects(funding.refresh(), /closed/);
+  } finally { d.cleanup(); }
+});
+
+test('guest funding binds execution to the signed service definition and exact unit count', async () => {
+  const d = await deliverySetup();
+  try {
+    const options = guestFundingConfiguration(d), units = options.proof.reservations[0].reservation.units;
+    const good = new GuestFunding(options, d.initialization, { clock: d.clock });
+    good.assertService({ serviceSHA256: options.serviceSHA256, units });
+    for (const changed of [{ serviceSHA256: h(999), units }, { serviceSHA256: options.serviceSHA256, units: units + 1 },
+      { serviceSHA256: options.serviceSHA256, units: String(units) }]) {
+      const funding = new GuestFunding(options, d.initialization, { clock: d.clock });
+      assert.throws(() => funding.assertService(changed), /signed service or unit count/);
+      assert.throws(() => funding.assertWindow(), /closed/);
+    }
   } finally { d.cleanup(); }
 });
 
@@ -476,6 +581,39 @@ test('signed funded key delivery recovers a real capsule, wraps to the attested 
     d.setTime(record.expiresAt);assert.ok(d.clock()<d.request.expiresAt);
     await assert.rejects(openJobKeyDelivery(record.envelope,d.guest.privateKey,d.payload,{clock:d.clock}));
   }finally{d.cleanup();}
+});
+
+test('signed result custody crosses only the admitted key envelope and requires requester recovery',async()=>{
+  const d=await deliverySetup({native:true});let opened,key;
+  try {
+    const custody=await createResultKeyCustody({releaseId:d.request.releaseId,recipient:d.info.ownerRecipient});
+    const saved=path.join(d.dir,'result-key-custody.json');fs.writeFileSync(saved,JSON.stringify(custody),{flag:'wx',mode:0o600});
+    const source={python:d.info.source.python,age:d.info.source.age,identity:d.info.source.identity,custody:saved};
+    const request={...d.request,resultKeySHA256:custody.resultKeySHA256};
+    const payload=keyDeliveryPayload(d.ledger,d.attestations,request,d.clock());
+    const approval={request,requesterSignature:await owner.signTypedData(payload.domain,payload.types,payload.value)};
+    const options={clock:d.clock,loadResultKey:expected=>recoverRequesterResultKey(source,expected)};
+    await assert.rejects(sealJobKeyDelivery(d.ledger,d.attestations,{...approval,request:{...request,resultKeySHA256:h(888)}},
+      d.token,d.network,d.load,options),/signature mismatch/);
+    await assert.rejects(sealJobKeyDelivery(d.ledger,d.attestations,approval,d.token,d.network,d.load,
+      {...options,loadResultKey:async()=>Buffer.alloc(32,1)}),/Result key differs/);
+    assert.equal(d.attestations.pending(d.challenge.nonce).nonce,d.challenge.nonce);
+    const record=await sealJobKeyDelivery(d.ledger,d.attestations,approval,d.token,d.network,d.load,options);
+    const restored=inspectKeyDelivery(d.attestations,request.releaseId);
+    assert.equal(restored.schema,'cannabis.key-delivery.record.v2');
+    assert.deepEqual(restored.expectedApproval,{...payload,requesterSignature:approval.requesterSignature});
+    opened=await openJobKeyDelivery(record.envelope,d.guest.privateKey,payload,{clock:d.clock});
+    assert.ok(opened.resultKey instanceof Uint8Array);assert.equal(Object.keys(opened).includes('resultKey'),false);
+    const binding={releaseId:request.releaseId,recipient:d.info.ownerRecipient,resultKeySHA256:request.resultKeySHA256};
+    key=await recoverRequesterResultKey(source,binding);assert.deepEqual(opened.resultKey,key);
+    const receipt={schema:'cannabis.result.v1',jobId:payload.jobId,taskId:'owned-private-task',packageSHA256:payload.value.packageSHA256.slice(2),
+      attempt:1,rank:0,worldSize:1,recipient:d.info.ownerRecipient,ciphertextSHA256:'ac'.repeat(32),ciphertextBytes:100};
+    const envelope=await sealResultDelivery(receipt,opened.resultKey,payload);
+    const authenticated=await openResultDelivery(envelope,key,restored.expectedApproval);
+    assert.equal(authenticated.receipt.taskId,receipt.taskId);assert.equal(authenticated.paymentAuthorized,false);
+    assert.equal(JSON.stringify(opened).includes(key.toString('base64url')),false);
+    await assert.rejects(recoverRequesterResultKey(source,{...binding,releaseId:h(999)}));
+  }finally{opened?.resultKey?.fill(0);key?.fill(0);d.cleanup();}
 });
 
 test('invalid requester approval and mismatched attestation never reach key recovery',async()=>{

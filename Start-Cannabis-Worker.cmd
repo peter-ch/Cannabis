@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 where node.exe >nul 2>nul
 if errorlevel 1 (
-  echo Node.js 22.22 or later is required. See the Cannabis worker console guide.
+  echo Use the pinned Node.js 24.22.0 or 22.23.3 tools. See the Cannabis worker console guide.
   echo https://cannabis-coin.online/docs/worker-console.html
   pause
   exit /b 1

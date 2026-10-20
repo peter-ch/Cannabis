@@ -1,5 +1,7 @@
 # Signed capacity offers and reservations
 
+The current architecture requires [shared on-chain reservations](decentralized-compute.md) and direct participation by independent providers. This page documents the older local ledger for historical component checks. It is not the authority for the decentralized market. The requester and guest now have a direct on-chain booking proof path; the retained operating launcher requires its version-3 configuration and has no local-ledger fallback. The guest and requester check bilateral launch consent against canonical funded state. Updated images, hardware admission and paid acceptance remain unfinished.
+
 The capacity module gives the compute economy a concrete offer format, a local reservation ledger and a bridge from temporary holds to funded service leases. Providers sign service terms; requesters and providers both sign reservations and the subsequent lease bundle. The ledger rejects overlapping commitments that exceed either an offer's limit or its admitted resource capacity, including when separate offers refer to the same resource.
 
 This is a component of the [compute-backed service design](compute-economy.md). It does not claim physical capacity exists, create token redemption rights by itself, authorize work, or move funds.
@@ -16,7 +18,7 @@ A reservation binds the offer digest, requester, encrypted package SHA-256, inte
 
 The local operator admits an immutable resource identity, service definition and capacity limit. Multiple offers from the same provider/resource consume the same pool. A SQLite immediate transaction checks all intersecting reservations and inserts the new hold atomically. Touching intervals do not overlap. Used reservation IDs cannot be replayed. Separate local connections share the same reservation state.
 
-Admission is trusted and needs real hardware inventory, attestation and reconciliation before operation. A provider could otherwise register one machine under multiple identities or commit it elsewhere. The local ledger does not prevent that, does not synchronize independent registries and is not decentralized consensus. Never copy a writable database between machines as a coordination mechanism. Run one authoritative ledger for a resource, with a reviewed replication/recovery design before production.
+Admission is trusted and needs real hardware inventory, attestation and reconciliation before operation. A provider could otherwise register one machine under multiple identities or commit it elsewhere. The local ledger does not prevent that, does not synchronize independent registries and is not decentralized consensus. Never copy a writable database between machines as a coordination mechanism. This implementation can coordinate one local test installation, but production shared reservations must use the reviewed market contract; any local database is only a cache or operator implementation detail.
 
 ## From a hold to a funded lease
 
@@ -44,7 +46,7 @@ The current escrow supports up to 128 payment recipients per order. The generic 
 
 ## Tools
 
-Requires Node.js 22.22.0 or later in the supported 22.x environment; Node's built-in SQLite API is still marked as in active development. No additional database package is installed.
+The guest and CI pin Node.js 22.23.3; the Windows setup pins Node.js 24.22.0. A database runtime check refuses the documented [SQLite WAL-reset bug](https://sqlite.org/wal.html#the_wal_reset_bug) before opening persistent data. SQLite 3.51.3 or later, or the documented 3.50.7/3.44.6 backport lines, is required. An engine-version warning alone is not this protection. No additional database package is installed.
 
 ```sh
 node scripts/compute-capacity.mjs offer-payload context.json offer.json
@@ -69,4 +71,4 @@ Promotion input has two objects:
 
 Inspection input is `{leaseId}`. It returns the persisted agreement, booking intervals, code/genesis pins and observed finalized block. This is historical evidence, not fresh launch authorization. Store any RPC credentials privately; the persisted record excludes the RPC URL.
 
-The implementation uses [ethers typed-data verification](https://docs.ethers.org/v6/api/hashing/#verifyTypedData), [Node's SQLite interface](https://nodejs.org/download/release/v22.22.0/docs/api/sqlite.html) and Ethereum's [JSON-RPC finality tags](https://ethereum.org/developers/docs/apis/json-rpc/). Automated checks exercise real contract deployments on an isolated verification chain, plus controlled RPC failure/reorganization cases, altered signatures and terms, concurrent promotion, expiry races, offer/resource overbooking, exact prices and persistence. Independent review and real provider integration remain required.
+The implementation uses [ethers typed-data verification](https://docs.ethers.org/v6/api/hashing/#verifyTypedData), [Node's SQLite interface](https://nodejs.org/docs/v22.23.3/api/sqlite.html) and Ethereum's [JSON-RPC finality tags](https://ethereum.org/developers/docs/apis/json-rpc/). Automated checks exercise real contract deployments on an isolated verification chain, plus controlled RPC failure/reorganization cases, altered signatures and terms, concurrent promotion, expiry races, offer/resource overbooking, exact prices and persistence. Independent review and real provider integration remain required.

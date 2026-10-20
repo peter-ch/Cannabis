@@ -144,7 +144,8 @@ def actor(parent, base, mode):
         result = plan.run(parent, own / 'input.age', key, binding, destination, age=age,
             helper_limits=ResourceLimits(1000, 256*1024**2, 64, wall),
             staging_limits=ScratchLimits((1 if mode in ['decode-quota', 'encode-quota'] else 16)*1024**2, 1024),
-            max_input_bytes=1024**2, cancelled=Cancellation() if mode in ['helper-cancel', 'native-shared-deadline'] else None)
+            max_input_bytes=1024**2, max_output_ciphertext_bytes=1 if mode=='output-limit' else 4*1024**2,
+            cancelled=Cancellation() if mode in ['helper-cancel', 'native-shared-deadline'] else None)
         assert mode == 'success', 'Expected refusal: ' + mode
         assert not result.report['paymentAccepted'] and not result.report['hardwareAdmissionEstablished']
         assert job_secret.strip() not in destination.read_bytes() and b'OWNED ENCRYPTED INPUT' not in destination.read_bytes()
@@ -155,12 +156,41 @@ def actor(parent, base, mode):
         assert (own / 'assembled/stdout.txt').read_text() == 'owned private log\n'
         try:
             plan.run(parent, own / 'input.age', key, binding, own / 'again.age', age=AGE,
-                helper_limits=ResourceLimits(1000, 256*1024**2, 64, 30), staging_limits=ScratchLimits(16*1024**2), max_input_bytes=1024**2)
+                helper_limits=ResourceLimits(1000, 256*1024**2, 64, 30), staging_limits=ScratchLimits(16*1024**2),
+                max_input_bytes=1024**2, max_output_ciphertext_bytes=4*1024**2)
         except ValueError:
             pass
         else:
             raise AssertionError('Consumed plan reused')
     except (ValueError, RuntimeError) as error:
+        if mode in ['success', 'expired-plan', 'native-shared-deadline', 'encoder-shared-deadline', 'publication-deadline']:
+            # This executable creates only owned fixtures. Surface bounded
+            # control-plane locations and lifecycle state, never exception
+            # messages, request/response values, keys or workload contents.
+            cause, sites, seen = error.__context__, [], set()
+            project = Path(SCRIPT).parents[1]
+            while cause is not None and id(cause) not in seen and len(seen) < 4:
+                seen.add(id(cause))
+                trace = cause.__traceback__
+                while trace is not None and len(sites) < 16:
+                    filename = Path(trace.tb_frame.f_code.co_filename)
+                    if filename.is_relative_to(project):
+                        state = trace.tb_frame.f_locals
+                        item = {'type': type(cause).__name__,
+                            'source': filename.relative_to(project).as_posix(), 'line': trace.tb_lineno}
+                        if trace.tb_frame.f_code is run_guarded_helper.__code__:
+                            operation = state.get('request', {}).get('operation')
+                            item['operation'] = operation if operation in ['decode', 'seal-result'] else None
+                            child = state.get('child')
+                            item['childExitCode'] = child.poll() if child is not None else None
+                            reason = (state.get('cleanup') or {}).get('reason')
+                            item['cleanupReason'] = reason if reason in ['finished', 'cancelled', 'deadline', 'not-empty', 'invalid-command', 'channel-closed'] else None
+                        sites.append(item)
+                    trace = trace.tb_next
+                cause = cause.__context__
+            remaining = deadline.monotonic_end - time.monotonic() if 'deadline' in locals() else None
+            print('Owned native failure metadata: ' + json.dumps({'mode': mode,
+                'serviceRemainingSeconds': remaining, 'sites': sites}), file=sys.stderr, flush=True)
         if mode == 'success':
             raise
         assert not destination.exists(), 'Rejected job published a result'
@@ -192,7 +222,7 @@ def main():
         (parent / 'cgroup.subtree_control').write_text('+cpu +memory +pids')
         sandbox_fixture.fixture(base / 'root')
         for mode in ['success', 'tampered', 'metadata', 'group', 'dependency', 'missing-output', 'symlink-output',
-                'decode-quota', 'encode-quota', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel',
+                'decode-quota', 'encode-quota', 'output-limit', 'helper-deadline', 'helper-owner-death', 'helper-owner-stop', 'helper-cancel',
                 'expired-plan', 'native-shared-deadline', 'encoder-shared-deadline', 'publication-deadline']:
             print('Owned encrypted execution check: ' + mode, file=sys.stderr, flush=True)
             proc = subprocess.Popen([sys.executable, '-I', '-B', SCRIPT, 'actor', str(parent), str(base), mode],

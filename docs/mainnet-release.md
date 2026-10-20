@@ -15,12 +15,15 @@ As of 19 October 2026, the status is **Preparing mainnet launch**. Ethereum main
 | Common opening | Not announced; the release tool requires at least seven days' notice |
 | Independent security, privacy and applicable release review | Outstanding |
 | Protected paid computing | Runtime isolation, real hardware admission and end-to-end paid acceptance outstanding |
+| Decentralized compute coordination | Permissionless market contract and direct chain readers implemented; protected guest integration, peer transport and independent review outstanding |
 
 The [worker console](worker-console.md) displays actual local machine observations and these admission requirements. Its paid-worker control is unavailable. Canonical addresses, the opening time and operational claims will be published only after their evidence is verified. Source checks and automated tests do not replace independent review.
 
 ## Prepare the reviewed release
 
 The preparation command checks reviewed dependency pins against finalized and current canonical chain state, then exports unsigned deployment data, constructor arguments, exact dates, allocations, dependency observations, ABI and complete compiler input. It does not load a key or broadcast a transaction. See [dependency verification](dependency-verification.md) for the source checks, configuration format and evidence limits.
+
+This tool prepares the token creation transaction, not the complete computing network. The final release must also review and pin both payment escrows and the [shared market contract](decentralized-compute.md), prove operation without a mandatory founder service and complete genuine protected paid acceptance. A token-only draft does not satisfy that release.
 
 ~~~sh
 npm run prepare:launch -- --founder YOUR_PUBLIC_ADDRESS --launch YYYY-MM-DDTHH:MM:SSZ --network ethereum --minimum-claim-members 1 --semaphore VERIFIED_SEMAPHORE_ADDRESS --registrar REVIEWED_REGISTRAR_ADDRESS --semaphore-code-hash VERIFIED_RUNTIME_CODE_HASH --dependency-config config/ethereum-dependencies.json --out ../private/launch-review

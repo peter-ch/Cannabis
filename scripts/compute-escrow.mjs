@@ -2,52 +2,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AbiCoder, Contract, FetchRequest, JsonRpcProvider, getAddress, keccak256, toBeHex } from 'ethers';
+import { Contract, FetchRequest, JsonRpcProvider, getAddress, keccak256, toBeHex } from 'ethers';
 import escrowABI from '../compute/escrow-abi.json' with { type: 'json' };
-import { planJob, policy, quotePayment } from './compute-plan.mjs';
+import {planJob} from './compute-plan.mjs';
+import {policy,publicOrderPlan,settlementForPlan,termsDigest} from '../compute/settlement.mjs';
+import {executionPlanForOrder,assertExecutionSettlement} from '../compute/execution_plan.mjs';
 const erc20 = ['function balanceOf(address) view returns(uint256)', 'function allowance(address,address) view returns(uint256)', 'function approve(address,uint256) returns(bool)'];
 const zero = '0x0000000000000000000000000000000000000000';
-const coder = AbiCoder.defaultAbiCoder();
 export function planSettlementJob(job) {
-  if (job?.schema !== 'cannabis.compute.order.v2') return planJob(job);
-  const keys=['schema','id','requester','packageSHA256','policySHA256','acceptanceSHA256','payment'];
-  if(Object.keys(job).sort().join()!==keys.sort().join() || typeof job.id!=='string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(job.id))throw Error('Invalid universal compute order');
-  const requester=getAddress(job.requester);
-  if(requester===zero || ['packageSHA256','policySHA256','acceptanceSHA256'].some(k=>typeof job[k]!=='string'||!/^[0-9a-f]{64}$/.test(job[k])||/^0+$/.test(job[k])))throw Error('Requester and encrypted workload commitments required');
-  const p=job.payment;
-  if(!p || Object.keys(p).sort().join()!==['totalBudget','feeBasisPoints','founderRecipient'].sort().join() || p.feeBasisPoints!==100 || getAddress(p.founderRecipient)!==getAddress(policy.founderRecipient))throw Error('Universal order must use the published fee policy');
-  const payment=quotePayment(p.totalBudget);
-  const jobHash=keccak256(coder.encode(['string','string','address','bytes32','bytes32','bytes32','uint256','uint16','address'],
-    ['Cannabis arbitrary workload order v2',job.id,requester,'0x'+job.packageSHA256,'0x'+job.policySHA256,'0x'+job.acceptanceSHA256,payment.totalAtomic,100,payment.founderRecipient]));
-  return {schema:'cannabis.compute.order-plan.v2',jobHash,job:structuredClone(job),payment,executionAuthorized:false,keyReleaseAuthorized:false,fundsMoved:false};
+  return ['cannabis.compute.order.v2','cannabis.compute.order.v3'].includes(job?.schema)?publicOrderPlan(job):planJob(job);
 }
-function timestamp(value) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) throw Error('Use explicit UTC deadlines');
-  const ms=Date.parse(value);
-  if (!Number.isFinite(ms) || new Date(ms).toISOString().replace('.000Z','Z')!==value) throw Error('Invalid UTC deadline');
-  return ms/1000;
-}
-export function settlementTerms(job, settlement) {
-  const plan=planSettlementJob(job);
-  if (!settlement || !Array.isArray(settlement.workers) || settlement.workers.length<1 || settlement.workers.length>128) throw Error('Require 1 to 128 worker recipients');
-  const accounts=settlement.workers.map(w=>getAddress(w.account)), shares=settlement.workers.map(w=>w.shareBps);
-  const manager=getAddress(settlement.deliveryManager), adjudicator=getAddress(settlement.adjudicator), requester=getAddress(job.requester);
-  if (new Set(accounts).size!==accounts.length || accounts.some(a=>a===zero || a===requester || a===adjudicator) ||
-      !accounts.includes(manager) || [zero,requester,getAddress(policy.founderRecipient)].includes(adjudicator) ||
-      shares.some(s=>!Number.isSafeInteger(s)||s<=0||s>10000) || shares.reduce((a,b)=>a+b,0)!==10000) throw Error('Invalid settlement roles or worker split');
-  if (!Number.isSafeInteger(settlement.reviewSeconds)||settlement.reviewSeconds<86400||settlement.reviewSeconds>1209600 ||
-      !Number.isSafeInteger(settlement.disputeSeconds)||settlement.disputeSeconds<86400||settlement.disputeSeconds>2592000) throw Error('Review/dispute duration outside contract limits');
-  const terms={jobHash:plan.jobHash,budget:plan.payment.totalAtomic,deliveryManager:manager,adjudicator,
-    acceptBy:timestamp(settlement.acceptBy),deliverBy:timestamp(settlement.deliverBy),
-    reviewSeconds:settlement.reviewSeconds,disputeSeconds:settlement.disputeSeconds};
-  if(terms.deliverBy<=terms.acceptBy)throw Error('Delivery must follow acceptance deadline');
-  return {requester,terms,accounts,shares,payment:plan.payment};
-}
-export function termsDigest({chainId,escrow,token,founderRecipient,requester,terms,accounts,shares}) {
-  return keccak256(coder.encode(
-    ['string','uint256','address','address','address','uint16','address','tuple(bytes32 jobHash,uint256 budget,address deliveryManager,address adjudicator,uint64 acceptBy,uint64 deliverBy,uint32 reviewSeconds,uint32 disputeSeconds)','address[]','uint16[]'],
-    ['Cannabis compute settlement v1',chainId,escrow,token,founderRecipient,100,requester,terms,accounts,shares]));
-}
+export function settlementTerms(job,settlement) {return settlementForPlan(job,settlement,planSettlementJob(job));}
+export {termsDigest};
 async function connect(options) {
   const url=new URL(options.rpc);
   if(url.username||url.password || url.protocol!=='https:' && !(url.protocol==='http:'&&url.hostname==='127.0.0.1'))throw Error('Use HTTPS RPC or loopback verification RPC');
@@ -79,7 +45,11 @@ const review=[
   'Re-check state and simulate each transaction immediately before wallet signing'
 ];
 export async function prepareFunding(options){
-  const terms=settlementTerms(options.job,options.settlement),c=await connect(options);
+  const executionPlan=options.job?.schema==='cannabis.compute.order.v3'
+    ? executionPlanForOrder(options.executionPlan,options.job,options):null;
+  const terms=settlementTerms(options.job,options.settlement);
+  if(executionPlan)assertExecutionSettlement(executionPlan,terms);
+  const c=await connect(options);
   try{
     const latest=await c.provider.getBlock('latest');
     if(terms.terms.acceptBy<=latest.timestamp || terms.terms.deliverBy>latest.timestamp+90*86400)throw Error('Deadlines are expired or exceed the contract horizon');
@@ -101,6 +71,7 @@ export async function prepareFunding(options){
     }
     return serialize({name:'Cannabis',status:'UNSIGNED_COMPUTE_FUNDING',orderId:id,termsDigest:termsDigest({...c,...terms}),
       chainId:c.chainId,escrow:c.escrow,token:c.token,assetSymbol:c.native?'ETH':'Cannabis',...terms,transactions,
+      ...(executionPlan?{executionPlan:executionPlan.plan}:{}),
       fundingSimulated:allowance>=budget,sent:false,executionAuthorized:false,keyReleaseAuthorized:false,review});
   }finally{c.provider.destroy();}
 }
@@ -149,9 +120,10 @@ export async function prepareBatchApproval(options) {
   }
   const c=await connect(options);
   try {
-    await c.contract.approveBatch.staticCall(ids,{from:requester});
+    const expectedTerms=options.approvals.map(a=>a.expectedTermsDigest),expectedOutputs=options.approvals.map(a=>a.expectedOutputDigest);
+    await c.contract.approveResults.staticCall(ids,expectedTerms,expectedOutputs,{from:requester});
     return {status:'UNSIGNED_COMPUTE_BATCH_APPROVAL',orders:reviewed,grossAtomic:gross.toString(),founderFeeAtomic:(gross/100n).toString(),
-      transaction:transaction(c,requester,c.escrow,c.contract.interface.encodeFunctionData('approveBatch',[ids])),sent:false,
+      transaction:transaction(c,requester,c.escrow,c.contract.interface.encodeFunctionData('approveResults',[ids,expectedTerms,expectedOutputs])),sent:false,
       review:[...review,'Verify and accept every private result before signing; this command cannot judge output quality']};
   }finally{c.provider.destroy();}
 }

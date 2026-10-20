@@ -1,5 +1,8 @@
 name: Build, test and publish
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 permissions:
   contents: read
 jobs:
@@ -13,6 +16,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run compile
+      - name: Reproduce the reviewed browser wallet adapter
+        run: |
+          npm run build:operator
+          git diff --exit-code -- operator/market-wallet.js operator/market-wallet.js.LEGAL.txt
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -25,18 +32,46 @@ jobs:
       - run: npm test
       - name: Verify generic compute client and placement
         run: python -m unittest discover -s test -p 'test_compute_client.py' -v
+      - name: Verify private native step graph contracts
+        run: python -m unittest discover -s test -p 'test_native_graph.py' -v
       - name: Execute owned microjob fixtures and verify exact settlement
         run: npm run exercise:microjobs
       - name: Check guest image tooling syntax
-        run: python -m py_compile scripts/build-guest-image.py scripts/verify-guest-boot.py scripts/build-guest-firmware.py scripts/measure-guest-snp.py compute/guest-image/boot-check.py
+        run: python -m py_compile scripts/build-guest-image.py scripts/verify-guest-boot.py scripts/verify-operating-boot.py scripts/build-guest-firmware.py scripts/measure-guest-snp.py compute/guest-image/boot-check.py
       - name: Verify measurement input snapshots
         run: python -m unittest discover -s test -p 'test_guest_measure.py' -v
       - name: Verify guest resource configuration refusals
         run: python -m unittest discover -s test -p 'test_guest_resources.py' -v
+      - name: Verify signed execution profile resource accounting
+        run: python -m unittest discover -s test -p 'test_guest_execution.py' -v
+      - name: Verify measured whole-guest budget accounting
+        run: python -m unittest discover -s test -p 'test_guest_vm.py' -v
+      - name: Verify encrypted input storage limits and retained admission
+        run: sudo /usr/bin/python3 -I -B scripts/check-guest-ciphertext.py
+      - name: Check bounded result volume and restart recovery
+        run: sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-result-volume.py
+      - name: Exercise retained-result console and explicit replacement delivery
+        run: sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-result-volume.py --console
+      - name: Verify reviewed launch file ownership and path refusals
+        run: sudo env PATH="$PATH" node --test --test-name-pattern='reviewed launch files' test/guest-launch.test.mjs
       - name: Exercise kernel CPU, memory, process and deadline limits
         run: sudo python3 -I -B scripts/check-guest-resources.py
       - name: Verify cleanup after supervisor death and stopped supervisors
         run: sudo python3 -I -B scripts/check-guest-guardian.py
+      - name: Verify aggregate control and workload lifecycle
+        run: sudo python3 -I -B scripts/check-guest-job.py
+      - name: Verify immutable launch snapshots and guarded transport cleanup
+        run: sudo python3 -I -B scripts/check-guest-launcher.py
+      - name: Verify the bounded operator unit and metadata recovery
+        run: sudo /usr/bin/python3 -I -B scripts/check-operator-boundary.py --node "$(command -v node)"
+      - name: Verify operator service composition on the supported Node version
+        run: sudo env PATH="$PATH" node --experimental-test-module-mocks test/helpers/operator_service_workflow.mjs
+      - name: Install QEMU for owned host lifecycle checks
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86
+      - name: Verify owned VM cleanup with explicitly non-confidential fixtures
+        run: sudo /usr/bin/python3 -I -B scripts/check-host-vm.py
       - name: Install pinned tools for disposable Linux isolation checks
         run: |
           python3 - <<'PY'
@@ -54,6 +89,35 @@ jobs:
               (target / (entry['package']+'.deb')).write_bytes(data)
           PY
           sudo dpkg --install /tmp/cannabis-sandbox-packages/libcap2.deb /tmp/cannabis-sandbox-packages/libseccomp2.deb /tmp/cannabis-sandbox-packages/bubblewrap.deb
+      - name: Stage pinned image inputs for embedded runtime checks
+        run: |
+          python3 - <<'PY'
+          import importlib.util, json, pathlib, shutil, subprocess
+          spec = importlib.util.spec_from_file_location('guest_builder', 'scripts/build-guest-image.py')
+          builder = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(builder)
+          tree = pathlib.Path('/tmp/cannabis-runtime-image')
+          cache = pathlib.Path('/tmp/cannabis-runtime-downloads')
+          tree.mkdir(exist_ok=False)
+          cache.mkdir(exist_ok=False)
+          for name in ['bin', 'sbin', 'lib', 'lib64']:
+              (tree / 'usr' / name).mkdir(parents=True)
+              (tree / name).symlink_to('usr/' + name)
+          lock = json.loads(pathlib.Path('compute/guest-image/inputs.json').read_text())
+          # Runtime contents come from the same pinned userspace archives as
+          # the image, never the runner's unrelated LLVM/GPU/toolchain packages.
+          for package in lock['packages']:
+              if not package['package'].startswith('linux-'):
+                  archive = builder.download(package, cache)
+                  subprocess.run(['dpkg-deb', '--extract', str(archive), str(tree)], check=True)
+          for name in ['bin', 'sbin', 'lib', 'lib64']:
+              legacy, merged = tree / name, tree / 'usr' / name
+              if not legacy.is_symlink():
+                  assert legacy.resolve().parent == tree.resolve()
+                  shutil.copytree(legacy, merged, symlinks=True, dirs_exist_ok=True)
+                  shutil.rmtree(legacy)
+                  legacy.symlink_to('usr/' + name)
+          PY
       - name: Exercise native guest filesystem, syscall, network and storage isolation
         run: |
           # Match the measured guest's namespace policy only on this disposable
@@ -65,7 +129,21 @@ jobs:
             sudo sysctl -qw kernel.apparmor_restrict_unprivileged_userns=0
           fi
           sudo python3 -I -B scripts/check-guest-sandbox.py
+          sudo /usr/bin/python3 -I -B scripts/check-guest-boot.py --busybox /tmp/cannabis-runtime-image/bin/busybox
+          sudo /usr/bin/python3 -I -B scripts/check-guest-runtime.py --image-root /tmp/cannabis-runtime-image
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-native.py
+          sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-graph.py
+          sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-dependencies.py
+          sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-execution.py
+          sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py
+          sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py --hosted
+          sudo mkdir -m 755 /tmp/cannabis-group-tools
+          sudo install -m 755 "$(command -v node)" /tmp/cannabis-group-tools/node
+          sudo install -m 755 "$(command -v age)" /tmp/cannabis-group-tools/age
+          sudo install -m 755 "$(command -v age-keygen)" /tmp/cannabis-group-tools/age-keygen
+          sudo /usr/bin/python3 -I -B scripts/check-guest-groups.py --tools /tmp/cannabis-group-tools
+          sudo /usr/bin/python3 -I -B scripts/check-guest-group-failures.py
+          sudo /usr/bin/python3 -I -B scripts/check-funded-groups.py --tools /tmp/cannabis-group-tools
       - run: npm audit --audit-level=high
       - run: npm run build:work-service
       - run: npm run build:site

@@ -11,6 +11,7 @@ export function compile(extraSources = {}) {
     sources: {
       'Cannabis.sol': { content: fs.readFileSync(path.join(root, 'contracts/Cannabis.sol'), 'utf8') },
       'CommunityRegistrar.sol': { content: fs.readFileSync(path.join(root, 'contracts/CommunityRegistrar.sol'), 'utf8') },
+      'ComputeMarket.sol': { content: fs.readFileSync(path.join(root, 'contracts/ComputeMarket.sol'), 'utf8') },
       'ComputeEscrow.sol': { content: fs.readFileSync(path.join(root, 'contracts/ComputeEscrow.sol'), 'utf8') }, ...extraSources },
     settings: { optimizer: { enabled: true, runs: 200 }, evmVersion: 'cancun',
       outputSelection: { '*': { '*': ['abi', 'evm.bytecode.object', 'evm.bytecode.linkReferences'] } } }

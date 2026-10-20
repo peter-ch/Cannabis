@@ -1,9 +1,17 @@
-import { openResults, sha256, MAX_RESULT_BYTES } from './work-results.js';
+import { sha256, MAX_RESULT_BYTES } from './work-results.js';
+import { approvedArchiveDescriptors, openVerifiedResultSet, MAX_RECOVERY_BYTES } from './work-approvals.js';
+import { BrowserResultInbox } from './work-inbox.js';
+import { downloadApprovedArchives, EncryptedDownloadCache } from './work-relay.js';
+import {initializeWorkMarket} from './work-market.js';
+import {clearPaymentResults,retainPaymentResults} from './work-payment.js';
 
 const $ = id => document.getElementById(id);
 const enc = new TextEncoder();
 let pending = null, address = null;
 const access = new Map(), downloads = [];
+let inboxPromise, reviewedRecovery=null, selectedRecovery=null, resultGeneration=0;
+const encryptedDownloads=new EncryptedDownloadCache();let resultController=null;
+const inbox=()=>inboxPromise??=BrowserResultInbox.open();
 const feedback = message => { $('feedback').textContent = message; };
 function download(name, bytes, type = 'application/octet-stream') {
   const url = URL.createObjectURL(new Blob([bytes], { type })), link = document.createElement('a');
@@ -17,7 +25,7 @@ async function api(path, { method = 'GET', body, token } = {}) {
   const response = await fetch('./api/work/' + path, { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error',
     headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: 'Bearer ' + token } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
-  if (!(response.headers.get('content-type') ?? '').includes('application/json')) throw Error('Order service unavailable here. Open cannabis-coin.online/work.html; local result decryption remains available.');
+  if (!(response.headers.get('content-type') ?? '').includes('application/json')) throw Error('Optional preparation storage is unavailable here. Direct market tools and local result decryption remain independent of this service.');
   const result = await response.json(); if (!response.ok) throw Error(result.error ?? 'Request failed'); return result;
 }
 function decimal(atomic) {
@@ -108,32 +116,117 @@ $('sign-in').addEventListener('click', () => action($('sign-in'), async () => {
 }));
 $('sign-out').addEventListener('click', () => action($('sign-out'), async () => { await api('auth/logout', { method: 'POST', body: {} }); signedIn(null); $('orders').replaceChildren(); feedback('Signed out.'); }));
 $('refresh-orders').addEventListener('click', () => action($('refresh-orders'), async () => renderOrders((await api('orders')).orders)));
-function clearResults() { downloads.splice(0).forEach(URL.revokeObjectURL); $('results').replaceChildren(); }
-$('clear-results').addEventListener('click', () => { clearResults(); $('results-form').reset(); feedback('Result files and key inputs cleared from this page.'); });
+function clearResults({discardDownloads=true}={}) {
+  clearPaymentResults();
+  resultGeneration++;resultController?.abort();resultController=null;
+  if(discardDownloads)encryptedDownloads.clear();
+  downloads.splice(0).forEach(URL.revokeObjectURL);$('results').replaceChildren();$('transfer-progress').textContent='';
+}
+function resultSource() {
+  const hosted=$('result-source').value==='hosted';$('local-results').hidden=hosted;$('hosted-results').hidden=!hosted;
+  $('result-files').required=!hosted;$('relay-access').required=hosted;
+}
+$('result-source').addEventListener('change',()=>{clearResults();resultSource();});
+for(const id of ['workload','package-hash','result-files','relay-access','result-key'])
+  $(id).addEventListener('change',()=>clearResults({discardDownloads:id==='workload'||id==='package-hash'}));
+async function listRecoveries() {
+  const entries=await (await inbox()).list();$('saved-results').replaceChildren(new Option('Choose saved job…',''));
+  for(const entry of entries)if(entry.active)$('saved-results').append(new Option(`${entry.jobId} · ${entry.active} approved results`,entry.id));
+}
+function showSelection(snapshot) {
+  clearResults();selectedRecovery=snapshot;
+  $('selected-execution').textContent=`${snapshot.jobId}: ${snapshot.bundle.entries.length} selected approved results. Chain ${snapshot.bundle.context.chainId}, requester ${snapshot.bundle.context.requester}, escrow ${snapshot.bundle.context.escrow}.`;
+  $('retire-results').disabled=false;
+}
+$('execution-recovery').addEventListener('change',()=>action(null,async()=>{
+  reviewedRecovery=null;$('select-execution').disabled=true;$('execution-review').textContent='';
+  const review=await (await inbox()).prepare(await jsonFile($('execution-recovery').files[0],MAX_RECOVERY_BYTES));
+  reviewedRecovery=review;
+  $('execution-review').textContent=`Review ${review.jobId}: ${review.count} signed approvals on chain ${review.context.chainId}. Requester ${review.context.requester}. Escrow ${review.context.escrow}. Attempts ${review.attempts.map(a=>`${a.attempt} (rank ${a.rank})`).join(', ')}. Use your latest requester export; this file cannot establish whether another device selected a newer attempt.`;
+  $('select-execution').disabled=false;
+}));
+$('select-execution').addEventListener('click',()=>action($('select-execution'),async()=>{
+  showSelection(await (await inbox()).select(reviewedRecovery));reviewedRecovery=null;
+  $('execution-recovery').value='';$('execution-review').textContent='';await listRecoveries();
+  feedback('Approved attempts selected on this browser. Result keys and private files remain on your device.');
+}).finally(()=>{$('select-execution').disabled=!reviewedRecovery;}));
+$('saved-results').addEventListener('change',()=>action(null,async()=>{
+  clearResults();selectedRecovery=null;
+  $('selected-execution').textContent='No execution selected.';$('retire-results').disabled=true;
+  if($('saved-results').value)showSelection(await (await inbox()).read($('saved-results').value));
+}));
+$('retire-results').addEventListener('click',()=>action($('retire-results'),async()=>{
+  if(!selectedRecovery)throw Error('Choose a saved job first');
+  await (await inbox()).retire(selectedRecovery);clearResults();selectedRecovery=null;
+  $('selected-execution').textContent='Selected attempts retired on this browser. Existing downloads are unchanged.';
+  await listRecoveries();feedback('Retired attempts cannot be reselected. A replacement needs a higher requester-approved attempt.');
+}).finally(()=>{$('retire-results').disabled=!selectedRecovery;}));
+$('clear-results').addEventListener('click', () => { clearResults(); $('results-form').reset(); resultSource(); feedback('Result files and key inputs cleared from this page.'); });
 $('results-form').addEventListener('submit', event => {
   event.preventDefault(); action(event.submitter, async () => {
-    clearResults(); const spec = await jsonFile($('workload').files[0]);
-    const selected = [...$('result-files').files];
-    if (selected.length > 256 || selected.reduce((n, f) => n + f.size, 0) > MAX_RESULT_BYTES) throw Error('Use the streaming client for result sets above 64 MiB or 128 receipts');
-    const receipts = [], encrypted = new Map();
-    for (const file of selected) {
-      if (file.name.endsWith('.json')) receipts.push(await jsonFile(file));
-      else { const bytes = new Uint8Array(await file.arrayBuffer()), digest = await sha256(bytes); if (encrypted.has(digest)) throw Error('Duplicate encrypted result'); encrypted.set(digest, bytes); }
-    }
-    if (receipts.length !== encrypted.size) throw Error('Select one receipt for every encrypted result');
-    const results = receipts.map(receipt => { const bytes = encrypted.get(receipt.ciphertextSHA256); if (!bytes) throw Error('Missing encrypted result for a receipt'); return { receipt, bytes }; });
+    clearResults({discardDownloads:false}); const generation=resultGeneration,snapshot=selectedRecovery;
+    if(!snapshot)throw Error('Review an execution recovery export or choose a saved job first');
+    const assertCurrent=async()=>{
+      if(generation!==resultGeneration)throw Error('Result opening was cleared or superseded');
+      await (await inbox()).checkCurrent(snapshot);
+      if(generation!==resultGeneration)throw Error('Result opening was cleared or superseded');
+    };
+    await assertCurrent();
+    const spec = await jsonFile($('workload').files[0]);
+    const packageSHA256=$('package-hash').value,hosted=$('result-source').value==='hosted';let encrypted;
     const identityFile = $('result-key').files[0]; if (!identityFile || identityFile.size > 4096) throw Error('Choose a bounded age result identity file');
     const identity = await identityFile.text(); $('result-key').value = '';
-    const files = await openResults({ spec, packageSHA256: $('package-hash').value, identity, results });
-    for (const [name, bytes] of files) {
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' })); downloads.push(url);
-      const a = document.createElement('a'); a.href = url; a.download = name.split('/').pop(); a.textContent = `Download ${name} · ${bytes.length} bytes`; $('results').append(a);
+    if(hosted) {
+      const selected=[...$('relay-access').files];
+      if(!selected.length||selected.length>128)throw Error('Choose one read-access file per selected result');
+      const accessFiles=[];for(const file of selected)accessFiles.push(await jsonFile(file,8192));
+      const descriptors=await approvedArchiveDescriptors({bundle:snapshot.bundle,spec,packageSHA256,identity});
+      await assertCurrent();const controller=new AbortController();resultController=controller;
+      encrypted=await downloadApprovedArchives({descriptors,accessFiles,origin:location.origin,cache:encryptedDownloads,signal:controller.signal,assertCurrent,
+        onProgress:({completed,total,retrySeconds})=>{
+          if(generation===resultGeneration)$('transfer-progress').textContent=`Encrypted download: ${completed.toLocaleString()} / ${total.toLocaleString()} bytes.${retrySeconds?` Retrying in ${retrySeconds} seconds…`:''}`;
+        }});
+      await assertCurrent();
+    } else {
+      const selected=[...$('result-files').files];
+      if(!selected.length||selected.length>128||selected.reduce((n,f)=>n+f.size,0)>MAX_RESULT_BYTES)throw Error('Use the streaming client for result sets above 64 MiB or 128 archives');
+      encrypted=[];
+      for(const file of selected) {
+        if(!file.name.endsWith('.age'))throw Error('Select encrypted .age archives; authenticated receipts come from your recovery export');
+        encrypted.push(new Uint8Array(await file.arrayBuffer()));
+      }
     }
-    feedback('Integrity and workload bindings verified. Results decrypted locally. Review output quality before approving payment; this did not approve or send a transaction.');
+    const verified = await openVerifiedResultSet({bundle:snapshot.bundle,spec,packageSHA256,identity,encrypted}),files=verified.files;
+    try {
+      if(generation!==resultGeneration)throw Error('Result opening was cleared or superseded');
+      await (await inbox()).useCurrent(snapshot,()=>{
+        if(generation!==resultGeneration)throw Error('Result opening was cleared or superseded');
+        for (const [name, bytes] of files) {
+          const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' })); downloads.push(url);
+          const a = document.createElement('a'); a.href = url; a.download = name.split('/').pop(); a.textContent = `Download ${name} · ${bytes.length} bytes`;
+          a.addEventListener('click',event=>{event.preventDefault();action(null,async()=>{
+            try {await (await inbox()).useCurrent(snapshot,()=>{
+              if(generation!==resultGeneration)throw Error('Result selection was cleared');
+              const link=document.createElement('a');link.href=url;link.download=a.download;link.click();
+            });}catch(error){clearResults();throw error;}
+          });});
+          $('results').append(a);
+        }
+      },{verified:true});
+      retainPaymentResults(snapshot,verified.archives,{assertCurrent,
+        useCurrent:async fn=>(await inbox()).useCurrent(snapshot,()=>{
+          if(generation!==resultGeneration)throw Error('Result selection was cleared or changed');return fn();
+        })});
+    }catch(error){if(generation===resultGeneration)clearResults();throw error;}
+    finally {for(const bytes of files.values())bytes.fill(0);if(generation===resultGeneration){encryptedDownloads.clear();resultController=null;}}
+    feedback('Requester approvals, encrypted receipts, selected attempts and archive contents verified. Results decrypted locally. Review output quality before approving payment; no transaction was signed or sent.');
   });
 });
 window.addEventListener('pagehide', clearResults);
-action(null, async () => {
+initializeWorkMarket().catch(()=>{$('direct-market-message').textContent='Direct market tools could not initialize. Use the reviewed local console; no payment was requested.';});
+listRecoveries().catch(()=>{$('selected-execution').textContent='Local result storage is unavailable. Use the requester desktop client.';});
+void (async () => {try {
   const status = await api('status'); $('service-status').textContent = status.message;
+  $('hosted-option').disabled=status.encryptedResultStorageAvailable!==true;
   signedIn((await api('account')).address);
-}).finally(() => { if ($('service-status').textContent.includes('Connecting')) $('service-status').textContent = 'The order service is unavailable here. Local result decryption remains available.'; });
+}catch { $('service-status').textContent = 'Optional preparation storage is unavailable here. Direct market tools and local result decryption remain available.'; }})();

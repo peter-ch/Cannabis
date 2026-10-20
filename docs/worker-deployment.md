@@ -1,10 +1,21 @@
 # Deploying a confidential worker
 
+Workers are independently operated participants in the [decentralized market](decentralized-compute.md). No particular cloud, founder account or centralized scheduler is required by the network architecture. A worker may be independently owned hardware or infrastructure chosen by its operator; each requester still needs a validated confidential path. Website hosting is optional supporting infrastructure, not worker admission.
+
 Use the [local worker console](worker-console.md) to inspect this computer and its admission requirements. Its running GUI provides observations; paid execution remains unavailable until the deployment below has been validated.
 
 Cannabis workers must prove which protected environment will receive a job's keys. Selecting a VM advertised as confidential is the beginning of provider integration. Admission also requires a measured boot chain, the approved runtime, protected storage and the exact initialization policy expected by the requester.
 
 The current client integrates Trustee CPU appraisals for SNP and TDX. No provider deployment has yet completed the protected execution and settlement acceptance checks. CUDA, ROCm and other accelerators remain part of the network's scope; each device and interconnect path requires its own evidence.
+
+The explicit [protected group adapter](protected-groups.md) adds coordinated CPU
+ranks to the retained native path. Production requires one independently admitted
+protected VM per rank. Service profile v4 binds the fixed TLS listener and traffic
+limits; the SNP host profile v2 can forward its approved public TCP port into that
+guest. The host forwards ciphertext without terminating group TLS. This does not
+admit an ordinary server or establish a confidential GPU path. The combined
+guest/operator lifecycle passes an owned Linux checkpoint; refreshed group
+images and real hardware admission remain required.
 
 ## What the existing adapter expects
 

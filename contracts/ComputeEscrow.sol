@@ -57,6 +57,7 @@ contract ComputeEscrow is ReentrancyGuard {
     }
 
     mapping(bytes32 => Order) public orders;
+    mapping(bytes32 => bytes32) public termsCommitments;
     mapping(bytes32 => Worker[]) private workers;
     mapping(bytes32 => mapping(address => uint16)) private workerIndexPlusOne;
     mapping(address => uint256) public credits;
@@ -126,6 +127,7 @@ contract ComputeEscrow is ReentrancyGuard {
         order.terms = terms;
         order.state = State.Funded;
         order.workerCount = uint16(accounts.length);
+        termsCommitments[id] = _commitment(terms, accounts, sharesBps);
         totalLiability += terms.budget;
         if (address(token) != address(0)) {
             uint256 previousBalance = token.balanceOf(address(this));
@@ -164,6 +166,15 @@ contract ComputeEscrow is ReentrancyGuard {
 
     /// @notice Only the agreed group delivery manager can publish the encrypted output digest.
     function deliver(bytes32 id, bytes32 outputDigest) external {
+        _deliver(id, outputDigest);
+    }
+
+    function deliverResult(bytes32 id, bytes32 expectedTerms, bytes32 outputDigest) external {
+        _requireTerms(id, expectedTerms);
+        _deliver(id, outputDigest);
+    }
+
+    function _deliver(bytes32 id, bytes32 outputDigest) private {
         Order storage order = orders[id];
         if (order.state != State.Active) revert InvalidState();
         if (msg.sender != order.terms.deliveryManager) revert Unauthorized();
@@ -177,6 +188,19 @@ contract ComputeEscrow is ReentrancyGuard {
 
     function approve(bytes32 id) external {
         _approve(id);
+    }
+
+    function approveResult(bytes32 id, bytes32 expectedTerms, bytes32 expectedOutput) external {
+        _requireResult(id, expectedTerms, expectedOutput);
+        _approve(id);
+    }
+
+    function approveResults(bytes32[] calldata ids, bytes32[] calldata expectedTerms, bytes32[] calldata expectedOutputs) external {
+        if (ids.length == 0 || ids.length > MAX_BATCH || ids.length != expectedTerms.length || ids.length != expectedOutputs.length) revert InvalidTerms();
+        for (uint256 i; i < ids.length; ++i) {
+            _requireResult(ids[i], expectedTerms[i], expectedOutputs[i]);
+            _approve(ids[i]);
+        }
     }
 
     /// @notice Approve several reviewed results atomically, preserving each order's fee.
@@ -194,6 +218,15 @@ contract ComputeEscrow is ReentrancyGuard {
 
     /// @notice A requester must dispute within the agreed review window.
     function dispute(bytes32 id, bytes32 encryptedReasonDigest) external {
+        _dispute(id, encryptedReasonDigest);
+    }
+
+    function disputeResult(bytes32 id, bytes32 expectedTerms, bytes32 expectedOutput, bytes32 encryptedReasonDigest) external {
+        _requireResult(id, expectedTerms, expectedOutput);
+        _dispute(id, encryptedReasonDigest);
+    }
+
+    function _dispute(bytes32 id, bytes32 encryptedReasonDigest) private {
         Order storage order = orders[id];
         if (order.state != State.Delivered) revert InvalidState();
         if (msg.sender != order.requester) revert Unauthorized();
@@ -207,6 +240,16 @@ contract ComputeEscrow is ReentrancyGuard {
 
     /// @notice The mutually accepted adjudicator awards an amount, never changes recipients.
     function resolve(bytes32 id, uint256 grossPaid) external {
+        _resolve(id, grossPaid);
+    }
+
+    function resolveDispute(bytes32 id, bytes32 expectedTerms, bytes32 expectedOutput, bytes32 expectedReason, uint256 grossPaid) external {
+        _requireResult(id, expectedTerms, expectedOutput);
+        if (expectedReason == bytes32(0) || orders[id].disputeDigest != expectedReason) revert InvalidTerms();
+        _resolve(id, grossPaid);
+    }
+
+    function _resolve(bytes32 id, uint256 grossPaid) private {
         Order storage order = orders[id];
         if (order.state != State.Disputed) revert InvalidState();
         if (msg.sender != order.terms.adjudicator) revert Unauthorized();
@@ -217,6 +260,34 @@ contract ComputeEscrow is ReentrancyGuard {
 
     /// @notice Anyone may finish an expired phase. Rules are fixed before worker acceptance.
     function finalizeExpired(bytes32 id) external {
+        _finalizeExpired(id);
+    }
+
+    /// @notice Bind a wallet's reviewed outcome to the expected phase, even if
+    /// its transaction is delayed. A changed phase requires another review.
+    function finalizeExpiredState(bytes32 id, bytes32 expectedTerms, State expectedState) external {
+        _requireTerms(id, expectedTerms);
+        if (orders[id].state != expectedState) revert InvalidState();
+        _finalizeExpired(id);
+    }
+
+    function _requireTerms(bytes32 id, bytes32 expectedTerms) private view {
+        if (expectedTerms == bytes32(0) || termsCommitments[id] != expectedTerms) revert InvalidTerms();
+    }
+
+    function _commitment(Terms calldata terms, address[] calldata accounts, uint16[] calldata sharesBps) private view returns (bytes32) {
+        return keccak256(abi.encode(
+            "Cannabis compute settlement v1", block.chainid, address(this), address(token),
+            founderRecipient, FEE_BPS, msg.sender, terms, accounts, sharesBps
+        ));
+    }
+
+    function _requireResult(bytes32 id, bytes32 expectedTerms, bytes32 expectedOutput) private view {
+        _requireTerms(id, expectedTerms);
+        if (expectedOutput == bytes32(0) || orders[id].outputDigest != expectedOutput) revert InvalidTerms();
+    }
+
+    function _finalizeExpired(bytes32 id) private {
         Order storage order = orders[id];
         if (order.state == State.Funded && block.timestamp >= order.terms.acceptBy ||
             order.state == State.Active && block.timestamp >= order.terms.deliverBy ||

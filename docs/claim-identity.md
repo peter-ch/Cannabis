@@ -2,11 +2,11 @@
 
 The participant CLI creates an encrypted Semaphore identity, checks recovery, and generates a claim proof locally. It uses the pinned Semaphore 4.14.5 libraries and native age X25519 encryption. Only the commitment goes to the reviewed Cannabis ceremony intake. The public claim proof contains neither that commitment nor the secret. Semaphore's [identity guide](https://docs.semaphore.pse.dev/guides/identities) describes the underlying key and commitment format.
 
-This is a local command-line component of the production claim flow. It does not enroll a person, establish a canonical deployment, sign a transaction or submit a claim. The Cannabis ceremony, reviewed release and participant interface remain launch work. No operational participant identities are included in this repository.
+This is a local command-line component of the production claim flow. It does not enroll a person, establish a canonical deployment, sign a transaction or submit a claim. The Cannabis ceremony, canonical release and independent review remain launch work. No operational participant identities are included in this repository.
 
 ## Prepare custody
 
-Use Node.js 22.22+, the locked npm dependencies, and a verified age 1.3.2 installation. The local `age` executable path must be absolute. Use an existing, separately protected native age X25519 identity and its matching public recipient. Keep the owner key on encrypted local storage under your control; do not place it beside a synced encrypted vault. The current CLI accepts one native age identity, without plugins or interactive passphrases. Other custody methods need their own reviewed integration.
+Use Node.js 22.23.3 or later, the locked npm dependencies, and a verified age 1.3.2 installation. The local `age` executable path must be absolute. Use an existing, separately protected native age X25519 identity and its matching public recipient. Keep the owner key on encrypted local storage under your control; do not place it beside a synced encrypted vault. The current CLI accepts one native age identity, without plugins or interactive passphrases. Other custody methods need their own reviewed integration.
 
 Create a private directory outside the public source tree. The parent directory must already exist. Create a local configuration file containing only public values and paths, for example:
 
@@ -87,4 +87,61 @@ Only `proof.json` belongs in the unsigned [claim preparation](community-claims.m
 
 The CLI uses no RPC, web request, wallet key or broadcast. Recovery pipes the age owner key into the local age process; it creates only a temporary ciphertext copy. Secret values never appear in arguments, environment variables, returned reports or intentional log output. Errors are deliberately generic. Mutable secret buffers are cleared where possible, but JavaScript strings, BigInts, engine copies, operating-system swap and crash dumps cannot be guaranteed erased by this code. Use a trusted, protected client device. Do not expose these operations as a shared server endpoint.
 
-The public proof includes its nullifier, recipient and group root. Ledger activity remains visible. A CLI recovery check is not an independent custody audit, and an offline proof is not evidence that enrollment or a mainnet claim has occurred. A reviewed graphical custody flow, authenticated snapshot distribution, reviewed registry continuity and recovery policy and production relayer remain release work.
+The public proof includes its nullifier, recipient and group root. Ledger activity remains visible. A CLI recovery check is not an independent custody audit, and an offline proof is not evidence that enrollment or a mainnet claim has occurred. The [Windows guide](windows-setup.md#prepare-a-community-claim) connects device-held custody to local proving and unsigned claim preparation. Independent review, the canonical deployment, reviewed registry continuity/recovery and any production relayer remain release work.
+
+## Guided Windows configuration
+
+The guided flow accepts a locally saved configuration with this shape. These placeholders
+are deliberately invalid; use exact values from the reviewed deployment and
+proving-artifact release. Do not place an identity secret, owner key, password or
+wallet signing key in this file.
+
+```json
+{
+  "schema": "cannabis.participant-claim-config.v1",
+  "rpc": "https://YOUR-SELECTED-RPC",
+  "release": {
+    "chainId": "1",
+    "token": "REVIEWED_CANNABIS_ADDRESS",
+    "tokenCodeHash": "REVIEWED_RUNTIME_CODE_HASH",
+    "enrollment": "REVIEWED_ENROLLMENT_ADDRESS",
+    "enrollmentCodeHash": "REVIEWED_RUNTIME_CODE_HASH",
+    "semaphore": "REVIEWED_SEMAPHORE_ADDRESS",
+    "semaphoreCodeHash": "REVIEWED_RUNTIME_CODE_HASH",
+    "fromBlock": 0
+  },
+  "artifacts": {
+    "depth": 1,
+    "wasm": { "path": "C:\\Cannabis\\proving\\semaphore-1.wasm", "sha256": "REVIEWED_SHA256", "bytes": 0 },
+    "zkey": { "path": "C:\\Cannabis\\proving\\semaphore-1.zkey", "sha256": "REVIEWED_SHA256", "bytes": 0 }
+  }
+}
+```
+
+`fromBlock` must be the actual reviewed deployment start block, not a guessed
+value. The proving depth must match the complete finalized group, with circuit
+depth one for a singleton. Sizes and SHA-256 pins must match the reviewed local
+files. No proving-file download occurs while the identity is open.
+
+The displayed release digest hashes the normalized deployment fields and public
+proving pins; local file paths and RPC credentials are excluded so the digest
+can be compared across devices. The guide separately retains the exact selected
+configuration bytes and rejects edits after selection. The digest is an integrity
+comparison, not a signature or proof that the release is canonical.
+If your selected RPC URL includes an API access key, keep that configuration
+private. The guide displays its origin without its query string or path.
+
+The Windows guide requires an existing same-identity portable-recovery record
+and keeps its DPAPI-wrapped age key on the device. It verifies complete
+membership, the opening, claim amount and current minimum, then asks for an
+explicit recipient confirmation. An accepted preparation consumes that review.
+Changed configuration/custody/membership/policy, unavailable RPC, failed proof or
+simulation causes refusal rather than automatic signing or a replacement identity.
+
+The resulting JSON contains the public unsigned transaction and its selected
+release context. It has no separate membership-list, selected-commitment,
+member-index or owner-key field. A singleton's root identifies its sole member;
+the proof does not hide that relationship. `sent: false` means this tool did not broadcast; it is not a
+claim receipt. The selected RPC sees the public proof and recipient during
+simulation. Recheck the transaction and fees in the signing wallet immediately
+before submission.

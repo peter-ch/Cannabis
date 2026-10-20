@@ -17,7 +17,7 @@ test('guest service build pins agree with the admitted CPU wire profile', () => 
   assert.deepEqual(build.agentFeatures, ['bin', 'ttrpc', 'rust-crypto', 'snp-attester', 'tdx-attester']);
   assert.deepEqual(build.binaries, ['ttrpc-aa', 'api-server-rest']);
 });
-function setup(tee = 'snp') {
+function setup(tee = 'snp', configurationSHA256) {
   const policy = { schema: 'cannabis.attestation.trustee-policy.v1', issuer: 'Fixture AS', signingJwk: signer.publicKey.export({ format: 'jwk' }),
     verifierBuild: 'Protocol fixture', appraisalPolicyId: 'fixture-cpu', maxTokenAgeSeconds: 60, maxTokenLifetimeSeconds: 300, challengeTTLSeconds: 90, tee,
     measurements: tee === 'snp' ? { launch: '11'.repeat(48), initData: '22'.repeat(32), minimumTCB: { bootloader: 1, tee: 1, snp: 1, microcode: 1 } }
@@ -25,6 +25,7 @@ function setup(tee = 'snp') {
   const binding = { chainId: 31337, escrow: '0x' + '12'.repeat(20), orderId: '0x' + hex(1), leaseDigest: '0x' + hex(2), reservationId: '0x' + hex(3),
     packageSHA256: hex(4), policySHA256: hex(5), runtimeSHA256: hex(6), taskSHA256: hex(7), attempt: 1, rank: 0, worldSize: 1, acceleratorClass: 'cpu' };
   const initialization = { schema: 'cannabis.guest-initialization.v1', tee, binding, requester: '0x' + '13'.repeat(20), jobId: 'opaque-job' };
+  if(configurationSHA256){binding.configurationSHA256=configurationSHA256;initialization.schema='cannabis.guest-initialization.v2';}
   policy.measurements.initData = guestInitialization(initialization).digest;
   const ledger = new AttestationLedger(':memory:', policy, () => time), challenge = ledger.challenge(binding); ledger.close();
   return { initialization, policy, challenge, expectedBinding: binding, requester: initialization.requester, jobId: initialization.jobId };
@@ -119,4 +120,20 @@ test('the guest retains its assignment and refuses host-supplied changes before 
     await assert.rejects(session.open('not-a-jwe', { requester: '0x' + '14'.repeat(20), value: {}, domain: {} }), /retained guest assignment/);
     assert.equal(session.status.state, 'closed');
   } finally { session?.close(); await agent.close(); }
+});
+
+test('configured guest rejects downgraded or substituted key approval before attempting decryption',async()=>{
+  for(const change of [p=>p.domain.version='2',p=>delete p.value.configurationSHA256,p=>p.value.configurationSHA256='0x'+hex(99)]) {
+    const s=setup('snp','0x'+hex(98)),agent=await guestAgentFixture();let session;
+    try {
+      session=await GuestEvidenceSession.create({...s,agentUrl:agent.url},{clock:()=>time});
+      await session.evidence();
+      const expected={requester:s.requester,jobId:s.jobId,
+        domain:{name:'Cannabis confidential key delivery',version:'3',chainId:31337,verifyingContract:s.expectedBinding.escrow},
+        value:{configurationSHA256:s.expectedBinding.configurationSHA256}};
+      change(expected);
+      await assert.rejects(session.open('not-a-jwe',expected),/configuration version|binding differs/);
+      assert.equal(session.status.state,'closed');
+    }finally{session?.close();await agent.close();}
+  }
 });

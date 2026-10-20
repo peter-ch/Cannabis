@@ -1,5 +1,5 @@
 // Signed capacity offers and atomic local reservations. Funded leases share this inventory.
-import { DatabaseSync } from 'node:sqlite';
+import { openDurableDatabase } from './sqlite_runtime.mjs';
 import { getAddress, TypedDataEncoder, verifyTypedData, ZeroAddress } from 'ethers';
 
 const hash = value => typeof value === 'string' && /^0x[0-9a-f]{64}$/.test(value) && value !== '0x'+'0'.repeat(64);
@@ -17,13 +17,15 @@ export const reservationTypes={CapacityReservation:[
   ['start','uint64'],['end','uint64'],['units','uint32'],['grossBaseUnits','uint256'],['holdUntil','uint64']
 ].map(([name,type])=>({name,type}))};
 export function domain(context) {
-  exact(context,['chainId','registryId','token']);number(context.chainId);if(!hash(context.registryId))throw Error('Registry ID must be a nonzero bytes32');address(context.token);
+  exact(context,['chainId','registryId','token']);number(context.chainId);if(!hash(context.registryId))throw Error('Registry ID must be a nonzero bytes32');getAddress(context.token);
   return {name:'Cannabis capacity commitments',version:'1',chainId:context.chainId,salt:context.registryId};
 }
 export function offerPayload(context,offer) {
   const d=domain(context);exact(offer,offerTypes.CapacityOffer.map(x=>x.name));
   for(const key of ['offerId','resourceId','serviceSHA256','policySHA256','termsSHA256'])if(!hash(offer[key]))throw Error('Invalid offer commitment');
-  address(offer.provider);if(address(offer.token)!==address(context.token))throw Error('Token mismatch');
+  // Zero identifies native ETH only in the asset position; participant and
+  // resource-owner addresses remain nonzero. The signed offer binds the asset.
+  address(offer.provider);if(getAddress(offer.token)!==getAddress(context.token))throw Error('Token mismatch');
   for(const key of ['windowStart','windowEnd','expiresAt'])number(offer[key]);number(offer.units,100000);
   amount(offer.grossPerUnitSecond);if(offer.feeBps!==100)throw Error('The included founder fee must be 1%');
   if(offer.windowEnd<=offer.windowStart || offer.expiresAt>offer.windowEnd || offer.windowEnd-offer.windowStart>90*86400)throw Error('Invalid service window');
@@ -47,7 +49,7 @@ export function reservationPayload(context,reservation) {
 export class CapacityLedger {
   constructor(file,context) {
     this.context=structuredClone(context);domain(context);
-    this.db=new DatabaseSync(file,{timeout:5000});
+    this.db=openDurableDatabase(file,{timeout:5000});
     this.db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), context TEXT NOT NULL) STRICT;
       CREATE TABLE IF NOT EXISTS resources (provider TEXT NOT NULL, resource TEXT NOT NULL, service TEXT NOT NULL, units INTEGER NOT NULL, PRIMARY KEY(provider,resource)) STRICT;
@@ -59,7 +61,7 @@ export class CapacityLedger {
     try {
       this.transaction(()=>{
         const saved=this.db.prepare('SELECT context FROM settings WHERE id=1').get();
-        const canonical=JSON.stringify({chainId:context.chainId,registryId:context.registryId,token:address(context.token)});
+        const canonical=JSON.stringify({chainId:context.chainId,registryId:context.registryId,token:getAddress(context.token)});
         if(saved && saved.context!==canonical)throw Error('Ledger domain cannot change');
         if(!saved)this.db.prepare('INSERT INTO settings VALUES (1,?)').run(canonical);
       });

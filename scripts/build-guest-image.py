@@ -5,6 +5,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import gzip
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 INPUTS = ROOT / 'compute/guest-image'
+sys.path.insert(0,str(ROOT))
 
 
 def digest(path):
@@ -80,9 +82,12 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--cache', type=Path, required=True)
     parser.add_argument('--guest-services', type=Path, required=True)
+    parser.add_argument('--operating', action='store_true', help='Use the one-use operating PID-1 entry with bilateral booked-launch consent')
     args = parser.parse_args()
     if sys.platform != 'linux' or os.uname().machine != 'x86_64':
         raise ValueError('Use Linux x86_64 with Python 3.12+, dpkg-deb and depmod')
+    from compute.guest_vm import VmBudget
+    vm_budget=VmBudget(json.loads((INPUTS/'vm-profile.json').read_text()))
     out, cache, services = (p.resolve() for p in (args.output, args.cache, args.guest_services))
     if out.exists() or ROOT in out.parents or ROOT in cache.parents or out == ROOT or cache == ROOT:
         raise ValueError('Require a new output and external cache outside the public repository')
@@ -118,6 +123,11 @@ def main():
             shutil.rmtree(legacy)
             legacy.symlink_to('usr/' + name)
     kernel = tree / 'boot' / ('vmlinuz-' + lock['kernelRelease'])
+    # The pinned kernel provides TUN built in. Never download or load a host
+    # module to satisfy group networking in a changed image.
+    builtins=(tree/'usr/lib/modules'/lock['kernelRelease']/'modules.builtin').read_text().splitlines()
+    if 'kernel/drivers/net/tun.ko' not in builtins:
+        raise ValueError('Pinned kernel lacks the required built-in TUN device')
     shutil.copyfile(kernel, out / 'vmlinuz')
     # The kernel is already passed separately to the VMM; do not duplicate its
     # image and map in the initramfs. Only this newly created staging tree changes.
@@ -142,6 +152,7 @@ def main():
     copy_text(ROOT / 'LICENSE', project / 'LICENSE')
     copy_text(INPUTS / 'inputs.json', project / 'image-inputs.json')
     copy_text(INPUTS / 'inputs.json', project / 'compute/guest-image/inputs.json')
+    copy_text(INPUTS / 'vm-profile.json', project / 'vm-profile.json')
     shutil.copyfile(node_prefix / 'LICENSE', tree / 'usr/local/bin/node.LICENSE')
     for name in ['package.json', 'package-lock.json']:
         shutil.copyfile(INPUTS / name, project / name)
@@ -150,32 +161,77 @@ def main():
     for source in sorted((ROOT / 'compute').iterdir()):
         if source.is_file() and source.suffix in ['.mjs', '.py', '.json']:
             copy_text(source, project / 'compute' / source.name)
-    for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'check-guest-guardian.py', 'compute-guest-guardian.py', 'check-guest-sandbox.py', 'compute-guest-sandbox.py', 'check-guest-native.py', 'compute-guest-helper.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs']:
+    for name in ['compute-guest-probe.mjs', 'check-guest-initialization.mjs', 'check-guest-resources.py', 'check-guest-guardian.py', 'compute-guest-guardian.py', 'check-guest-sandbox.py', 'compute-guest-sandbox.py', 'check-guest-native.py', 'compute-guest-helper.py', 'compute-guest-workload-pipe.py', 'compute-key-capsule-pipe.py', 'compute-plan.mjs', 'compute-escrow.mjs', 'compute-guest-control.py', 'check-guest-job.py', 'compute-guest-native-pipe.py', 'check-guest-execution.py', 'compute-guest-admission.py', 'compute-guest-session.mjs']:
+        copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
+    copy_text(ROOT / 'scripts/check-guest-python.py', project / 'scripts/check-guest-python.py')
+    copy_text(ROOT / 'scripts/check-guest-graph.py', project / 'scripts/check-guest-graph.py')
+    copy_text(ROOT / 'scripts/check-guest-dependencies.py', project / 'scripts/check-guest-dependencies.py')
+    for name in ['check-guest-groups.py', 'check-guest-group-failures.py']:
+        copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
+    for name in ['group_fixture.mjs', 'group_native_controller.mjs', 'group_native_requester.mjs', 'launch_fixture.mjs']:
+        copy_text(ROOT / 'test/helpers' / name, project / 'test/helpers' / name)
+    for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py','check-guest-runtime.py','check-guest-ciphertext.py','compute-guest-vm.py','check-guest-vm.py','compute-guest-boot.py','check-guest-boot.py']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in lock['guestServices']:
         shutil.copyfile(services / name, tree / 'usr/local/bin' / name)
         (tree / 'usr/local/bin' / name).chmod(0o755)
     copy_text(INPUTS / 'early-init', tree / 'init')
     (tree / 'init').chmod(0o755)
-    copy_text(INPUTS / 'init', project / 'guest-init')
+    copy_text(INPUTS / ('init-operating' if args.operating else 'init'), project / 'guest-init')
     (project / 'guest-init').chmod(0o755)
+    copy_text(INPUTS / 'prepare-init', project / 'prepare-init')
     copy_text(INPUTS / 'boot-check.py', project / 'boot-check.py')
     (tree / 'etc/passwd').write_text('root:x:0:0:root:/root:/usr/sbin/nologin\ncannabis:x:1000:1000:workload:/run/workload:/usr/sbin/nologin\n')
     (tree / 'etc/group').write_text('root:x:0:\ncannabis:x:1000:\n')
     (tree / 'etc/shadow').write_text('root:!:0:0:99999:7:::\ncannabis:!:0:0:99999:7:::\n')
     (tree / 'etc/shadow').chmod(0o600)
     (tree / 'etc/hosts').write_text('127.0.0.1 localhost\n::1 localhost\n')
+    (tree / 'etc/resolv.conf').unlink(missing_ok=True)
+    (tree / 'etc/resolv.conf').write_text('nameserver 10.0.2.3\noptions timeout:2 attempts:2\n')
+    (tree / 'etc/nsswitch.conf').write_text('hosts: files dns\n')
     if not (tree / 'usr/bin/sh').exists():
         (tree / 'usr/bin/sh').symlink_to('busybox')
     subprocess.run(['/usr/sbin/depmod', '-b', str(tree), lock['kernelRelease']], check=True)
+    # Avoid repeated source compilation inside bounded guardian/helper startup.
+    # Use the image's pinned interpreter and libraries, hash-checked caches,
+    # runtime filenames and optimization level zero (assertions stay enabled).
+    compiler_script = INPUTS / 'compile-python.py'
+    compiled = subprocess.run([str(tree / 'usr/bin/python3'), '-I', '-B', str(compiler_script), str(tree)],
+        env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'TZ': 'UTC'},
+        check=True, capture_output=True, timeout=120)
+    bytecode = json.loads(compiled.stdout)
+    bytecode['compilerScriptSHA256'] = digest(compiler_script)
+    (project / 'python-bytecode.json').write_text(json.dumps(bytecode, separators=(',', ':')) + '\n')
+    recipe = ROOT / 'scripts/build-guest-runtime.py'
+    spec = importlib.util.spec_from_file_location('guest_runtime_recipe', recipe)
+    runtime_builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime_builder)
+    runtime = runtime_builder.build_runtime(tree, project / 'runtime')
+    (project / 'runtime.json').write_text(json.dumps(runtime, separators=(',', ':')) + '\n')
     # Record all embedded regular-file contents. This is a build manifest, not
     # remote attestation; firmware must cover the kernel/initrd/cmdline chain.
     manifest = [{'path':'/' + p.relative_to(tree).as_posix(), 'sha256':digest(p)} for p in sorted(tree.rglob('*')) if p.is_file() and not p.is_symlink()]
     (project / 'image-files.json').write_text(json.dumps(manifest, separators=(',', ':')) + '\n')
-    cmdline = 'console=ttyS0 panic=-1 quiet loglevel=3 init=/init'
+    # tmpfs allocates file data in pages. Include every final entry and a page
+    # for each symlink conservatively; inode metadata belongs to kernel headroom.
+    payload=list(tree.rglob('*'))
+    root_pages=sum((p.stat().st_size+4095)//4096*4096 if p.is_file() and not p.is_symlink()
+                   else 4096 if p.is_symlink() else 0 for p in payload)
+    if root_pages>vm_budget.root.bytes or len(payload)+1>vm_budget.root.inodes:
+        raise ValueError('Image cannot fit its measured root byte/inode ceilings')
+    cmdline = 'console=null panic=-1 quiet loglevel=0 init=/init' if args.operating else 'console=ttyS0 panic=-1 quiet loglevel=3 init=/init'
     (out / 'cmdline').write_text(cmdline + '\n')
     write_initramfs(tree, out / 'initramfs.cpio.gz', lock['sourceDateEpoch'])
+    if (out/'initramfs.cpio.gz').stat().st_size>vm_budget.value['bootArchiveBytes']:
+        raise ValueError('Compressed archive exceeds the measured boot allowance')
     report = {'schema':'cannabis.guest-image-build.v1', 'kernelRelease':lock['kernelRelease'], 'inputsSHA256':digest(INPUTS / 'inputs.json'), 'builderSHA256':digest(Path(__file__)), 'embeddedFiles':len(manifest), 'outputs':{name:{'sha256':digest(out/name), 'bytes':(out/name).stat().st_size} for name in ['vmlinuz', 'initramfs.cpio.gz', 'cmdline']}, 'bootPurpose':'component acceptance; powers off without workload intake', 'hardwareValidated':False, 'executionAuthorized':False, 'independentReproduction':False}
+    report['pythonBytecode'] = bytecode
+    report['operatingEntryConfigured']=args.operating
+    if args.operating:report['bootPurpose']='one-use operating PID-1 entry; protected execution still requires independent admission'
+    report['nativeRuntime'] = runtime
+    report['runtimeRecipeSHA256'] = digest(recipe)
+    report['vmBudget']={'profile':vm_budget.value,'minimumMemoryBytes':vm_budget.minimum_memory,
+        'minimumCPUs':vm_budget.minimum_cpus,'rootFilePageBytes':root_pages,'rootEntries':len(payload)+1}
     (out / 'build.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report))
 

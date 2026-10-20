@@ -32,13 +32,20 @@ for (const format of ['landscape', 'portrait']) {
 if (fs.existsSync(out)) {
   const resolved = fs.realpathSync(out);
   if (path.dirname(resolved) !== fs.realpathSync(root) || path.basename(resolved) !== 'dist-site') throw Error('Unexpected build-directory target');
-  fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 fs.mkdirSync(out, { recursive: true });
 fs.cpSync(path.join(root, 'web'), out, { recursive: true });
-const bundled = await build({ absWorkingDir: root, entryPoints: [path.join(root, 'web/work.js')], outfile: path.join(out, 'work.js'), bundle: true, format: 'esm', platform: 'browser', target: 'es2023', minify: true, legalComments: 'linked', metafile: true });
+const workPage=path.join(out,'work.html');
+fs.writeFileSync(workPage,fs.readFileSync(workPage,'utf8').replace('<!-- CANNABIS_MARKET_PANEL -->',fs.readFileSync(path.join(root,'operator/market-panel.html'),'utf8')));
+fs.copyFileSync(path.join(root,'operator/market.css'),path.join(out,'market.css'));
+const walletSource={name:'shared-market-wallet',setup(builder){builder.onResolve({filter:/market-wallet\.js$/},args=>{
+  if(path.resolve(args.resolveDir,args.path)===path.join(root,'operator/market-wallet.js'))return {path:path.join(root,'operator/market-wallet-source.js')};
+});}};
+const bundled = await build({ absWorkingDir: root, entryPoints: [path.join(root, 'web/work.js')], outfile: path.join(out, 'work.js'), bundle: true, format: 'esm', platform: 'browser', target: 'es2023', minify: true, legalComments: 'linked', metafile: true,plugins:[walletSource] });
 bundleNotices(bundled.metafile, root, path.join(out, 'work.js.LEGAL.txt'));
-fs.unlinkSync(path.join(out, 'work-results.js')); // bundled; no bare npm imports in public assets
+for(const name of ['work-results.js','work-approvals.js','work-inbox.js','work-relay.js','work-market.js','work-payment.js','market-journal.js','market-order-form.js'])
+  if(fs.existsSync(path.join(out,name)))fs.unlinkSync(path.join(out,name)); // bundled; no bare npm imports
 buildMediaPages(out);
 fs.cpSync(path.join(root, 'docs'), path.join(out, 'docs'), { recursive: true });
 fs.cpSync(path.join(root, 'compute'), path.join(out, 'compute'), { recursive: true,
@@ -70,7 +77,7 @@ for (const entry of fs.readdirSync(path.join(root, 'media/series'), { withFileTy
   }
 }
 const pages = fs.readdirSync(out, { recursive: true }).map(name => name.split(path.sep).join('/')).filter(name => name.endsWith('.html')).sort();
-const assetVersions = new Map(['style.css', 'site.js', 'donate.js', 'docs.js', 'work.js', 'work.css'].map(name => [name, createHash('sha256').update(fs.readFileSync(path.join(out, name))).digest('hex').slice(0, 12)]));
+const assetVersions = new Map(['style.css', 'site.js', 'donate.js', 'docs.js', 'work.js', 'work.css', 'market.css', 'work-market.css'].map(name => [name, createHash('sha256').update(fs.readFileSync(path.join(out, name))).digest('hex').slice(0, 12)]));
 for (const name of pages) {
   let html = fs.readFileSync(path.join(out, name), 'utf8');
   const prefix = '../'.repeat(name.split('/').length - 1) || './';

@@ -155,6 +155,8 @@ def helper_main(group, limits):
     resource.setrlimit(resource.RLIMIT_NOFILE, (128, 128))
     from .client import seal_result
     from .guest_workload import prepare_guest_workload
+    from .guest_artifacts import copy_artifacts
+    from .dependency_bundle import open_dependency_bundle
     from .job_keys import RecoveredJobKey
     raw = bytearray(sys.stdin.buffer.read(MAX_CONTROL + 1))
     try:
@@ -175,6 +177,11 @@ def helper_main(group, limits):
     elif operation == 'seal-result' and set(request) == {'spec', 'taskId', 'packageSHA256', 'root', 'recipient', 'destination', 'attempt', 'rank', 'age'}:
         result = seal_result(request['spec'], request['taskId'], request['packageSHA256'], request['root'],
             request['recipient'], request['destination'], attempt=request['attempt'], rank=request['rank'], age=request['age'])
+    elif operation == 'copy-artifacts' and set(request) == {'root', 'items', 'destination', 'maxBytes'}:
+        result = copy_artifacts(request['root'], request['items'], request['destination'], request['maxBytes'])
+    elif operation == 'decode-dependency' and set(request) == {'spec','handoff','source','identity','destination','age'}:
+        result = open_dependency_bundle(request['spec'], request['handoff'], request['source'], request['identity'].encode('ascii'),
+            request['destination'], age=request['age'])
     else:
         raise ValueError('Unsupported protected helper operation')
     encoded = json.dumps(result, separators=(',', ':'), ensure_ascii=True, allow_nan=False).encode()

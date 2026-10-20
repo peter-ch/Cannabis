@@ -1,0 +1,13 @@
+#!/bin/busybox sh
+# This distinct measured entry has no sample agent or command-line job override.
+. /opt/cannabis/prepare-init
+# Customer process names must never reach a host-visible kernel console. The
+# builder pins console=null; ordinary component-check images retain their logs.
+test "$(/bin/busybox cat /proc/cmdline)" = 'console=null panic=-1 quiet loglevel=0 init=/init' || fail
+# One use per VM: an OOM in any group must retire this guest, including cases
+# where a launcher and its guardians fail together. No crash dump is enabled.
+echo 2 > /proc/sys/vm/panic_on_oom || fail
+echo -1 > /proc/sys/kernel/panic || fail
+/usr/sbin/modprobe virtio_console >/dev/null 2>&1 || fail
+exec /usr/bin/python3 -I -B /opt/cannabis/scripts/compute-guest-boot.py
+fail

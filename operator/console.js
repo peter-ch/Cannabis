@@ -1,3 +1,7 @@
+import {initializeStorage,renderStorage,setStorageConnected} from './results.js';
+import {initializeProvider,renderProvider,setProviderConnected} from './provider.js';
+import {initializeService,renderService,setServiceConnected} from './service.js';
+import {initializeMarket,renderMarket,setMarketConnected} from './market.js';
 const $ = id => document.getElementById(id);
 let paused = false, report = null, pending = false, timer;
 const gib = bytes => (bytes / 2 ** 30).toFixed(1);
@@ -20,6 +24,10 @@ function render(value) {
     title.textContent = item.name; description.textContent = item.detail; li.append(title, description); return li;
   }));
   $('download').disabled = false;
+  renderStorage(value.resultStorage);
+  renderProvider(value.providerApprovals);
+  renderService(value.operatorService);
+  renderMarket(value.market);
 }
 function connection(text, state = 'ok') { $('connection').textContent = text; $('connection').dataset.state = state; }
 function lastObservation() { return report ? new Date(report.observedAt).toLocaleTimeString() : 'none'; }
@@ -34,9 +42,17 @@ async function refresh() {
     if (value.schema !== 'cannabis.worker-console.v1' || !Number.isFinite(age) || age < -5000 || age > 15000 ||
         value.worker?.admitted !== false || value.worker?.acceptingJobs !== false) throw Error('Unsupported report');
     render(value);
+    setStorageConnected(true);
+    setProviderConnected(true);
+    setServiceConnected(true);
+    setMarketConnected(true);
     connection(`${paused ? 'Monitoring paused. Snapshot' : 'Local monitor connected. Observed'} at ${lastObservation()}. Activity belongs to the whole computer.`);
   } catch {
-    connection(`Local monitor unavailable. Last observation: ${lastObservation()}. Displayed readings are stale; worker intake remains unavailable.`, 'error');
+    setStorageConnected(false);
+    setProviderConnected(false);
+    setServiceConnected(false);
+    setMarketConnected(false);
+    connection(`Local monitor unavailable. Last observation: ${lastObservation()}. Displayed readings are stale; service state cannot be confirmed.`, 'error');
     $('download').disabled = true;
   } finally { pending = false; $('refresh').disabled = false; }
 }
@@ -54,4 +70,4 @@ $('download').addEventListener('click', () => {
   const link = document.createElement('a'); link.href = url; link.download = 'cannabis-worker-readiness.json'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
-await refresh(); schedule();
+await initializeStorage(refresh);await initializeProvider(refresh);await initializeService(refresh);await initializeMarket(refresh);await refresh(); schedule();
