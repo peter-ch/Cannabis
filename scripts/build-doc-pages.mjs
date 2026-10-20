@@ -20,6 +20,7 @@ export const guideGroups = [
     ['compute-economy', 'The computing economy', 'How payments, service commitments and real delivery connect.'],
     ['decentralized-compute', 'The decentralized market', 'Independent providers, shared on-chain capacity and direct wallet settlement.'],
     ['universal-compute', 'Package a workload', 'Runtime adapters, task graphs and requester-side result assembly.'],
+    ['requester-workflow', 'Run a booked workflow', 'Your local scheduler, wallet approvals, encrypted dependencies and recovery.'],
     ['compute-payments', 'Job payments', 'Budgets, acceptance, review windows, disputes and refunds.'],
     ['website-orders', 'Website orders', 'Guest recovery, optional accounts, payment readiness and local result decryption.'],
     ['microjobs', 'Small jobs', 'Exact fees and ways to reduce transaction overhead for small payments.'],

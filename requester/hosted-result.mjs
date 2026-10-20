@@ -27,7 +27,7 @@ function abortable(operation,signal) {
 }
 export async function receiveHostedResult(wire,{inbox,approvalDigest,loadResultKey,destination,maxCiphertextBytes,
   signStored,access,origin,timeoutMs,signal,fetchImpl=globalThis.fetch,wait=delay}={}) {
-  const controller=new AbortController(),listeners=[];let timer;
+  const controller=new AbortController(),listeners=[];let timer,stage='access';
   const stop=()=>{if(controller.signal.aborted)return;controller.abort();wire.fail();};
   try {
     check(integer(timeoutMs,1,3600000)&&integer(maxCiphertextBytes,1,MAX_BYTES)&&
@@ -83,6 +83,7 @@ export async function receiveHostedResult(wire,{inbox,approvalDigest,loadResultK
     }
     const selectedInbox={
       receive:async(digest,envelope,load)=>{
+        stage='receipt-authentication';
         const authenticated=await abortable(()=>inbox.receive(digest,envelope,load),controller.signal);
         check(authenticated.receipt.ciphertextSHA256===header.ciphertextSHA256&&
           authenticated.receipt.ciphertextBytes===header.ciphertextBytes&&authenticated.receiptSHA256===hash(header.resultEnvelope));
@@ -93,6 +94,7 @@ export async function receiveHostedResult(wire,{inbox,approvalDigest,loadResultK
     const adapter={
       readJSON:async()=>{
         active();if(first) {
+          stage='result-header';
           first=false;header=await wire.readJSON();active();
           check(fields(header,['protocol','operation','relayId','approvalDigest','resultEnvelope','ciphertextSHA256','ciphertextBytes'])&&
             header.protocol==='cannabis.hosted-result.v1'&&header.operation==='result'&&header.relayId===access.id&&header.approvalDigest===approvalDigest&&
@@ -107,6 +109,7 @@ export async function receiveHostedResult(wire,{inbox,approvalDigest,loadResultK
       readChunk:async()=>{
         active();check(selection&&index<Math.ceil(header.ciphertextBytes/CHUNK));
         if(!manifestChecked) {
+          stage='relay-manifest';
           const raw=await bytes('/manifest','application/json',6*1024*1024+2048);
           const m=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));
           check(fields(m,['schema','id','approvalDigest','expiresAt','chunkBytes','resultEnvelope','ciphertextSHA256','ciphertextBytes'])&&
@@ -114,15 +117,17 @@ export async function receiveHostedResult(wire,{inbox,approvalDigest,loadResultK
             m.chunkBytes===CHUNK&&m.resultEnvelope===header.resultEnvelope&&m.ciphertextSHA256===header.ciphertextSHA256&&m.ciphertextBytes===header.ciphertextBytes);
           manifestChecked=true;
         }
+        stage='relay-chunks';
         const count=Math.min(CHUNK,header.ciphertextBytes-index*CHUNK),chunk=await bytes('/chunks/'+index,'application/octet-stream',count);
         check(chunk.length===count);active();index++;return chunk;
       },
-      writeJSON:async ack=>{active();await wire.writeJSON(ack);active();},
+      writeJSON:async ack=>{stage='storage-acknowledgement';active();await wire.writeJSON(ack);active();},
       assertActive:active,fail:stop
     };
     const result=await receiveEncryptedResult(adapter,{inbox:selectedInbox,approvalDigest,loadResultKey,destination,maxCiphertextBytes,
-      signStored:async payload=>{active();const signature=await abortable(()=>signStored(payload),controller.signal);active();return signature;}});
+      signStored:async payload=>{stage='storage-approval';active();const signature=await abortable(()=>signStored(payload),controller.signal);active();return signature;}});
     active();return Object.defineProperty({...result,transport:'hosted-relay'},'resultEnvelope',{value:header.resultEnvelope,enumerable:false});
-  } catch {stop();throw Error('Hosted result retrieval failed; retain requester recovery material and any published ciphertext');}
+  } catch {stop();const error=Error('Hosted result retrieval failed; retain requester recovery material and any published ciphertext');
+    Object.defineProperty(error,'transportStage',{value:stage});throw error;}
   finally{clearTimeout(timer);for(const s of listeners)s.removeEventListener('abort',stop);}
 }

@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cannabis · Requester workflow</title><link rel="stylesheet" href="/workflow.css"></head>
+<body><main><p class="eyebrow">Cannabis / Local requester</p><h1>Your work. Your approvals.</h1>
+<p>Run the providers and tasks in your reviewed booking plan. Keep this window open for wallet approvals.</p>
+<p class="notice">Execution still requires verified confidential hardware and active funding. This console does not approve payments.</p>
+<div class="actions"><button id="connect">Connect wallet</button><button id="start">Start reviewed workflow</button></div>
+<p id="message" role="status" aria-live="polite">Connecting to your local workflow…</p>
+<section><h2>Booked tasks</h2><div id="tasks"></div></section>
+<section><h2>Awaiting your review</h2><p>Approve each request explicitly. Input and key-release signatures authorize the selected execution; a storage signature acknowledges receipt only.</p>
+<div id="requests"></div></section><p class="foot">Recovery retains uncertain launches. It never starts the same booking again automatically.</p>
+</main><script type="module" src="/workflow-ui.js"></script></body></html>

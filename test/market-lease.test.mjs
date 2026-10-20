@@ -6,7 +6,7 @@ import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { spawnSync,execFileSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { AbiCoder, ContractFactory, formatUnits, keccak256, ZeroAddress } from 'ethers';
 import { compile } from '../scripts/compile.mjs';
@@ -39,6 +39,14 @@ import {stageOperatingGuest,relayOperatingGuest} from '../operator/guest-boot-ch
 import {operatingBootFixture} from './helpers/operating_boot_fixture.mjs';
 import {inspectExecutionPlan,taskCommitment} from '../compute/execution_plan.mjs';
 import {dependencyHandoffPayload} from '../compute/dependency_handoff.mjs';
+import {RequesterWorkflow,readWorkflow} from '../requester/workflow.mjs';
+import {receiveEncryptedInput} from '../compute/input_transport.mjs';
+import {sendEncryptedResult} from '../compute/result_transport.mjs';
+import {createWorkServer} from '../service/work-server.mjs';
+import {ResultSpool} from '../operator/result-spool.mjs';
+import {bridgeEncryptedResult} from '../operator/result-bridge.mjs';
+import {GuestWire} from '../compute/result_transport.mjs';
+import {PassThrough} from 'node:stream';
 
 const h = n => '0x' + n.toString(16).padStart(64, '0');
 const utc = n => new Date(n * 1000).toISOString().replace('.000Z', 'Z');
@@ -91,7 +99,7 @@ contract MarketConsentWallet {
 });
 after(() => { provider?.destroy(); node?.child.kill(); });
 
-async function setup({ token = false, activate = true, execution, contractProvider = false, planned = false, sequential = false } = {}) {
+async function setup({ token = false, activate = true, execution, contractProvider = false, planned = false, sequential = false, descriptor } = {}) {
   await provider.send('evm_revert', [initial]); initial = await provider.send('evm_snapshot', []);
   let time = (await provider.getBlock('latest')).timestamp;
   await provider.send('evm_setNextBlockTimestamp', [time + 1]); await provider.send('evm_mine', []); ++time;
@@ -114,13 +122,14 @@ async function setup({ token = false, activate = true, execution, contractProvid
   const job = { schema: 'cannabis.compute.order.v2', id: 'market-private-job', requester: account, packageSHA256: h(70).slice(2),
     policySHA256: h(71).slice(2), acceptanceSHA256: h(72).slice(2),
     payment: { totalBudget: formatUnits(20000n, 18), feeBasisPoints: 100, founderRecipient: policy.founderRecipient } };
+  if(descriptor){job.packageSHA256=descriptor.ciphertextSHA256;job.policySHA256=descriptor.policySHA256;}
   const settlement = { workers: addresses.map(account => ({ account, shareBps: 5000 })), deliveryManager: addresses[0],
     adjudicator: await judge.getAddress(), acceptBy: utc(time + 800), deliverBy: utc(end + 60), reviewSeconds: 86400, disputeSeconds: 86400 };
   let executionPlan;
   if(planned) {
     executionPlan=inspectExecutionPlan({schema:'cannabis.execution-plan.v1',chainId:31337,genesisHash:network.genesisHash,
       market:network.market,escrow:network.escrow,token:network.token,requester:account,jobId:job.id,packageSHA256:job.packageSHA256,policySHA256:job.policySHA256,
-      requirements:addresses.map((_,task)=>({task,taskSHA256:taskCommitment(job.packageSHA256,task),dependsOn:sequential&&task===1?[0]:[],
+      requirements:descriptor?.requirements??addresses.map((_,task)=>({task,taskSHA256:taskCommitment(job.packageSHA256,task),dependsOn:sequential&&task===1?[0]:[],
         runtime:execution?.profile.runtime??{adapter:'native-linux-x86_64-v1',architecture:'x86_64',os:'linux',digestSHA256:h(73).slice(2)},
         resources:execution?.profile.resources??{cpus:1,memoryMiB:128,scratchMiB:8,wallSeconds:60,nodes:1}})),
       assignments:addresses.map((provider,i)=>({task:i,rank:0,attempt:1,acceleratorClass:'cpu',provider,serviceSHA256:execution?nativeServiceCommitment(execution).serviceSHA256:h(20+i),
@@ -150,7 +159,8 @@ async function setup({ token = false, activate = true, execution, contractProvid
   time = (await provider.getBlock('latest')).timestamp;
   const input = { job, settlement, bookingIds: ids,...(planned?{executionPlan}:{}) };
   const proof = activate ? await createMarketLeaseProof(network, input, clock) : null;
-  const run = planned?verifyMarketLeaseProof(proof,context).assignments.find(a=>a.task===(sequential?1:0)).run:
+  const plannedAssignments=planned?verifyMarketLeaseProof(proof,context).assignments:undefined;
+  const run = planned?(sequential?plannedAssignments.find(a=>a.task===1):plannedAssignments[0]).run:
     { runtimeSHA256: execution?.profile.runtime.digestSHA256??h(73).slice(2), taskSHA256: h(74).slice(2), attempt: 1, rank: 0, worldSize: 1, acceleratorClass: 'cpu' };
   const setTime = async value => { time = value; await provider.send('evm_setNextBlockTimestamp', [time]); await provider.send('evm_mine', []); };
   return { network, context, input, proof, clock, setTime, start, end, escrow, orderId, ids, run, addresses, workerCall };
@@ -1082,6 +1092,126 @@ test('dependent launch preserves signed input after the upstream booking ends an
   await (await x.escrow.connect(workers[0]).deliver(x.orderId,h(195))).wait();
   await assert.rejects(prepareGuestLaunch(x.source.consent,x.initialization,request,{clock:x.clock}),/fully accepted active/);
   await assert.rejects(funding.refresh(),/fully accepted active/);
+});
+
+test('requester workflow runs the complete funded dependency plan over TLS and recovers without relaunch',async t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'cannabis-workflow-')),age=process.env.CANNABIS_AGE||'age',
+    python=process.env.CANNABIS_PYTHON||'python',fixtureScript=path.resolve('test/helpers/dependency_bundle_fixture.py');
+  const fixture=(action,extra={})=>{
+    const input=Buffer.from(JSON.stringify({root,age,action,...extra}));
+    try{return JSON.parse(execFileSync(python,[fixtureScript],{input,encoding:'utf8',windowsHide:true,stdio:['pipe','pipe','ignore'],timeout:60000,maxBuffer:1024*1024}));}
+    finally{input.fill(0);}
+  };
+  const packaged=fixture('setup',{workflow:true}),f=launchFixture(),profile=f.configuration.execution.profile;
+  profile.schema='cannabis.guest-native-service.v3';profile.maxDependencyBytes=1024;
+  profile.ciphertext.dependencyBytes=4*1024**2;profile.ciphertext.bytes+=profile.ciphertext.dependencyBytes;
+  const d=await setup({execution:f.configuration.execution,sequential:true,descriptor:packaged.descriptor});await d.setTime(d.start+1);
+  const lease=verifyMarketLeaseProof(d.proof,d.context),signer=generateKeyPairSync('ec',{namedCurve:'prime256v1'}),contexts=new Map(),handled=[],failures=[];
+  const trustee=http.createServer(async(req,res)=>{
+    try {const chunks=[];for await(const b of req)chunks.push(b);const input=JSON.parse(Buffer.concat(chunks)),
+      nonce=input.verification_requests[0].runtime_data.structured.nonce,x=contexts.get(nonce);assert.ok(x);
+      assert.equal(input.verification_requests[0].evidence,Buffer.from('SYNTHETIC OWNED WORKFLOW EVIDENCE').toString('base64url'));
+      res.end(syntheticEAR(signer,x.policy,x.challenge,x.jwk,d.clock()));
+    }catch{res.writeHead(400);res.end();}
+  });await new Promise(r=>trustee.listen(0,'127.0.0.1',r));
+  const resultPort=await port(),resultOrigin='http://127.0.0.1:'+resultPort,
+    hosted=createWorkServer({file:':memory:',resultFile:':memory:',origin:resultOrigin});
+  await new Promise(r=>hosted.server.listen(resultPort,'127.0.0.1',r));
+  const spoolDir=path.join(root,'spool');fs.mkdirSync(spoolDir);const spool=new ResultSpool(spoolDir,{create:true});
+  const assignments=[];
+  for(const planned of lease.assignments) {
+    const r=lease.reservations.find(r=>r.reservationId===planned.reservationId),configuration={...structuredClone(f.configuration),
+      schema:'cannabis.guest-launch-configuration.v3',context:d.context,network:d.network,provider:r.provider,resourceId:r.resourceId,
+      validFrom:d.start-10,validUntil:d.end+10};
+    configuration.attestationPolicyTemplate.signingJwk=signer.publicKey.export({format:'jwk'});
+    const binding=configuredMarketAttestationBinding(d.proof,d.context,r.reservationId,planned.run,validateGuestConfiguration(configuration).configurationSHA256,r.start),
+      initialization={schema:'cannabis.guest-initialization.v2',tee:'snp',requester:lease.requester,jobId:lease.job.id,binding};
+    const signed=(await bookedConsent({...d,clock:()=>r.start,configuration,initialization,lease,r})).signed;
+    assignments.push({task:planned.task,r,configuration,initialization,signed});
+  }
+  const routes=assignments.map(a=>({signed:a.signed,initialization:a.initialization,proof:d.proof,
+    signApproval:p=>workers[d.addresses.indexOf(a.r.provider)].signTypedData(p.domain,p.types,p.value),handle:async channel=>{
+      let opened;const wires=[];
+      try {
+        handled.push(a.task);const ticket=await receiveLaunchHandoff(channel,{signed:a.signed,initialization:a.initialization,proof:d.proof},{clock:d.clock}),
+          launch=consumeLaunchHandoff(ticket).launch;
+        await receiveEncryptedInput(channel,{destination:path.join(root,'received-'+a.task+'.age'),packageSHA256:packaged.descriptor.ciphertextSHA256,maxCiphertextBytes:profile.ciphertext.inputBytes});
+        if(launch.dependency)await receiveEncryptedInput(channel,{destination:path.join(root,'received-dependency.age'),
+          packageSHA256:launch.dependency.signed.handoff.ciphertextSHA256,maxCiphertextBytes:profile.ciphertext.dependencyBytes});
+        const channelKey=generateKeyPairSync('ec',{namedCurve:'prime256v1'}),jwk=channelKey.publicKey.export({format:'jwk'}),challenge=launch.challenge;
+        contexts.set(challenge.nonce,{policy:launch.policy,challenge,jwk});
+        await channel.writeJSON({protocol:'cannabis.guest-wire.v1',operation:'evidence',evidence:{nonce:challenge.nonce,channelJwk:jwk,
+          evidence:Buffer.from('SYNTHETIC OWNED WORKFLOW EVIDENCE').toString('base64url')}});
+        const command=await channel.readJSON();assert.equal(command.operation,'execute');
+        opened=await openJobKeyDelivery(command.envelope,channelKey.privateKey,command.expected,{clock:d.clock,
+          ageKeygen:path.join(path.dirname(age),process.platform==='win32'?'age-keygen.exe':'age-keygen')});
+        assert.equal(command.expected.domain.version,a.task===0?'3':'4');
+        const output=a.task===0?packaged.results[0]:fixture('workflow-result',{handoff:launch.dependency.signed.handoff,identity:opened.identity});
+        const envelope=await sealResultDelivery(output.receipt,opened.resultKey,command.expected);
+        const reserved=hosted.relay.reserve({approvalDigest:command.expected.digest,maxCiphertextBytes:profile.ciphertext.outputBytes,expiresAt:Date.now()+3600000});
+        const {uploadToken,readToken,...common}=reserved,
+          upload={...common,origin:resultOrigin,role:'upload',token:uploadToken},read={...common,origin:resultOrigin,role:'read',token:readToken};
+        await channel.writeJSON({protocol:'cannabis.hosted-session.v1',operation:'result-access',approvalDigest:command.expected.digest,access:read});
+        assert.equal((await channel.readJSON()).operation,'result-access-ready');
+        const left=new PassThrough(),right=new PassThrough(),guest=new GuestWire(left,right,{timeoutMs:20000}),bridge=new GuestWire(right,left,{timeoutMs:20000});wires.push(guest,bridge);
+        const reservation=spool.reserve({expected:command.expected,maxCiphertextBytes:profile.ciphertext.outputBytes,serviceEnd:a.r.end});
+        spool.dispatch(reservation);
+        await Promise.all([sendEncryptedResult(guest,{ciphertext:output.file,resultEnvelope:envelope},command.expected,{maxCiphertextBytes:profile.ciphertext.outputBytes}),
+          bridgeEncryptedResult(bridge,channel,{expected:command.expected,access:upload,origin:resultOrigin,reservation,maxCiphertextBytes:profile.ciphertext.outputBytes,timeoutMs:20000,wait:async()=>{}})]);
+      }catch(error){failures.push(error.message);throw error;}finally{opened?.resultKey.fill(0);for(const wire of wires){wire.fail();wire.close();}}
+    }}));
+  const listener=await localListener(d,routes);t.after(async()=>{
+    await listener.close();trustee.closeAllConnections();await new Promise(r=>trustee.close(r));
+    hosted.server.closeAllConnections();await new Promise(r=>hosted.server.close(r));spool.close();
+    assert.equal(path.dirname(fs.realpathSync(root)),fs.realpathSync(os.tmpdir()));fs.rmSync(root,{recursive:true,force:true});
+  });
+  const write=(name,value)=>{const file=path.join(root,name);fs.writeFileSync(file,JSON.stringify(value));return file;};
+  const cert=path.join(root,'fixture-ca.pem');fs.writeFileSync(cert,tlsFixture.cert);
+  const spec={schema:'cannabis.requester-workflow.v1',proofFile:write('lease.json',d.proof),descriptorFile:path.join(root,'job/descriptor.json'),
+    manifestFile:path.join(root,'workload.json'),ciphertextFile:path.join(root,'job/workload.age'),directory:path.join(root,'requester'),
+    keySource:{python:process.platform==='win32'?execFileSync('where.exe',['python'],{encoding:'utf8'}).trim().split(/\r?\n/)[0]:execFileSync('which',['python3'],{encoding:'utf8'}).trim(),
+      age,identity:path.join(root,'owner.key'),capsule:path.join(root,'job/job-key.age'),descriptor:path.join(root,'job/descriptor.json')},
+    reconstruction:{python:'',age,identity:path.join(root,'owner.key')},resultRecipient:packaged.spec.resultRecipient,maxParallel:1,maxStoredBytes:64*1024**2,
+    assignments:assignments.map(a=>({reservationId:a.r.reservationId,origin:listener.origin,resultOrigin,
+      consentFile:write('consent-'+a.task+'.json',a.signed),initializationFile:write('init-'+a.task+'.json',a.initialization),
+      trusteeEndpoint:'http://127.0.0.1:'+trustee.address().port+'/attestation',caFile:cert}))};
+  spec.reconstruction.python=spec.keySource.python;
+  const config=write('workflow.json',spec),workflow=new RequesterWorkflow(readWorkflow(config),{create:true,clock:d.clock});
+  const controller=new AbortController();t.after(()=>controller.abort());
+  const source=assignments.find(a=>a.task===0);
+  let interruptStorage=true;
+  const signApproval=({kind,reservationId,payload})=>{
+    if(interruptStorage&&kind==='stored'&&reservationId===source.r.reservationId)throw Error('Owned interruption after durable result publication');
+    return owner.signTypedData(payload.domain,payload.types,payload.value);
+  };
+  let running=workflow.run({signApproval,signal:controller.signal});
+  try {
+    const interrupted=await running;
+    assert.equal(interrupted.slots.find(r=>r.reservationId===source.r.reservationId).state,'uncertain');
+    assert.equal(interrupted.slots.find(r=>r.reservationId!==source.r.reservationId).state,'queued');
+    assert.deepEqual(handled,[0]);interruptStorage=false;
+    // Only this owned test copy is removed; the provider retains the complete
+    // uploaded ciphertext. Recovery downloads it without a peer relaunch.
+    fs.unlinkSync(path.join(spec.directory,source.r.reservationId.slice(2),'result.age'));
+    const restored=await workflow.recover(source.r.reservationId,{signApproval,signal:controller.signal});
+    assert.equal(restored.executionRetried,false);assert.equal(restored.storageSignatureForwarded,false);assert.deepEqual(handled,[0]);
+    const interruption=path.join(spec.directory,source.r.reservationId.slice(2),'interrupted.json');
+    assert.equal(workflow.snapshot().slots.find(r=>r.reservationId===source.r.reservationId).state,'stored',
+      failures.join(' | ')+' '+(fs.existsSync(interruption)?fs.readFileSync(interruption,'utf8'):''));
+    await d.setTime(d.start+101);running=workflow.run({signApproval,signal:controller.signal});const report=await running;
+    assert.ok(report.slots.every(r=>r.state==='stored'),failures.join(' | '));assert.deepEqual(handled,[0,1]);
+    assert.equal(report.paymentAuthorized,false);
+    const assembled=await workflow.assemble(path.join(root,'assembled'));assert.equal(assembled.integrityVerified,true);
+    assert.equal(fs.readFileSync(path.join(root,'assembled/answer.txt'),'utf8'),'42');
+    // The real input/consent files can go away after delivery. Recovery opens
+    // the retained manifest and never repeats a network launch or signature.
+    fs.unlinkSync(spec.ciphertextFile);fs.unlinkSync(spec.manifestFile);fs.unlinkSync(spec.proofFile);
+    for(const a of spec.assignments)fs.unlinkSync(a.consentFile);
+  }finally{controller.abort();await running.catch(()=>{});workflow.close();}
+  const recovered=new RequesterWorkflow(readWorkflow(path.join(spec.directory,'config.json'),{verifyInput:false}),{clock:d.clock});
+  try {for(const a of assignments)assert.equal((await recovered.recover(a.r.reservationId)).executionRetried,false);
+    assert.deepEqual(handled,[0,1]);assert.throws(()=>new RequesterWorkflow(readWorkflow(path.join(spec.directory,'config.json'),{verifyInput:false}),{create:true,clock:d.clock}));
+  }finally{recovered.close();}
 });
 
 test('launch handoff retains exact public boot files and refuses copied or reused capabilities',async t=>{

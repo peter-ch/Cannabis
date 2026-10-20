@@ -195,7 +195,10 @@ funding, key delivery, resource refusal and requester reconstruction. New measur
 images, hardware admission and independent review are still required before
 operating this version. No founder coordinator is required: the requester controls
 its own handoff. Direct protected peer transfers, collective execution and
-automated dispatch across the complete workflow remain separate work.
+additional runtime admission remain separate work. The [requester workflow
+client](requester-workflow.md) now schedules a complete supported native plan,
+retains each dispatch before network handoff, requests explicit wallet approvals
+and recovers results without repeating an uncertain launch.
 
 ### Adapter requirements
 
