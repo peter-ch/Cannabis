@@ -19,6 +19,31 @@ def phase(name):
     print('CANNABIS_CHECK_PHASE ' + name, flush=True)
 
 
+def owned_workflow_checks(name, modes, timeout, extra_summary=None):
+    """Accept every named case and the final cleanup report, with no omissions."""
+    phase(name)
+    check = subprocess.run(['/usr/bin/python3', '-I', '-B',
+                            '/opt/cannabis/scripts/check-guest-' + name + '.py'],
+                           capture_output=True, timeout=timeout)
+    if check.returncode:
+        print('CANNABIS_' + name.upper() + '_FAILURE ' +
+              check.stderr.decode(errors='replace')[-8192:].replace('\n', ' | '), flush=True)
+        raise RuntimeError('Owned workflow acceptance failed')
+    if len(check.stdout) > 65536:
+        raise RuntimeError('Oversized owned workflow report')
+    rows = [json.loads(line) for line in check.stdout.splitlines()]
+    summary = {'checks': len(modes), 'cleanupVerified': True,
+               'hardwareAdmissionEstablished': False, 'realPaidJob': False}
+    summary.update(extra_summary or {})
+    expected = [{'mode': mode, 'passed': True} for mode in modes] + [summary]
+    if rows != expected:
+        raise RuntimeError('Incomplete or unexpected owned workflow report')
+    return {'schema': 'cannabis.guest-' + name + '-check.v1', 'kernel': os.uname().release,
+            'checks': {mode: True for mode in modes}, 'cleanupVerified': True,
+            'hardwareAdmissionEstablished': False, 'realPaidJob': False,
+            'paymentAccepted': False}
+
+
 def main():
     os.umask(0o077)
     processes = []
@@ -155,6 +180,14 @@ def main():
             print('CANNABIS_NATIVE_FAILURE ' + native.stderr.decode(errors='replace')[-8192:].replace('\n', ' | '), flush=True)
             raise RuntimeError('Encrypted native execution acceptance failed')
         native_checks = json.loads(native.stdout)
+        graph_checks = owned_workflow_checks('graph',
+            ('success', 'single-command', 'failed-step', 'symlink-output', 'hardlink-output',
+             'fifo-output', 'intermediate-quota', 'cancel-between-steps', 'shared-deadline'),
+            540, {'paymentAccepted': False})
+        dependency_checks = owned_workflow_checks('dependencies',
+            ('success', 'wrong-context', 'altered-ciphertext', 'missing-capsule', 'input-budget',
+             'combined-quota', 'cancel-after-input', 'deadline', 'channel-success', 'channel-input-refusal'),
+            900)
         phase('aggregate_job_boundary')
         job = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-job.py'], capture_output=True, timeout=180)
         if job.returncode:
@@ -173,7 +206,7 @@ def main():
             print('CANNABIS_LAUNCHER_FAILURE '+launcher.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
             raise RuntimeError('Outer launch transport checks failed')
         launcher_checks=json.loads(launcher.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'runtimeChecks':runtime_checks, 'ciphertextChecks':ciphertext_checks, 'vmChecks':vm_checks, 'supervisionChecks':supervision_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'graphChecks': graph_checks, 'dependenciesChecks': dependency_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'runtimeChecks':runtime_checks, 'ciphertextChecks':ciphertext_checks, 'vmChecks':vm_checks, 'supervisionChecks':supervision_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:

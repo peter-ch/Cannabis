@@ -169,6 +169,17 @@ def main():
             or any(native.get(k) is not False for k in ['customerCodeExecuted', 'hardwareValidated', 'realPaidJob'])
             or any(native.get(k) is not True for k in ['ownedEncryptedExecution', 'requesterReconstruction'])):
         raise ValueError('Encrypted guest execution checks did not pass')
+    workflow_cases = {
+        'graph': {'success', 'single-command', 'failed-step', 'symlink-output', 'hardlink-output',
+                  'fifo-output', 'intermediate-quota', 'cancel-between-steps', 'shared-deadline'},
+        'dependencies': {'success', 'wrong-context', 'altered-ciphertext', 'missing-capsule', 'input-budget',
+                         'combined-quota', 'cancel-after-input', 'deadline', 'channel-success', 'channel-input-refusal'}}
+    for name, cases in workflow_cases.items():
+        expected = {'schema': 'cannabis.guest-' + name + '-check.v1', 'kernel': report['kernelRelease'],
+                    'checks': {case: True for case in cases}, 'cleanupVerified': True,
+                    'hardwareAdmissionEstablished': False, 'realPaidJob': False, 'paymentAccepted': False}
+        if result.get(name + 'Checks') != expected:
+            raise ValueError('Guest workflow acceptance checks did not pass: ' + name)
     job_cases = {'childCountBound', 'parentEntryRejected', 'retainedLeafHandlesAfterParentCleanup',
         'partialLeafCleanup', 'aggregateOOMKillsAllLeaves', 'aggregatePIDLimit', 'pinnedControlAndWorkloadCompletion',
         'busyControlExitRefused', 'stoppedControlAndDetachedWorkloadRetired', 'wholeTreeDeadline',
