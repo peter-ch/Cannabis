@@ -60,7 +60,7 @@ def fixture_files(root,parent):
 def request():
     # Public framing fixture only. The real Node entry obtains this exclusively
     # from its genuine booked-channel ticket; no report is appraised here.
-    init=json.dumps({'schema':'cannabis.guest-initialization.v2','tee':'snp'},sort_keys=True,separators=(',',':'))
+    init=json.dumps({'schema':'cannabis.guest-initialization.v2','tee':'snp','binding':{'rank':0,'worldSize':1}},sort_keys=True,separators=(',',':'))
     return {'schema':'cannabis.host-vm-request.v1','initialization':init,'initData':hashlib.sha256(init.encode()).hexdigest(),
         'expectedLaunchDigest':'11'*48,'serviceStart':int(time.time())-1,'serviceEnd':int(time.time())+12,'timeoutMs':10000}
 
@@ -119,6 +119,32 @@ def main():
                 finally:(parent/'residual').rmdir()
                 data=request();owner_fd=os.pidfd_open(os.getpid());life,remote=socket.socketpair();control,guest=socket.socketpair()
                 try:
+                    # The group transport must match the retained rank count,
+                    # profile and guest port before any VM slot is allocated.
+                    group_init=json.loads(data['initialization']);group_init['binding']['worldSize']=2
+                    group_init=json.dumps(group_init,sort_keys=True,separators=(',',':'))
+                    grouped={**data,'initialization':group_init,'initData':hashlib.sha256(group_init.encode()).hexdigest()}
+                    try:request_checked(grouped)
+                    except ValueError:checks['groupRequestCannotDowngrade']=True
+                    else:raise AssertionError('Group used the single-rank transport')
+                    grouped.update(schema='cannabis.host-vm-request.v2',groupPort=29420)
+                    try:OwnedSnpVm(profile,grouped,guest.fileno(),owner_fd,life.fileno())
+                    except ValueError:checks['groupRequiresForwardingProfile']=not any(p.is_dir() for p in parent.iterdir())
+                    else:raise AssertionError('Group used an unforwarded profile')
+                    group_value={**value,'schema':'cannabis.host-snp-profile.v2',
+                        'groupIngress':{'bindHost':'127.0.0.1','hostPort':29421,'guestPort':29420}}
+                    group_file=root/'group-profile.json';group_file.write_text(json.dumps(group_value))
+                    group_profile=SnpProfile(str(group_file))
+                    try:
+                        for label,changed in [('groupPortMismatchBeforeAllocation',{**grouped,'groupPort':29422}),
+                                              ('singleRankCannotSelectGroupForwarding',data)]:
+                            try:OwnedSnpVm(group_profile,changed,guest.fileno(),owner_fd,life.fileno())
+                            except ValueError:checks[label]=not any(p.is_dir() for p in parent.iterdir())
+                            else:raise AssertionError('Mismatched transport allocated a VM')
+                        try:OwnedSnpVm(group_profile,grouped,guest.fileno(),owner_fd,life.fileno())
+                        except (OSError,RuntimeError):checks['groupStillRequiresActualHardware']=not any(p.is_dir() for p in parent.iterdir())
+                        else:raise AssertionError('Group admitted unsupported hardware')
+                    finally:group_profile.close()
                     try:OwnedSnpVm(profile,data,guest.fileno(),owner_fd,life.fileno())
                     except (OSError,RuntimeError):checks['unsupportedHardwareRefusedBeforeAllocation']=not any(p.is_dir() for p in parent.iterdir())
                     else:raise AssertionError('This negative checkpoint requires a host without SNP')
