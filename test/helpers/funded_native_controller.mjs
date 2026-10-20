@@ -1,11 +1,12 @@
 // Owned requester integration fixture. A separate guarded guest uses only the
 // encrypted wire. Synthetic appraisal and loopback chain; not a service launcher.
 import fs from 'node:fs';
+import http from 'node:http';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { Socket } from 'node:net';
-import { ContractFactory, formatUnits, keccak256, ZeroAddress } from '../../node_modules/ethers/lib.esm/index.js';
+import { AbiCoder, ContractFactory, formatUnits, keccak256, ZeroAddress } from '../../node_modules/ethers/lib.esm/index.js';
 import { localProvider } from '../../scripts/lib.mjs';
 import { compile } from '../../scripts/compile.mjs';
 import { bookingPayload } from '../../compute/market.mjs';
@@ -26,6 +27,7 @@ import { receiveSessionResultAccess } from '../../requester/session-access.mjs';
 import { receiveHostedResult } from '../../requester/hosted-result.mjs';
 import { connectBookedPeer } from '../../compute/peer_network.mjs';
 import { sendLaunchHandoff } from '../../compute/launch_handoff.mjs';
+import { encodeProviderManifest, readProviderManifest } from '../../compute/provider_manifest.mjs';
 import tlsFixture from '../../test/helpers/peer-tls-fixture.json' with {type:'json'};
 
 const h=n=>'0x'+n.toString(16).padStart(64,'0');
@@ -52,7 +54,15 @@ function syntheticEAR(key,attestationPolicy,challenge,channel) {
 
 let raw='';for await(const part of process.stdin)raw+=part;
 const input=JSON.parse(raw),provider=await localProvider(input.rpc);
-let capacity,attestations,inbox;
+let capacity,attestations,inbox,selectedPeer;const mirrors=[];
+async function mirror(bytes) {
+  const requests=[],server=http.createServer((req,res)=>{
+    requests.push({url:req.url,authorization:req.headers.authorization,cookie:req.headers.cookie});
+    res.writeHead(200,{'Content-Type':'application/json','Content-Length':bytes.length});res.end(bytes);
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));mirrors.push(server);
+  return {origin:'http://127.0.0.1:'+server.address().port,requests};
+}
 const bootstrapWire=new GuestWire(new Socket({fd:input.wireFDs.read,readable:true,writable:false}),
   new Socket({fd:input.wireFDs.write,readable:false,writable:true}),{timeoutMs:100000});
 let wire=bootstrapWire;
@@ -70,6 +80,10 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
   const tokenEscrow=await new ContractFactory(artifact.abi,artifact.bytecode,requester).deploy(await token.getAddress(),policy.founderRecipient);await tokenEscrow.waitForDeployment();
   const market=await new ContractFactory(artifacts.ComputeMarket.abi,artifacts.ComputeMarket.bytecode,requester).deploy(address,await tokenEscrow.getAddress());await market.waitForDeployment();
   const context={chainId:31337,market:await market.getAddress(),token:ZeroAddress};
+  const network={rpc:input.rpc,chainId:31337,token:ZeroAddress,escrow:address,
+    genesisHash:(await provider.getBlock(0)).hash,escrowCodeHash:keccak256(await provider.getCode(address)),tokenCodeHash:null,
+    finality:'rpc-finalized',maxFinalizedAgeSeconds:1800,maxHeadAgeSeconds:120,
+    market:context.market,marketCodeHash:keccak256(await provider.getCode(context.market))};
   const service=nativeServiceCommitment(input.execution);
   const now=clock(),start=Math.max(now,(await provider.getBlock('latest')).timestamp)+15,end=start+120;
   const gross=12000n;
@@ -77,8 +91,37 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
   const resourceId=await market.resourceKey(workerAccount,h(2));
   const offer={resource:resourceId,escrow:address,policyHash:'0x'+input.descriptor.policySHA256,manifestHash:h(4),
     start,end,expiresAt:start,units:1,grossPerUnitSecond:'100'};
+  const predictedOffer=keccak256(AbiCoder.defaultAbiCoder().encode(['address','bytes32'],[workerAccount,h(3)]));
+  let encodedManifest;
+  if(input.independentNetwork) {
+    const {manifestHash,...terms}=offer;
+    encodedManifest=encodeProviderManifest({schema:'cannabis.provider-manifest.v1',chainId:'31337',
+      genesisHash:network.genesisHash,market:context.market,offerId:predictedOffer,
+      resource:{id:resourceId,provider:workerAccount,serviceHash:service.serviceSHA256,units:String(service.units)},
+      offer:Object.fromEntries(Object.entries(terms).map(([k,v])=>[k,String(v)])),
+      endpoints:['booking','session'].map(role=>({role,origin:input.independentNetwork.peerOrigin})),
+      runtimes:[{...input.execution.profile.runtime,digestSHA256:'0x'+input.execution.profile.runtime.digestSHA256,
+        tee:'snp',acceleratorClass:'cpu'}],
+      terms:'Owned independent-network check. Synthetic appraisal, no real capacity or payment.'});
+    offer.manifestHash=encodedManifest.manifestHash;
+  }
   const offered=await (await market.connect(worker).publishOffer(h(3),offer)).wait();
   const offerId=offered.logs.map(l=>{try{return market.interface.parseLog(l);}catch{return null;}}).find(e=>e?.name==='OfferPublished').args.offerId;
+  assert.equal(offerId,predictedOffer);
+  if(input.independentNetwork) {
+    const bad=await mirror(Buffer.from('{}\n')),good=await mirror(encodedManifest.bytes);
+    const observed=await readProviderManifest(network,{offerId,fromBlock:offered.blockNumber,toBlock:offered.blockNumber,
+      mirrors:[bad.origin,good.origin]});
+    assert.equal(observed.chainVerified,true);assert.equal(observed.mirror,good.origin);
+    assert.equal(observed.hardwareValidated,false);assert.equal(observed.keyReleaseAuthorized,false);
+    assert.equal(observed.manifest.resource.provider,workerAccount);
+    selectedPeer=observed.manifest.endpoints.find(e=>e.role==='session').origin;
+    for(const endpoint of [bad,good]) {
+      assert.equal(endpoint.requests.length,1);
+      assert.equal(endpoint.requests[0].url,'/.well-known/cannabis/manifests/sha256/'+offer.manifestHash.slice(2)+'.json');
+      assert.equal(endpoint.requests[0].authorization,undefined);assert.equal(endpoint.requests[0].cookie,undefined);
+    }
+  }
   const job={schema:'cannabis.compute.order.v2',id:input.descriptor.id,requester:account,
     packageSHA256:input.descriptor.ciphertextSHA256,policySHA256:input.descriptor.policySHA256,acceptanceSHA256:h(6).slice(2),
     payment:{totalBudget:formatUnits(gross,18),feeBasisPoints:100,founderRecipient:policy.founderRecipient}};
@@ -93,10 +136,6 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
   await (await escrow.fund(terms.terms,terms.accounts,terms.shares,{value:gross})).wait();
   await (await escrow.connect(worker).accept(orderId)).wait();
   await (await market.activate([rp.digest])).wait();
-  const network={rpc:input.rpc,chainId:31337,token:ZeroAddress,escrow:address,
-    genesisHash:(await provider.getBlock(0)).hash,escrowCodeHash:keccak256(await provider.getCode(address)),tokenCodeHash:null,
-    finality:'rpc-finalized',maxFinalizedAgeSeconds:1800,maxHeadAgeSeconds:120,
-    market:context.market,marketCodeHash:keccak256(await provider.getCode(context.market))};
   const proof=await createMarketLeaseProof(network,{job,settlement,bookingIds:[rp.digest]});
   const lease=verifyMarketLeaseProof(proof,context);
   // Advance the fixture chain only when actual UTC enters the reserved interval.
@@ -133,10 +172,12 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
     const ready=await bootstrapWire.readJSON(1024);
     assert.deepEqual(Object.keys(ready).sort(),['origin','protocol']);assert.equal(ready.protocol,'cannabis.owned-peer-ready.v1');
     const endpoint=new URL(ready.origin);assert.equal(endpoint.hostname,'localhost');assert.equal(endpoint.protocol,'https:');
-    wire=await connectBookedPeer({origin:ready.origin,signed:signedConfiguration,initialization,proof,ca:tlsFixture.cert,
+    if(input.independentNetwork)assert.equal(ready.origin,selectedPeer);
+    wire=await connectBookedPeer({origin:selectedPeer??ready.origin,signed:signedConfiguration,initialization,proof,ca:tlsFixture.cert,
       signApproval:p=>requester.signTypedData(p.domain,p.types,p.value)});
     assert.equal(wire.report.channelAuthenticated,true);assert.equal(wire.report.configurationSHA256,configurationSHA256);
-    assert.equal(wire.report.hardwareVerified,false);bootstrapWire.fail();bootstrapWire.close();
+    assert.equal(wire.report.hardwareVerified,false);
+    if(!input.independentNetwork){bootstrapWire.fail();bootstrapWire.close();}
     const handoff=await sendLaunchHandoff(wire,{signed:signedConfiguration,initialization,proof},challenge);
     assert.equal(handoff.executionAuthorized,false);assert.equal(handoff.keyReleaseAuthorized,false);
   }
@@ -186,6 +227,31 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
   assert.equal(transported.storageAcknowledged,true);assert.equal(transported.paymentAuthorized,false);
   const authenticated=await inbox.recover(payload.digest,expected=>recoverRequesterResultKey(resultSource,expected));
   const receipt=authenticated.receipt;inbox.close();inbox=undefined;
+  let resultDestination=transported.destination;
+  if(input.independentNetwork) {
+    await bootstrapWire.writeJSON({protocol:'cannabis.owned-replacement.v1',operation:'replace'});
+    const replacement=await bootstrapWire.readJSON(6*1024*1024+8192);
+    assert.equal(replacement.protocol,'cannabis.owned-replacement.v1');
+    assert.equal(replacement.origin,input.independentNetwork.replacementOrigin);
+    assert.equal(replacement.header.resultEnvelope,transported.resultEnvelope);
+    assert.equal(replacement.header.ciphertextSHA256,receipt.ciphertextSHA256);
+    assert.equal(replacement.header.approvalDigest,payload.digest);
+    assert.equal(replacement.originalRelayStopped,true);
+    const original=fs.readFileSync(transported.destination);
+    fs.renameSync(transported.destination,transported.destination+'.retained');
+    const recovered=JSON.parse(execFileSync(process.execPath,[input.independentNetwork.recoveryScript],{
+      input:JSON.stringify({rpc:input.rpc,inbox:input.resultBase+'.sqlite',context:{chainId:31337,escrow:address,requester:account},
+        resultSource,approvalDigest:payload.digest,origin:replacement.origin,originalOrigin:input.resultOrigin,
+        access:replacement.access,header:replacement.header,destination:input.resultBase+'-replacement.age'}),
+      encoding:'utf8',timeout:45000,stdio:['pipe','pipe','inherit']}));
+    assert.equal(recovered.cancelledRetrievalRefused,true);assert.equal(recovered.cancelledFileRemoved,true);
+    assert.equal(recovered.recovered,true);assert.equal(recovered.paymentAuthorized,false);
+    resultDestination=input.resultBase+'-replacement.age';
+    assert.deepEqual(fs.readFileSync(resultDestination),original);
+    await bootstrapWire.writeJSON({protocol:'cannabis.owned-replacement.v1',operation:'stored',signature:recovered.signature});
+    const completed=await bootstrapWire.readJSON(1024);
+    assert.equal(completed.replacementStorageSignatureVerified,true);assert.equal(completed.executions,1);
+  }
   write(saved.envelope,{approvalDigest:payload.digest,resultEnvelope:transported.resultEnvelope});
   const received=runResults('receive',{...selection,envelopeFile:saved.envelope});
   assert.equal(received.newDelivery,false);assert.equal(received.receiptAuthenticated,true);
@@ -193,7 +259,7 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
   assert.equal(runResults('recover',selection).newDelivery,false);
   assert.equal(runResults('receive',{...selection,envelopeFile:saved.envelope}).newDelivery,false);
   const assembly={manifest:input.resultManifest,packageSHA256:job.packageSHA256,
-    results:[{...selection,file:transported.destination}],destination:input.assembled};
+    results:[{...selection,file:resultDestination}],destination:input.assembled};
   const altered=structuredClone(input.spec);altered.tasks[0].runtime.digestSHA256='ff'.repeat(32);
   const changedManifest=input.resultBase+'-changed-manifest.json';write(changedManifest,altered);
   assert.throws(()=>runResults('assemble',{...assembly,manifest:changedManifest}));
@@ -220,8 +286,11 @@ contract KernelMarketAsset is ERC20 { constructor() ERC20("Isolated kernel fixtu
       requesterProcessRestartRecovery:true,duplicateReceiptIdempotent:true,approvedWorkloadReconstruction:true,
       separateGuestProcess:true,encryptedStreamingHandoff:true,requesterStorageAcknowledgement:true,
       authorizedLaunchConfiguration:true,preSessionKernelAdmission:true,encryptedInputStreamedBeforeEvidence:true,
-      ...(input.resultOrigin?{hostedHTTPRecovery:true,sessionReadCapabilityVerified:true,bookedTLSRequesterAuthenticated:true}:{})},
+      ...(input.resultOrigin?{hostedHTTPRecovery:true,sessionReadCapabilityVerified:true,bookedTLSRequesterAuthenticated:true}:{}),
+      ...(input.independentNetwork?{manifestDiscoveredFromChain:true,badMirrorRejected:true,peerSelectedFromManifest:true,
+        replacementResultRecovered:true,recoveryInNewProcess:true,cancelledRetrievalRefused:true,cancelledFileRemoved:true}:{})},
     grossBaseUnits:'12000',workerBaseUnits:'11880',founderFeeBaseUnits:'120',chainId:31337,
     realPaidJob:false,hardwareValidated:false,customerKeysUsed:false}));
 } catch(error) {process.stderr.write('Owned funded native fixture failed: '+error.stack+'\n');process.exitCode=1;}
-finally {wire.fail();wire.close();bootstrapWire.fail();bootstrapWire.close();inbox?.close();attestations?.close();provider.destroy();}
+finally {wire.fail();wire.close();bootstrapWire.fail();bootstrapWire.close();inbox?.close();attestations?.close();provider.destroy();
+  for(const server of mirrors){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}}

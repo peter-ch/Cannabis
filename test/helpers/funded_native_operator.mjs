@@ -1,6 +1,7 @@
 // Owned kernel integration only. Separate ordinary operator process with public
 // launch data, local storage and opaque channels. No requester custody is passed.
 import fs from 'node:fs';
+import assert from 'node:assert/strict';
 import { Socket } from 'node:net';
 import { performance } from 'node:perf_hooks';
 import { GuestWire } from '../../compute/result_transport.mjs';
@@ -14,7 +15,8 @@ import { PeerDispatchJournal } from '../../compute/peer_dispatch.mjs';
 import { localProvider } from '../../scripts/lib.mjs';
 import tlsFixture from '../../test/helpers/peer-tls-fixture.json' with {type:'json'};
 import { PhysicalResultSpool } from '../../operator/physical-spool.mjs';
-let guest,bootFixture,control,server,listener,provider,completionTimer,dispatchJournal,spool;
+import { uploadRetainedResult } from '../../operator/result-bridge.mjs';
+let guest,bootFixture,control,server,replacementServer,listener,provider,completionTimer,dispatchJournal,spool,executions=0;
 try {
   let raw='';for await(const part of process.stdin){raw+=part;if(raw.length>262144)throw Error('Fixture configuration bound');}
   const started=performance.now(),wallStart=Date.now();
@@ -37,12 +39,13 @@ try {
   spool=new PhysicalResultSpool(c.spool,{create:true});
   const journalFile=c.dispatchJournal;
   dispatchJournal=new PeerDispatchJournal(journalFile,{create:true});
-  listener=await listenBookedPeers({origin:'https://localhost:0',listenHost:'127.0.0.1',
+  listener=await listenBookedPeers({origin:c.independentNetwork?.peerOrigin??'https://localhost:0',listenHost:'127.0.0.1',
     dispatchJournal,
     tlsCredentials:{key:tlsFixture.key,cert:tlsFixture.cert},maxConnections:2,maxHandshakes:1,
     timeoutMs:Math.min(60000,remaining()),routes:[{signed:p.signedConfiguration,initialization:p.initialization,proof:p.request.proof,
       signApproval:q=>signer.signTypedData(q.domain,q.types,q.value),handle:async(requester,local)=>{
         try {
+          executions++;
           const ticket=await receiveLaunchHandoff(requester,{signed:local.signed,initialization:local.initialization,proof:local.proof});
           guest=await stageOperatingGuest(bootFixture.socket,ticket);
           const report=await relayOperatingGuest(guest,{origin:c.origin,spool,
@@ -58,7 +61,8 @@ try {
             peerAssignmentSHA256:requester.report.assignmentSHA256,peerRouteId:local.routeId});
         }catch(e){reject(e);throw e;}
       }}]});
-  await control.writeJSON({protocol:'cannabis.owned-peer-ready.v1',origin:listener.origin});control.fail();control.close();
+  await control.writeJSON({protocol:'cannabis.owned-peer-ready.v1',origin:listener.origin});
+  if(!c.independentNetwork){control.fail();control.close();}
   const report=await completed,closed=await listener.close();
   if(closed.pendingTasks||closed.liveSockets)throw Error('Owned listener did not finish cleanup');
   report.peerListenerDisposed=true;
@@ -72,10 +76,41 @@ try {
   let refused=false;try{dispatchJournal.consume(report.peerRouteId,launch.interval.end*1000);}catch{refused=true;}
   if(!refused)throw Error('Consumed assignment reopened after restart');
   report.durableDispatchRetained=true;report.restartedDispatchRefused=true;
+  if(c.independentNetwork) {
+    assert.deepEqual(await control.readJSON(1024),{protocol:'cannabis.owned-replacement.v1',operation:'replace'});
+    server.closeAllConnections();await new Promise(resolve=>server.close(resolve));server=undefined;
+    const origin=c.independentNetwork.replacementOrigin,
+      replacement=createWorkServer({file:':memory:',resultFile:':memory:',origin});
+    replacementServer=replacement.server;
+    await new Promise(resolve=>replacementServer.listen(new URL(origin).port,'127.0.0.1',resolve));
+    const retained=spool.recover(report.spoolReservationId),source=retained.source,
+      {uploadToken,readToken,...grant}=replacement.relay.reserve({approvalDigest:source.approvalDigest,
+        maxCiphertextBytes:source.ciphertextBytes,expiresAt:Math.min(Date.now()+60000,retained.retryUntil)});
+    assert.notEqual(uploadToken,readToken);
+    const uploaded=await uploadRetainedResult({spool,id:report.spoolReservationId,origin,timeoutMs:10000,
+      access:{...grant,origin,role:'upload',token:uploadToken}});
+    assert.equal(uploaded.sourceFile,retained.sourceFile);assert.equal(uploaded.paymentAuthorized,false);
+    assert.equal(uploaded.requesterAcknowledgedStorage,false);
+    const after=spool.recover(report.spoolReservationId);
+    assert.deepEqual(after.source,source);
+    await control.writeJSON({protocol:'cannabis.owned-replacement.v1',origin,originalRelayStopped:true,
+      access:{...grant,origin,role:'read',token:readToken},
+      header:{protocol:'cannabis.hosted-result.v1',operation:'result',relayId:grant.id,approvalDigest:source.approvalDigest,
+        resultEnvelope:source.resultEnvelope,ciphertextSHA256:source.ciphertextSHA256,ciphertextBytes:source.ciphertextBytes}});
+    const ack=await control.readJSON(2048);
+    assert.deepEqual(Object.keys(ack).sort(),['operation','protocol','signature']);
+    assert.equal(ack.protocol,'cannabis.owned-replacement.v1');assert.equal(ack.operation,'stored');
+    spool.acknowledge(report.spoolReservationId,ack.signature);
+    assert.equal(executions,1);assert.equal(spool.status(report.spoolReservationId).state,'acknowledged');
+    Object.assign(report,{originalRelayStopped:true,replacementCiphertextIdentical:true,
+      replacementStorageSignatureVerified:true,executions,selectedPeerOrigin:c.independentNetwork.peerOrigin});
+    await control.writeJSON({replacementStorageSignatureVerified:true,executions});
+  }
   fs.writeFileSync(c.report,JSON.stringify(report),{flag:'wx',mode:0o600});
 }catch{process.stderr.write('Owned whole-session operator fixture failed\n');process.exitCode=1;}
 finally {
   clearTimeout(completionTimer);guest?.close();await bootFixture?.close();control?.fail();control?.close();await listener?.close();provider?.destroy();
   dispatchJournal?.close();spool?.close();
   if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}
+  if(replacementServer){replacementServer.closeAllConnections();await new Promise(r=>replacementServer.close(r));}
 }

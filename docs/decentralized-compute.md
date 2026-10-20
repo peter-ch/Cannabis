@@ -19,6 +19,30 @@ Cannabis is being built for independent providers and requesters to trade useful
 
 The intended settlement network uses Ethereum proof of stake. There is no proof-of-work mining race, token minting for jobs or protocol administrator that approves every worker. Existing website servers provide optional supporting services; they do not constitute the computing network.
 
+## Verify operation without the project website
+
+The owned Linux integration scenario joins contract discovery and booking,
+provider-committed manifests, direct authenticated peers, native execution,
+encrypted results and isolated settlement:
+
+```sh
+sudo python3 -I -B scripts/check-funded-native.py --hosted --independent-network
+```
+
+It creates a temporary network namespace with only loopback access, so a project
+website, external scheduler or remote account service cannot supply missing
+coordination. It rejects a bad manifest mirror, selects the peer from the valid
+committed manifest, stops the original result relay and explicitly selects a
+replacement. A fresh requester process cancels one retrieval, then recovers the
+identical authenticated result without another execution. The existing storage,
+dispatch, requester reconstruction and exact fee checks remain part of that job.
+
+Run this only in the documented disposable Linux verification environment with
+the pinned prerequisites. Its chain, accounts and appraisals are explicitly
+synthetic; real kernel execution and network isolation do not establish actual
+confidential hardware, public-network availability or a real paid job. Production
+still requires independent review and complete participant-worker acceptance.
+
 ## Shared capacity on the chain
 
 `ComputeMarket` records immutable provider resource declarations and offers. A provider declares a resource ID, service-definition hash and unit capacity. Offers commit to the resource, payment escrow, confidential-policy and public-manifest hashes, availability, expiry, quantity and gross rate. Anyone can publish from their own wallet. Events and public contract reads let independent clients find the same offers.

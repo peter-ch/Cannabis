@@ -48,6 +48,9 @@ with socket.socket(socket.AF_NETLINK,socket.SOCK_RAW,0) as query:
     assert struct.unpack_from('=IHHII',response)[1:4:2]==(2,91)
     assert struct.unpack_from('=i',response,16)[0]==-errno.EPERM
 if rank==0:
+    # Independent ranks do not reach their application listener simultaneously.
+    # Exercise requester retry while this peer has not yet started listening.
+    time.sleep(1)
     server=socket.socket();server.bind((os.environ['MASTER_ADDR'],int(os.environ['MASTER_PORT'])));server.listen(1);server.settimeout(15)
     client,_=server.accept();client.settimeout(15)
     value=int(client.recv(16));answer=value+17;client.sendall(str(answer).encode());client.close();server.close()
