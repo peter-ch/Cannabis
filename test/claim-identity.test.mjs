@@ -90,6 +90,10 @@ test('in-memory owner key recovers without a plaintext key file and refuses ambi
 });
 test('complete membership, canonical integers and deployment context are enforced', () => {
   assert.equal(validateMembershipSnapshot(snapshot, context).size, 128);
+  assert.equal(validateMembershipSnapshot(snapshot, { ...context, minimumClaimMembers: 128 }).size, 128);
+  assert.throws(() => validateMembershipSnapshot(snapshot, { ...context, minimumClaimMembers: 129 }), /claim minimum/);
+  assert.throws(() => validateMembershipSnapshot(snapshot, { ...context, minimumClaimMembers: 0 }), /claim minimum/);
+  assert.throws(() => validateMembershipSnapshot(snapshot, { ...context, minimumClaimMembers: 1, extra: true }), /fields/);
   assert.throws(() => validateMembershipSnapshot({ ...snapshot, chainId: '1' }, context), /context mismatch/);
   assert.throws(() => validateMembershipSnapshot({ ...snapshot, token: recipient }, context), /context mismatch/);
   assert.throws(() => validateMembershipSnapshot({ ...snapshot, commitments: snapshot.commitments.slice(1) }, context), /complete membership/);

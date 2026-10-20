@@ -9,6 +9,9 @@ const ABI = new Interface([
   'function groupId() view returns (uint256)', 'function claimScope() view returns (uint256)',
   'function enrolledCount() view returns (uint256)',
   'function minimumClaimMembers() view returns (uint32)',
+  'function claimsStartAt() view returns (uint64)', 'function CLAIM_AMOUNT() view returns (uint256)',
+  'function COMMUNITY_ALLOCATION() view returns (uint256)', 'function communityIssued() view returns (uint256)',
+  'function walletClaimed(address) view returns (bool)',
   'function getGroupAdmin(uint256) view returns (address)',
   'function getMerkleTreeRoot(uint256) view returns (uint256)',
   'function getMerkleTreeSize(uint256) view returns (uint256)',
@@ -176,5 +179,44 @@ export async function downloadMembershipSnapshot(options) {
       context: { chainId: release.chainId, token: release.token, root: root.toString(), memberCount: commitments.length, minimumClaimMembers: Number(minimumClaimMembers) },
       evidence: { release, anchor: { ...anchor, tag: 'finalized' }, checkedHead: head, groupId: groupId.toString(), pages, eventCount,
         checkedAt: new Date().toISOString(), rpcTrust: 'Selected RPC chain view; no independent consensus or state-proof verification', consistencyChecked: true }, sent: false };
+  } finally { rpc.close(); }
+}
+
+// Bounded read-only refresh for an explicitly selected deployment. No identity or proof is sent.
+export async function readClaimConditions(options, recipient) {
+  const config = sourceConfig(options), { release } = config;
+  if (recipient !== undefined) recipient = nonzeroAddress(recipient);
+  const rpc = rpcReader(config.rpc, 60000);
+  try {
+    const chain = await rpc.call('eth_chainId', []);
+    if (typeof chain !== 'string' || !/^0x[0-9a-f]+$/i.test(chain) || BigInt(chain).toString() !== release.chainId) throw Error('RPC chain does not match release');
+    const head = block(await rpc.call('eth_getBlockByNumber', ['latest', false]));
+    const now = Math.floor(Date.now()/1000);
+    if (head.timestamp < now-config.maxHeadAgeSeconds || head.timestamp > now+60 || head.number < release.fromBlock) throw Error('Current claim head is stale or inconsistent');
+    const at = { blockHash: head.hash, requireCanonical: true };
+    const call = async (target, name, args = []) => ABI.decodeFunctionResult(name,
+      await rpc.call('eth_call', [{ to: target, data: ABI.encodeFunctionData(name, args) }, at]))[0];
+    await Promise.all(['token', 'enrollment', 'semaphore'].map(async name => {
+      const code = await rpc.call('eth_getCode', [release[name], at]);
+      if (typeof code !== 'string' || !/^0x(?:[0-9a-fA-F]{2})+$/.test(code) || code.length > 256*1024 || keccak256(code).toLowerCase() !== release[name+'CodeHash']) throw Error('Claim deployment code changed');
+    }));
+    const [enrollment, semaphore, groupId, minimum, start, amount, allocation, issued, scope] = await Promise.all([
+      'enrollment', 'semaphore', 'groupId', 'minimumClaimMembers', 'claimsStartAt', 'CLAIM_AMOUNT',
+      'COMMUNITY_ALLOCATION', 'communityIssued', 'claimScope'
+    ].map(name => call(release.token, name)));
+    if (enrollment !== release.enrollment || semaphore !== release.semaphore || scope.toString() !== claimScope(release.chainId, release.token)) throw Error('Claim deployment relationships changed');
+    const [count, root, size, admin, claimed] = await Promise.all([
+      call(release.enrollment, 'enrolledCount'), call(release.semaphore, 'getMerkleTreeRoot', [groupId]),
+      call(release.semaphore, 'getMerkleTreeSize', [groupId]), call(release.semaphore, 'getGroupAdmin', [groupId]),
+      recipient === undefined ? Promise.resolve(null) : call(release.token, 'walletClaimed', [recipient])
+    ]);
+    if (count < 1n || count > 990000n || minimum < 1n || minimum > count || size !== count || admin !== release.enrollment || root <= 0n || root >= FIELD) throw Error('Current membership cannot claim');
+    if (amount !== 420n*10n**18n || allocation !== 415800000n*10n**18n || issued < 0n || issued > allocation || start > BigInt(Number.MAX_SAFE_INTEGER)) throw Error('Unexpected claim allocation or opening');
+    const canonical = block(await rpc.call('eth_getBlockByNumber', [toQuantity(head.number), false]));
+    if (canonical.hash !== head.hash || canonical.number !== head.number || await rpc.call('eth_chainId', []) !== chain) throw Error('Claim chain view changed');
+    return { chainId: release.chainId, token: release.token, root: root.toString(), memberCount: Number(count),
+      minimumClaimMembers: Number(minimum), claimsStartAt: Number(start), claimAmountBaseUnits: amount.toString(),
+      communityRemainingBaseUnits: (allocation-issued).toString(), open: BigInt(head.timestamp) >= start,
+      walletAlreadyClaimed: claimed, head };
   } finally { rpc.close(); }
 }

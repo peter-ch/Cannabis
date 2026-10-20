@@ -29,6 +29,45 @@ The enrollment request includes the commitment and preparation status. It contai
 
 No secret is intentionally written to plaintext files, command-line arguments, environment variables or logs. Secret bytes pass through local process pipes and remain temporarily in memory. The runtime cannot guarantee erasure of every string, operating-system copy, swap page or crash dump. Use a trusted Windows account and device. These implementation checks do not replace independent custody review.
 
+## Prepare a community claim
+
+After the reviewed deployment, genuine enrollment and common opening exist,
+step **6 — Review and prepare an unsigned community claim** connects your saved
+Windows identity to the claim tools. Restore the same portable backup first;
+do not create another identity or export the plaintext age owner key.
+
+Select a locally saved claim configuration containing the exact reviewed chain,
+token/enrollment/Semaphore addresses and runtime-code hashes, deployment start
+block, your selected HTTPS RPC, and local proving files with reviewed size/hash
+pins. The format is documented in [claim identity custody](claim-identity.md#guided-windows-configuration).
+The guide displays those values and a digest before network access. Compare them
+with the canonical release; a configuration file and its self-calculated digest
+do not authenticate themselves. No canonical mainnet configuration is supplied
+while Cannabis is Preparing mainnet launch.
+
+Confirm the contract, then enter your receiving wallet address. The guide
+downloads and reconstructs the complete finalized membership group, verifies
+the code pins and opening, and displays the amount, recipient, current minimum
+and real group size. A singleton cannot hide who claimed. You may cancel and
+wait for more real members.
+
+After you confirm the receiving address again, the guide opens the same locally
+recovered identity in memory and generates the proof from checked local files.
+The owner key uses process pipes, with encrypted-only temporary staging; it is
+not written to a key file or included in configuration. Membership, policy,
+custody and release changes invalidate the review. A review lasts five minutes
+and cannot be reused for another preparation attempt.
+
+Only an unsigned transaction is exported. No signing key is requested and no
+transaction is broadcast. Your wallet must check the canonical deployment,
+recipient and network fees, then re-simulate immediately before signing. The
+selected RPC sees ordinary read metadata and, after approval, the public claim
+proof and receiving address during simulation. It does not receive your
+identity secret or member index, and the selected commitment is never sent as
+a separate lookup. A singleton's root nevertheless identifies its sole
+commitment. Membership authenticity still depends on that RPC's chain view;
+this guide is not a light client.
+
 ## Invite a friend
 
 Share the official project link yourself. Here is a suggested invitation:

@@ -8,8 +8,8 @@ import { compile } from '../scripts/compile.mjs';
 import { startNode, deployLocal, deploy, localSources, localProof, localIdentity, localGroup, closeProver, end24Months } from '../scripts/lib.mjs';
 import { createServer } from '../scripts/server.mjs';
 import { prepareClaim } from '../scripts/prepare-claim.mjs';
-import { claimScope } from '../claims/identity.mjs';
-import { downloadMembershipSnapshot } from '../claims/snapshot.mjs';
+import { claimScope, validateMembershipSnapshot } from '../claims/identity.mjs';
+import { downloadMembershipSnapshot, readClaimConditions } from '../claims/snapshot.mjs';
 let artifacts, node, provider, token, vest, enrollment, semaphore, start, end, founder, registrar, recipient, address, initial, proof, otherProof;
 const zero = '0x0000000000000000000000000000000000000000';
 async function freePort() { return new Promise(resolve => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); }); }
@@ -62,11 +62,32 @@ test('exact name, fixed allocations and no proof-of-work entrypoint', async () =
   assert.equal(token.interface.getFunction('mine'), null);
   assert.equal(claimScope('31337', await token.getAddress()), (await token.claimScope()).toString());
 });
+test('guided claim conditions bind actual code, opening, allocation and current minimum', async () => {
+  await reset();
+  const options = await membershipOptions(), closed = await readClaimConditions(options);
+  assert.equal(closed.open, false); assert.equal(closed.claimsStartAt, start);
+  assert.equal(closed.memberCount, 128); assert.equal(closed.minimumClaimMembers, 1);
+  assert.equal(closed.claimAmountBaseUnits, parseEther('420').toString()); assert.equal(closed.walletAlreadyClaimed, null);
+  await timestamp(start+1);
+  // This isolated chain intentionally jumps forward; keep only the fixture clock aligned.
+  const originalNow = Date.now; Date.now = () => (start+1)*1000;
+  try {
+    const current = await readClaimConditions(options, address);
+    assert.equal(current.open, true); assert.equal(current.walletAlreadyClaimed, false);
+    await assert.rejects(readClaimConditions({ ...options, release: { ...options.release, tokenCodeHash: '0x'+'11'.repeat(32) } }), /code changed/);
+    await claim();
+    const claimed = await readClaimConditions(options, address);
+    assert.equal(claimed.walletAlreadyClaimed, true);
+    assert.equal(claimed.communityRemainingBaseUnits, parseEther('415799580').toString());
+  } finally { Date.now = originalNow; }
+});
+
 test('whole-group downloader checks actual finalized state and replays paged batch events', async () => {
   await reset(); const options = await membershipOptions();
   const proxy = await rpcProxy((_request, response) => { if (Array.isArray(response.result)) response.result.reverse(); });
   try {
     const result = await downloadMembershipSnapshot({ ...options, rpc: proxy.rpc });
+    assert.equal(validateMembershipSnapshot(result.snapshot, result.context).size, 128, 'Actual downloader context must be accepted by the prover');
     assert.deepEqual(result.snapshot.commitments, Array.from({ length: 128 }, (_, i) => localIdentity(i).commitment.toString()));
     assert.equal(result.context.root, localGroup(128).root.toString());
     assert.equal(result.context.memberCount, 128); assert.equal(result.sent, false);

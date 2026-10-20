@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { createEncryptedIdentity, inspectEncryptedIdentity, readBounded } from '../claims/identity.mjs';
+import { createEncryptedIdentity, inspectEncryptedIdentity, createClaimProver, readBounded } from '../claims/identity.mjs';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const expected = (value, fields) => {
@@ -83,6 +83,36 @@ export async function checkParticipant({ directory, age, ageKeygen }) {
   const key = protect('Unprotect', decode(value.ownerDPAPI, 16384));
   try { return await inspect({ age, ageKeygen, value, key }); }
   finally { key.fill(0); }
+}
+// These local bindings stay inside the guided controller, never in RPC or claim exports.
+export function participantClaimBinding({ directory }) {
+  const file = path.join(directory, 'participant.json'), value = record(file);
+  const recoveryBytes = readBounded(path.join(directory, 'recovery-check.json'), 8192);
+  const recovery = JSON.parse(recoveryBytes.toString('utf8'));
+  if (recovery.schema !== 'cannabis.participant-recovery-check.v1' || recovery.portableRecoveryVerified !== true || recovery.commitment !== value.commitment || recovery.vaultSHA256 !== value.vaultSHA256) throw Error('Verify the same identity portable backup before preparing a claim');
+  return { commitment: value.commitment, vaultSHA256: value.vaultSHA256,
+    recordSHA256: digest(readBounded(file, 65536)), recoverySHA256: digest(recoveryBytes) };
+}
+export async function proveParticipantClaim({ directory, age, ageKeygen, binding, snapshot, context, recipient, artifacts }) {
+  const prove = createClaimProver({ snapshot, context, recipient, artifacts });
+  const current = participantClaimBinding({ directory });
+  expected(binding, ['commitment', 'vaultSHA256', 'recordSHA256', 'recoverySHA256']);
+  if (Object.keys(current).some(name => current[name] !== binding[name])) throw Error('Participant custody or recovery changed after review');
+  const file = path.join(directory, 'participant.json'), bytes = readBounded(file, 65536);
+  if (digest(bytes) !== binding.recordSHA256) throw Error('Participant custody changed');
+  const value = JSON.parse(bytes.toString('utf8'));
+  const key = protect('Unprotect', decode(value.ownerDPAPI, 16384));
+  let stage;
+  try {
+    if (ownerRecipient(ageKeygen, key) !== value.recipient) throw Error('Owner recipient does not match');
+    stage = fs.mkdtempSync(path.join(os.tmpdir(), 'cannabis-participant-claim-'));
+    const vault = path.join(stage, 'identity.age');
+    fs.writeFileSync(vault, decode(value.vault, 16384), { flag: 'wx', mode: 0o600 });
+    return await prove({ age, vault, identityKey: key, commitment: value.commitment });
+  } finally {
+    key.fill(0);
+    if (stage) { fs.rmSync(path.join(stage, 'identity.age'), { force: true }); fs.rmdirSync(stage); }
+  }
 }
 // age reads its passphrase from the owner's console. It never goes through this API.
 function interactiveAge(age, args, input, limit = 65536) {
