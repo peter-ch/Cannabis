@@ -23,6 +23,7 @@
     "build:site": "node scripts/build-site.mjs",
     "build:work-service": "node scripts/build-work-service.mjs",
     "prepare:launch": "node scripts/prepare-launch.mjs",
+    "prepare:network-release": "node scripts/prepare-network-release.mjs",
     "quote:launch": "node scripts/quote-launch.mjs",
     "participant": "node scripts/participant.mjs",
     "exercise:local": "node scripts/exercise-activity.mjs",
