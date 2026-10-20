@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { ResultInbox } from '../compute/result_inbox.mjs';
 import { recoverRequesterResultKey } from '../compute/result_keys.mjs';
+import { prepareDependencyHandoff, reviewDependencyHandoff } from '../compute/dependency_handoff.mjs';
 const [action,configFile,inputFile]=process.argv.slice(2);
 function read(file,limit=8*1024*1024) {
   const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
@@ -14,7 +15,7 @@ function read(file,limit=8*1024*1024) {
 }
 let inbox;
 try {
-  if(!['activate','receive','recover','inspect','retire','assemble','export-browser'].includes(action)||!configFile||!inputFile)throw Error('Require ACTION config.json input.json');
+  if(!['activate','receive','recover','inspect','retire','assemble','export-browser','prepare-handoff','review-handoff'].includes(action)||!configFile||!inputFile)throw Error('Require ACTION config.json input.json');
   const config=read(configFile),input=read(inputFile);
   inbox=new ResultInbox(config.inbox,config.context,config.limits);
   const load=expected=>{
@@ -31,6 +32,12 @@ try {
   } else if(action==='recover')result=await inbox.recover(input.approvalDigest,load);
   else if(action==='inspect')result=inbox.inspect(input.approvalDigest);
   else if(action==='retire')result=inbox.retire(input.approvalDigest);
+  else if(action==='review-handoff')result=reviewDependencyHandoff(inbox,read(input.lease),input.context,
+    input.reservationId,read(input.descriptor),read(input.prepared));
+  else if(action==='prepare-handoff')result=await prepareDependencyHandoff({inbox,proof:read(input.lease),network:input.context,
+    reservationId:input.reservationId,descriptor:read(input.descriptor),results:input.results,window:input.window,loadResultKey:load,
+    source:{python:config.reconstruction?.python,age:config.reconstruction?.age,identity:config.reconstruction?.identity,
+      manifest:input.manifest,destination:input.destination}});
   else if(action==='export-browser')result=inbox.exportBrowser(input.approvalDigests,expected=>{
     const source=config.resultKeySources?.[expected.releaseId];
     if(!source?.custody)throw Error('Missing requester result-key custody');

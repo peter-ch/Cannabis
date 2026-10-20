@@ -120,6 +120,62 @@ cross-worker transfers, parallel step execution, accelerator admission, automati
 partitioning or checkpoint migration. Those require their own compatible adapters
 and encrypted communication paths.
 
+### Requester-mediated dependency handoffs
+
+The requester client can prepare encrypted inputs for a separately booked task
+from authenticated upstream results. Each dependent task declares private
+`dependencyInputs` entries containing `task`, `rank`, `output` and `destination`,
+plus a `dependencyInputMaxBytes` limit. For example:
+
+```json
+{
+  "dependsOn": ["prepare"],
+  "dependencyInputs": [
+    {"task": "prepare", "rank": 0, "output": "dataset.bin", "destination": "inputs/dataset.bin"}
+  ],
+  "dependencyInputMaxBytes": 1048576
+}
+```
+
+Every predecessor must have an explicit mapping. Only its declared output ranks
+and paths can be selected. Destinations cannot overlap each other or original
+package files, including case and directory collisions. The mappings stay inside
+the encrypted workload; the original package and complete execution plan remain
+unchanged.
+
+Use `node scripts/compute-results.mjs prepare-handoff requester.json handoff-input.json`
+with the same local inbox and `reconstruction` custody configuration used for
+result assembly. The input identifies the retained `lease` and `descriptor`
+files, network `context` (including its genesis hash), target `reservationId`,
+private `manifest`, encrypted `destination`, `window` (`notBefore`, `expiresAt`),
+and `results` entries containing `approvalDigest` and the local ciphertext `file`.
+All local file paths are absolute. Keep the prepared response in requester custody.
+
+Preparation authenticates the current inbox selections, matches their exact
+task/rank/attempt to the booked plan, decrypts and checks each complete result
+archive on the requester device, and copies only the mapped files. It encrypts
+the resulting capsule to the job's fresh input recipient. The owner's result
+identity stays on the requester device. Temporary plaintext requires private
+requester storage and is removed when preparation finishes or fails. Selected
+data files do not inherit executable permissions.
+
+The response includes an unsigned **Cannabis dependency handoff** wallet payload.
+It binds the capsule hash and size, provenance context, network, funded order
+commitments, target reservation/task/attempt/rank and validity window. Public-key
+encryption alone cannot authenticate a handoff. `review-handoff` rechecks the
+saved response against current inbox selections before signing; its input has
+`lease`, `descriptor`, `context`, `reservationId` and `prepared` file paths.
+Retiring an upstream selection invalidates that pending review. Approval of
+these input bytes neither accepts upstream output quality nor authorizes payment.
+
+This is implemented requester preparation and signature/decoder support. The
+operating native launcher still refuses external dependencies. Protected intake,
+additional ciphertext/staging quotas, current funding checks, key-release binding,
+and an assembled guest integration checkpoint remain required before such a
+handoff can execute. No founder coordinator is required: the requester controls
+its own handoff. Direct protected peer transfers and collective execution remain
+separate work.
+
 ### Adapter requirements
 
 The adapter identifier is an extensible name, not a built-in application allowlist. An operational adapter must implement:

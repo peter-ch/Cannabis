@@ -125,10 +125,13 @@ def validate_workload(spec):
             raise ValueError('Invalid per-rank output byte limit')
         if not isinstance(outputs,list) or len({safe_name(x).casefold() for x in outputs}) != len(outputs):
             raise ValueError('Output paths must be unique')
-        if runtime['adapter'] == 'native-linux-x86_64-v1' and t['launch'].get('schema') == 'cannabis.native-step-graph.v1':
-            from .native_graph import validate_native_graph
-            validate_native_graph(t['launch'], files, outputs)
     ordered=[]; pending={t['id']:t for t in tasks}
+    from .dependency_inputs import validate_dependency_inputs
+    for t in tasks:
+        mappings = validate_dependency_inputs(spec, t)
+        if t['runtime']['adapter'] == 'native-linux-x86_64-v1' and t['launch'].get('schema') == 'cannabis.native-step-graph.v1':
+            from .native_graph import validate_native_graph
+            validate_native_graph(t['launch'], files + [m['destination'] for m in mappings or []], t['outputs'])
     while pending:
         ready=[k for k,t in pending.items() if all(d in ordered for d in t.get('dependsOn',[]))]
         if not ready:raise ValueError('Task graph contains a cycle')
