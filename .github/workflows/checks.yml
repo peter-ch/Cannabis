@@ -133,6 +133,7 @@ jobs:
           sudo /usr/bin/python3 -I -B scripts/check-guest-runtime.py --image-root /tmp/cannabis-runtime-image
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-native.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-graph.py
+          sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-dependencies.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-execution.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py --hosted

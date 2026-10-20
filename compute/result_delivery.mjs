@@ -9,7 +9,7 @@ const fail=()=>Error('Result does not match the approved confidential session');
 const fields=(value,keys)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join()===keys.sort().join();
 function approval(expected,key) {
   const types=deliveryApprovalTypes(expected?.domain?.version);
-  if(expected?.domain?.name!=='Cannabis confidential key delivery'||!['2','3'].includes(expected.domain.version)||
+  if(expected?.domain?.name!=='Cannabis confidential key delivery'||!['2','3','4'].includes(expected.domain.version)||
     !fields(expected.value,types.JobKeyDelivery.map(x=>x.name))||
     resultKeyCommitment(key)!==expected.value.resultKeySHA256||
     TypedDataEncoder.hash(expected.domain,types,expected.value)!==expected.digest||

@@ -160,6 +160,7 @@ def main():
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     copy_text(ROOT / 'scripts/check-guest-python.py', project / 'scripts/check-guest-python.py')
     copy_text(ROOT / 'scripts/check-guest-graph.py', project / 'scripts/check-guest-graph.py')
+    copy_text(ROOT / 'scripts/check-guest-dependencies.py', project / 'scripts/check-guest-dependencies.py')
     for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py','check-guest-runtime.py','check-guest-ciphertext.py','compute-guest-vm.py','check-guest-vm.py','compute-guest-boot.py','check-guest-boot.py']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in lock['guestServices']:

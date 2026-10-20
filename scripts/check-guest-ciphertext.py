@@ -58,6 +58,27 @@ def main():
                 refused(admission.verify)
             finally:admission.close()
         checks['retainedInputReplacementRefused']=True
+        extra_limits=CiphertextLimits(2*1024**2,32,512*1024,512*1024,256*1024)
+        extra_bytes=b'owned dependent ciphertext';extra_hash=hashlib.sha256(extra_bytes).hexdigest()
+        extra={'ciphertextSHA256':extra_hash,'ciphertextBytes':len(extra_bytes)}
+        for mode in ['normal','changed','size','replacement','unreserved']:
+            with GuestCiphertextStorage(source('dependency-'+mode),extra_limits) as storage:
+                populate(storage);p=storage.path/'dependency.age';p.write_bytes(extra_bytes);p.chmod(0o400)
+                selected=dict(extra)
+                if mode=='changed':p.write_bytes(b'altered dependent ciphertext');p.chmod(0o400)
+                if mode=='size':selected['ciphertextBytes']+=1
+                admitted_limits=CiphertextLimits(extra_limits.bytes,32,512*1024,512*1024) if mode=='unreserved' else extra_limits
+                def extra_admit():return CiphertextAdmission(source('dependency-'+mode),admitted_limits,expected,
+                    ExecutionDeadline(time.monotonic()+30),None,selected)
+                if mode in ['changed','size','unreserved']:refused(extra_admit)
+                else:
+                    admission=extra_admit()
+                    try:
+                        admission.verify()
+                        if mode=='replacement':
+                            p.unlink();p.write_bytes(extra_bytes);p.chmod(0o400);refused(admission.verify)
+                    finally:admission.close()
+            checks['dependency-'+mode]=True
         with GuestCiphertextStorage(source('quota'),limits) as storage:
             _call(_libc().mount(None,os.fsencode(storage.path),None,32|2|4|8,b'size=2m,nr_inodes=32,noswap'))
             refused(lambda:verify_storage(storage.path,limits))

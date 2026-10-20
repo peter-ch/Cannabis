@@ -73,27 +73,36 @@ export async function relayConfiguredSession(guest,requester,{launch,origin,spoo
     active();timer=setTimeout(stop,remaining());
     // Relay encrypted input without spooling it on the operator. The exact
     // frame size also bounds framing overhead and enforces backpressure.
-    const ready=await guest.readJSON(1024);active();
-    check(fields(ready,['protocol','operation','packageSHA256','maxCiphertextBytes'])&&ready.protocol===protocol&&
-      ready.operation==='input-ready'&&ready.packageSHA256===b.packageSHA256&&ready.maxCiphertextBytes===inputLimit);
-    await requester.writeJSON(ready);
-    const input=await requester.readJSON(1024);active();
-    check(fields(input,['protocol','operation','packageSHA256','ciphertextBytes'])&&input.protocol===protocol&&
-      input.operation==='input'&&input.packageSHA256===b.packageSHA256&&integer(input.ciphertextBytes,1,inputLimit));
-    await guest.writeJSON(input);
-    const whole=createHash('sha256');let count=0;
-    while(count<input.ciphertextBytes) {
-      const chunk=await requester.readChunk();active();check(chunk.length===Math.min(CHUNK,input.ciphertextBytes-count));
-      whole.update(chunk);await guest.writeChunk(chunk);count+=chunk.length;
+    const inputs=[{digest:b.packageSHA256,limit:inputLimit}];
+    let inputCiphertextBytes=0,dependencyCiphertextBytes=0;
+    if(launch.dependency)inputs.push({digest:launch.dependency.signed.handoff.ciphertextSHA256,
+      limit:launch.execution.profile.ciphertext.dependencyBytes,bytes:launch.dependency.signed.handoff.ciphertextBytes});
+    for(const incoming of inputs) {
+      check(integer(incoming.limit,1,1024**4));
+      const ready=await guest.readJSON(1024);active();
+      check(fields(ready,['protocol','operation','packageSHA256','maxCiphertextBytes'])&&ready.protocol===protocol&&
+        ready.operation==='input-ready'&&ready.packageSHA256===incoming.digest&&ready.maxCiphertextBytes===incoming.limit);
+      await requester.writeJSON(ready);
+      const input=await requester.readJSON(1024);active();
+      check(fields(input,['protocol','operation','packageSHA256','ciphertextBytes'])&&input.protocol===protocol&&
+        input.operation==='input'&&input.packageSHA256===incoming.digest&&integer(input.ciphertextBytes,1,incoming.limit)&&
+        (incoming.bytes===undefined||input.ciphertextBytes===incoming.bytes));
+      await guest.writeJSON(input);
+      const whole=createHash('sha256');let count=0;
+      while(count<input.ciphertextBytes) {
+        const chunk=await requester.readChunk();active();check(chunk.length===Math.min(CHUNK,input.ciphertextBytes-count));
+        whole.update(chunk);await guest.writeChunk(chunk);count+=chunk.length;
+      }
+      const inputEnd=await requester.readJSON(1024);active();
+      check(fields(inputEnd,['protocol','operation','packageSHA256'])&&inputEnd.protocol===protocol&&inputEnd.operation==='input-end'&&
+        inputEnd.packageSHA256===incoming.digest&&whole.digest('hex')===incoming.digest);
+      await guest.writeJSON(inputEnd);
+      const stored=await guest.readJSON(1024);active();
+      check(fields(stored,['protocol','operation','packageSHA256','ciphertextBytes'])&&stored.protocol===protocol&&stored.operation==='input-stored'&&
+        stored.packageSHA256===incoming.digest&&stored.ciphertextBytes===count);
+      await requester.writeJSON(stored);
+      if(incoming===inputs[0])inputCiphertextBytes=count;else dependencyCiphertextBytes=count;
     }
-    const inputEnd=await requester.readJSON(1024);active();
-    check(fields(inputEnd,['protocol','operation','packageSHA256'])&&inputEnd.protocol===protocol&&inputEnd.operation==='input-end'&&
-      inputEnd.packageSHA256===b.packageSHA256&&whole.digest('hex')===b.packageSHA256);
-    await guest.writeJSON(inputEnd);
-    const stored=await guest.readJSON(1024);active();
-    check(fields(stored,['protocol','operation','packageSHA256','ciphertextBytes'])&&stored.protocol===protocol&&stored.operation==='input-stored'&&
-      stored.packageSHA256===b.packageSHA256&&stored.ciphertextBytes===count);
-    await requester.writeJSON(stored);
     const evidence=await guest.readJSON(5*1024*1024);active();
     check(fields(evidence,['protocol','operation','evidence'])&&evidence.protocol===protocol&&evidence.operation==='evidence');
     const e=evidence.evidence;
@@ -109,11 +118,12 @@ export async function relayConfiguredSession(guest,requester,{launch,origin,spoo
       typeof command.envelope==='string'&&command.envelope.length<=32768&&
       /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(command.envelope));
     const expected=command.expected,v=expected?.value,d=expected?.domain,types=deliveryApprovalTypes(d?.version);
-    check(fields(d,['name','version','chainId','verifyingContract'])&&d.name==='Cannabis confidential key delivery'&&['2','3'].includes(d.version)&&
+    check(fields(d,['name','version','chainId','verifyingContract'])&&d.name==='Cannabis confidential key delivery'&&['2','3','4'].includes(d.version)&&
       d.chainId===b.chainId&&getAddress(d.verifyingContract)===b.escrow&&expected.requester===assignment.requester&&expected.jobId===assignment.jobId&&
       fields(v,types.JobKeyDelivery.map(x=>x.name)));
-    check((d.version==='3')===Object.hasOwn(b,'configurationSHA256')&&
-      (d.version!=='3'||v.configurationSHA256===b.configurationSHA256));
+    check((['3','4'].includes(d.version))===Object.hasOwn(b,'configurationSHA256')&&
+      (!['3','4'].includes(d.version)||v.configurationSHA256===b.configurationSHA256));
+    check((d.version==='4')===!!launch.dependency&&(!launch.dependency||v.dependencyApprovalDigest===launch.dependency.approvalDigest));
     for(const k of ['orderId','leaseDigest','reservationId','attempt','rank','worldSize'])check(v[k]===b[k]);
     for(const k of ['packageSHA256','policySHA256','runtimeSHA256','taskSHA256'])check(v[k]==='0x'+b[k]);
     check(v.nonce==='0x'+challenge.nonce&&v.attestationPolicySHA256==='0x'+challenge.attestationPolicySHA256&&
@@ -156,7 +166,8 @@ export async function relayConfiguredSession(guest,requester,{launch,origin,spoo
     await guest.writeJSON(command);active();
     const result=await bridgeEncryptedResult(guest,requester,{expected,access:upload,origin,reservation,
       maxCiphertextBytes:launch.transport.maxCiphertextBytes,timeoutMs:remaining(),signal:controller.signal,fetchImpl,wait});
-    active();return {...result,schema:'cannabis.session-relay-report.v1',inputCiphertextBytes:count,
+    active();return {...result,schema:'cannabis.session-relay-report.v1',inputCiphertextBytes,
+      ...(launch.dependency?{dependencyCiphertextBytes}:{}),
       evidenceForwarded:true,executionRequestForwarded:true,hardwareValidated:false};
   } catch(error) {
     stop();const failure=Error('Configured encrypted session relay failed; retain complete ciphertext and requester recovery material');

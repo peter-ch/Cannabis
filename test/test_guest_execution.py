@@ -25,6 +25,16 @@ def profile():
 
 
 class NativeServiceTests(unittest.TestCase):
+    def test_dependency_capacity_is_explicit_and_page_rounded_in_the_signed_unit(self):
+        value=profile();value.update(schema='cannabis.guest-native-service.v3',maxDependencyBytes=MIB)
+        value['ciphertext'].update(bytes=12*MIB,dependencyBytes=4*MIB)
+        NativeServiceProfile(value,'0x'+hashlib.sha256(canonical(value)).hexdigest(),1)
+        for mutate in [lambda p:p['ciphertext'].update(bytes=8*MIB),lambda p:p['ciphertext'].update(dependencyBytes=4*MIB+1),
+                       lambda p:p.update(maxDependencyBytes=16*MIB),lambda p:p['ciphertext'].update(dependencyBytes=0),
+                       lambda p:p['total'].update(memory_bytes=930*MIB),lambda p:p.update(schema='cannabis.guest-native-service.v2')]:
+            changed=copy.deepcopy(value);mutate(changed)
+            with self.assertRaises(ValueError):NativeServiceProfile(changed,'0x'+hashlib.sha256(canonical(changed)).hexdigest(),1)
+
     def test_signed_unit_cannot_be_substituted_or_mutated(self):
         value=profile();digest='0x'+hashlib.sha256(canonical(value)).hexdigest()
         retained=NativeServiceProfile(value,digest,1)

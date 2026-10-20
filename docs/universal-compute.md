@@ -168,13 +168,34 @@ saved response against current inbox selections before signing; its input has
 Retiring an upstream selection invalidates that pending review. Approval of
 these input bytes neither accepts upstream output quality nor authorizes payment.
 
-This is implemented requester preparation and signature/decoder support. The
-operating native launcher still refuses external dependencies. Protected intake,
-additional ciphertext/staging quotas, current funding checks, key-release binding,
-and an assembled guest integration checkpoint remain required before such a
-handoff can execute. No founder coordinator is required: the requester controls
-its own handoff. Direct protected peer transfers and collective execution remain
-separate work.
+The native guest path now accepts this signed capsule for the exact dependent
+booking. Native service profile v3 reserves `ciphertext.dependencyBytes` and
+`maxDependencyBytes` in addition to the original package and result capacity.
+The launch handoff carries `{descriptor, signed}` as its `dependency` option;
+`signed` contains `handoff`, `window` and `requesterSignature`. Both parties and
+the guest verify that approval against the retained complete booking plan.
+
+The original package and the separate dependency ciphertext arrive before the
+guest creates its evidence key. Both files must match their reserved hashes and
+sizes. Key-delivery approval v4 binds `dependencyApprovalDigest`, and its validity
+must fit inside the dependency approval and booking windows. Current funding,
+bilateral consent and confidential-hardware admission remain separate checks.
+A preceding booking may have ended while the dependent booking is active; the
+complete funded order must remain active throughout execution.
+
+Inside the protected guest, guarded helpers decrypt and validate the capsule,
+then copy only the private declared inputs into the selected task's input tree.
+Original files, decoded dependencies and combined copies share the reserved
+staging quota; preparation, execution and sealing share the booking deadline and
+cleanup controls. Missing, substituted, oversized or unsigned inputs are refused.
+Approval of input data still does not establish upstream output quality.
+
+Focused software checks cover encrypted two-task execution, signed launch and
+funding, key delivery, resource refusal and requester reconstruction. New measured
+images, hardware admission and independent review are still required before
+operating this version. No founder coordinator is required: the requester controls
+its own handoff. Direct protected peer transfers, collective execution and
+automated dispatch across the complete workflow remain separate work.
 
 ### Adapter requirements
 

@@ -47,7 +47,7 @@ try {
   if(input.mode==='owner-death'||input.mode==='deadline')await new Promise(()=>{});
   fs.writeFileSync(input.keyMarker,'owned fixture key released');
   return input.job;
- },{timeoutMs:input.timeoutMs});
+ },{timeoutMs:input.timeoutMs,dependency:input.dependency});
  if(JSON.stringify(result).includes('receipt')||JSON.stringify(result).includes('ciphertext'))throw Error('Private metadata enumerable');
  process.stdout.write(JSON.stringify({report:result,receipt:result.receipt,ciphertext:result.ciphertext}));
 }catch{process.stderr.write('Owned execution fixture refused\\n');process.exitCode=2;}

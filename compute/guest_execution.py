@@ -54,9 +54,11 @@ class NativeServiceProfile:
     """
     def __init__(self, value, service_sha256, units):
         value = copy.deepcopy(value)
+        dependencies = value.get('schema') == 'cannabis.guest-native-service.v3'
         exact(value, ['schema', 'units', 'runtime', 'resources', 'total', 'control',
-                      'helper', 'processLimit', 'scratchInodes', 'staging', 'ciphertext', 'maxInputBytes', 'tools'])
-        if (value['schema'] != 'cannabis.guest-native-service.v2' or type(units) is not int
+                      'helper', 'processLimit', 'scratchInodes', 'staging', 'ciphertext', 'maxInputBytes', 'tools']
+                      + (['maxDependencyBytes'] if dependencies else []))
+        if (value['schema'] not in ['cannabis.guest-native-service.v2', 'cannabis.guest-native-service.v3'] or type(units) is not int
                 or units != 1 or type(value['units']) is not int or value['units'] != units
                 or service_sha256 != '0x' + hashlib.sha256(canonical(value)).hexdigest()):
             raise ValueError('Native service profile differs from the signed service unit')
@@ -68,7 +70,10 @@ class NativeServiceProfile:
         self.helper = ResourceLimits(**value['helper'])
         self.task = ResourceLimits.from_task(value['resources'], process_limit=value['processLimit'])
         self.staging = ScratchLimits(**value['staging'])
+        exact(value['ciphertext'], ['bytes', 'inodes', 'inputBytes', 'outputBytes'] + (['dependencyBytes'] if dependencies else []))
         self.ciphertext = CiphertextLimits(**value['ciphertext'])
+        if dependencies and self.ciphertext.dependencyBytes < 1:
+            raise ValueError('Require separately reserved dependency ciphertext capacity')
         self.scratch = ScratchLimits(value['resources']['scratchMiB'] * 1024**2, value['scratchInodes'])
         if self.total.children < 3:
             raise ValueError('Control, native sandbox and sealing helper need three leaves')
@@ -82,6 +87,9 @@ class NativeServiceProfile:
             raise ValueError('Stage time exceeds the service unit')
         if type(value['maxInputBytes']) is not int or not 0 <= value['maxInputBytes'] <= self.staging.bytes:
             raise ValueError('Require a bounded extraction budget')
+        if dependencies and (type(value['maxDependencyBytes']) is not int or value['maxDependencyBytes'] < 0
+                or value['maxInputBytes'] + value['maxDependencyBytes'] > self.staging.bytes):
+            raise ValueError('Dependency extraction exceeds the shared protected staging budget')
         self.value = value
         self.service_sha256 = service_sha256
 
@@ -183,11 +191,20 @@ class PrivateFrames:
 class NativeExecutionAdmission:
     """Retain real kernel objects, the profile and runtime before reading keys."""
     def __init__(self, request, deadline, parent):
-        exact(request, ['protocol', 'operation', 'profile', 'serviceSHA256', 'units', 'source', 'binding', 'interval'])
+        exact(request, ['protocol', 'operation', 'profile', 'serviceSHA256', 'units', 'source', 'binding', 'interval']
+              + (['dependency'] if 'dependency' in request else []))
         if request['protocol'] != PROTOCOL or request['operation'] != 'prepare':
             raise ValueError('Require native preparation before key release')
         self.profile = NativeServiceProfile(request['profile'], request['serviceSHA256'], request['units'])
         self.source, self.binding = copy.deepcopy(request['source']), copy.deepcopy(request['binding'])
+        self.dependency = copy.deepcopy(request.get('dependency'))
+        if 'dependency' in request:
+            if self.profile.value['schema'] != 'cannabis.guest-native-service.v3':
+                raise ValueError('Dependency inputs need explicit service capacity')
+            exact(self.dependency, ['schema','context','ciphertextSHA256','ciphertextBytes','format','recipient'])
+            if (self.dependency['schema'] != 'cannabis.dependency-handoff.v1' or self.dependency['format'] != 'age-v1+ustar'
+                    or any(self.dependency['context'].get(k) != self.binding[k] for k in self.binding)):
+                raise ValueError('Retained dependency differs from the approved task')
         exact(self.binding, ['packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256',
                              'attempt', 'rank', 'worldSize', 'acceleratorClass'])
         if any(not isinstance(self.binding[k], str) or not re.fullmatch('[0-9a-f]{64}', self.binding[k])
@@ -215,7 +232,8 @@ class NativeExecutionAdmission:
                 raise ValueError('Launcher resource profile differs from signed service')
             self.tree, self.control = _directory(self.path), _directory(self.control_path)
             self.verify()
-            self.ciphertext = CiphertextAdmission(self.source,self.profile.ciphertext,self.binding['packageSHA256'],self.deadline,self.parent)
+            self.ciphertext = CiphertextAdmission(self.source,self.profile.ciphertext,self.binding['packageSHA256'],self.deadline,self.parent,
+                {k:self.dependency[k] for k in ['ciphertextSHA256','ciphertextBytes']} if self.dependency else None)
             self.plan = NativeTaskPlan(self.source['rootfs'], self.profile.value['runtime'], self.profile.value['resources'],
                 process_limit=self.profile.value['processLimit'], scratch_inodes=self.profile.value['scratchInodes'], deadline=self.deadline)
             pins = self.profile.value['tools']
@@ -261,7 +279,9 @@ class NativeExecutionAdmission:
                               job['policySHA256'], job['inputRecipient'], job['resultRecipient'])
         return self.plan.run(self.path, self.source['ciphertext'], key, self.binding, self.source['destination'],
             age=self.source['age'], helper_limits=self.profile.helper, staging_limits=self.profile.staging,
-            max_input_bytes=self.profile.value['maxInputBytes'], max_output_ciphertext_bytes=self.profile.ciphertext.outputBytes, cancelled=self.parent)
+            max_input_bytes=self.profile.value['maxInputBytes'], max_output_ciphertext_bytes=self.profile.ciphertext.outputBytes, cancelled=self.parent,
+            dependency={'handoff':self.dependency,'ciphertext':str(Path(self.source['ciphertext']).with_name('dependency.age'))} if self.dependency else None,
+            max_dependency_bytes=self.profile.value.get('maxDependencyBytes',0))
 
     def close(self):
         if self.ciphertext is not None:

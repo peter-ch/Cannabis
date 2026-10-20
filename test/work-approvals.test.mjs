@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TypedDataEncoder } from 'ethers';
 import { generateIdentity } from 'age-encryption';
-import { approvalTypes, approvalTypesV3, validateRecoveryBundle, openApprovedResults } from '../web/work-approvals.js';
-import { deliveryTypesV2, deliveryTypesV3 } from '../compute/key_delivery.mjs';
+import { approvalTypes, approvalTypesV3, approvalTypesV4, validateRecoveryBundle, openApprovedResults } from '../web/work-approvals.js';
+import { deliveryTypesV2, deliveryTypesV3, deliveryTypesV4 } from '../compute/key_delivery.mjs';
 import { approvedBrowserFixture } from './fixtures/approved-browser.mjs';
+import { ResultInbox } from '../compute/result_inbox.mjs';
+import { recoverResultKey } from '../compute/result_keys.mjs';
 
 test('browser schema matches the guest; desktop encrypted custody and receipts reconstruct the Python archive',async()=>{
   assert.deepEqual(approvalTypes,deliveryTypesV2);
@@ -44,6 +46,24 @@ test('configuration-bound browser recovery preserves v3 and refuses stripping or
     p.requesterSignature=await f.owner.signTypedData(p.domain,types,p.value);
     await validateRecoveryBundle(bundle); // Authentic replacement approval is a different session.
     await assert.rejects(openApprovedResults({...f,bundle}),/receipt/);
+  }
+});
+
+test('dependency-bound browser recovery retains v4 input approval through actual archive reconstruction',async()=>{
+  assert.deepEqual(approvalTypesV4,deliveryTypesV4);
+  const f=await approvedBrowserFixture({version:'4'});
+  const e=f.bundle.entries[0],inbox=new ResultInbox(':memory:',f.bundle.context);
+  try {
+    inbox.activate({schema:'cannabis.key-delivery.record.v4',keyWrapped:true,releaseId:e.approval.value.releaseId,
+      approvalDigest:e.approval.digest,expectedApproval:e.approval},{resultRecipient:e.recipient});
+    await inbox.receive(e.approval.digest,e.envelope,binding=>recoverResultKey(e.custody,f.identity,binding));
+    assert.equal((await validateRecoveryBundle(inbox.exportBrowser([e.approval.digest],()=>e.custody))).bundle.entries[0].approval.domain.version,'4');
+  } finally {inbox.close();}
+  assert.equal((await validateRecoveryBundle(f.bundle)).bundle.entries[0].approval.domain.version,'4');
+  assert.equal((await openApprovedResults(f)).size,1);
+  for(const mutate of [p=>p.domain.version='3',p=>delete p.value.dependencyApprovalDigest,p=>p.value.dependencyApprovalDigest='0x'+'99'.repeat(32)]) {
+    const bundle=structuredClone(f.bundle);mutate(bundle.entries[0].approval);
+    await assert.rejects(validateRecoveryBundle(bundle));
   }
 });
 test('an authentic signed approval still requires the exact encrypted receipt and original task/runtime/policy',async()=>{

@@ -23,7 +23,7 @@ function signedApproval(record,context) {
   const p=record?.expectedApproval,d=p?.domain,v=p?.value,types=deliveryApprovalTypes(d?.version);
   if(record?.schema!=='cannabis.key-delivery.record.v'+d.version||record.keyWrapped!==true||!d||!v||
     Object.keys(d).sort().join()!=='chainId,name,verifyingContract,version'||
-    d.name!=='Cannabis confidential key delivery'||!['2','3'].includes(d.version)||Number(d.chainId)!==context.chainId||
+    d.name!=='Cannabis confidential key delivery'||!['2','3','4'].includes(d.version)||Number(d.chainId)!==context.chainId||
     getAddress(d.verifyingContract)!==context.escrow||getAddress(p.requester)!==context.requester||
     Object.keys(v).sort().join()!==types.JobKeyDelivery.map(f=>f.name).sort().join()||
     typeof p.jobId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(p.jobId))fail('Delivery does not belong to this requester inbox');

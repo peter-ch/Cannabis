@@ -41,17 +41,19 @@ export function validateGuestConfiguration(configuration,{chainId,maxValiditySec
   address(n.escrow);address(c.provider);if(!bytes32(c.resourceId))fail();
   nativeServiceCommitment(c.execution);
   const profile=c.execution.profile;
-  exact(profile,['schema','units','runtime','resources','total','control','helper','processLimit','scratchInodes','staging','ciphertext','maxInputBytes','tools']);
+  const dependencies=profile.schema==='cannabis.guest-native-service.v3';
+  exact(profile,['schema','units','runtime','resources','total','control','helper','processLimit','scratchInodes','staging','ciphertext','maxInputBytes','tools',...(dependencies?['maxDependencyBytes']:[])]);
   exact(profile.runtime,['adapter','architecture','os','digestSHA256']);
   exact(profile.resources,['cpus','memoryMiB','scratchMiB','wallSeconds','nodes']);
   exact(profile.total,['cpu_millis','memory_bytes','processes','wall_seconds','children']);
   for(const name of ['control','helper'])exact(profile[name],['cpu_millis','memory_bytes','processes','wall_seconds']);
   exact(profile.staging,['bytes','inodes']);exact(profile.tools,['pythonSHA256','ageSHA256','ageKeygenSHA256']);
-  exact(profile.ciphertext,['bytes','inodes','inputBytes','outputBytes']);
+  exact(profile.ciphertext,['bytes','inodes','inputBytes','outputBytes',...(dependencies?['dependencyBytes']:[])]);
   for(const value of [...Object.values(profile.resources),...Object.values(profile.total),...Object.values(profile.control),
     ...Object.values(profile.helper),...Object.values(profile.staging),...Object.values(profile.ciphertext),profile.processLimit,profile.scratchInodes])
     if(!integer(value,1,Number.MAX_SAFE_INTEGER))fail();
   if(!integer(profile.maxInputBytes,0,profile.staging.bytes)||
+    dependencies&&(!integer(profile.maxDependencyBytes,0,profile.staging.bytes)||profile.maxInputBytes+profile.maxDependencyBytes>profile.staging.bytes)||
     Object.values(profile.tools).some(v=>typeof v!=='string'||!/^[0-9a-f]{64}$/.test(v))||
     typeof profile.runtime.digestSHA256!=='string'||!/^[0-9a-f]{64}$/.test(profile.runtime.digestSHA256)||
     Object.values(profile.runtime).some(v=>typeof v!=='string'||!/^[A-Za-z0-9_.-]{1,128}$/.test(v)))fail();

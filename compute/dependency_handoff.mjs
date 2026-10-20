@@ -74,7 +74,7 @@ export function dependencyHandoffPayload(proof,network,reservationId,descriptor,
   return {domain,types:dependencyHandoffTypes,value,digest:TypedDataEncoder.hash(domain,dependencyHandoffTypes,value),
     requester:context.requester,executionAuthorized:false,keyReleaseAuthorized:false,paymentAuthorized:false};
 }
-// A future admitted guest must ALSO enforce current funding, attestation, storage
+// An admitted guest must ALSO enforce current funding, attestation, storage
 // and lifecycle controls. Signature verification alone cannot launch anything.
 export function verifyDependencyHandoff(proof,network,reservationId,descriptor,signed,now) {
   exact(signed,['handoff','window','requesterSignature']);
@@ -115,7 +115,7 @@ export async function prepareDependencyHandoff({inbox,proof,network,reservationI
   return inbox.useCurrent(selections,approvals=>{
     const sources=sourcesFor(r,approvals.map((a,i)=>{
       const v=a.value,receipt=recovered[i].receipt,assignment=r.lease.assignments.find(x=>x.reservationId===v.reservationId);
-      check(assignment&&a.domain.version==='3'&&a.requester===r.lease.requester&&a.jobId===r.lease.job.id&&
+      check(assignment&&['3','4'].includes(a.domain.version)&&a.requester===r.lease.requester&&a.jobId===r.lease.job.id&&
         Number(a.domain.chainId)===r.context.chainId&&a.domain.verifyingContract===r.context.escrow&&
         v.leaseDigest===r.lease.digest&&v.orderId===r.lease.orderId&&v.inputRecipient===descriptor.recipient);
       for(const k of ['packageSHA256','policySHA256'])check(v[k]==='0x'+r.context[k]);

@@ -23,7 +23,7 @@ export function nativeServiceCommitment(execution) {
   execution = structuredClone(execution);
   if (!fields(execution, ['profile', 'source']) || !fields(execution.source, ['python', 'rootfs', 'age', 'ciphertext', 'destination']) ||
       Object.values(execution.source).some(p => typeof p !== 'string' || !path.isAbsolute(p) || p.includes('\0')) ||
-      execution.profile?.schema !== 'cannabis.guest-native-service.v2' || execution.profile.units !== 1) throw failure();
+      !['cannabis.guest-native-service.v2','cannabis.guest-native-service.v3'].includes(execution.profile?.schema) || execution.profile.units !== 1) throw failure();
   const bytes = Buffer.from(canonical(execution.profile));
   if (bytes.length > 32768) throw failure();
   return { serviceSHA256: '0x' + createHash('sha256').update(bytes).digest('hex'), units: execution.profile.units };
@@ -115,8 +115,9 @@ export async function executeNativeGuest(execution, binding, interval, releaseKe
   const commitment = nativeServiceCommitment(execution), { python, ...source } = execution.source;
   verifyPython(execution);
   const script = fileURLToPath(new URL('../scripts/compute-guest-native-pipe.py', import.meta.url));
+  const {dependency,...transport}=options??{};
   const response = await runNativeGuestPipe(python, script, { protocol, operation: 'prepare', profile: execution.profile,
-    ...commitment, source, binding, interval }, releaseKey, options);
+    ...commitment, source, binding, interval,...(dependency?{dependency:structuredClone(dependency.signed.handoff)}:{}) }, releaseKey, transport);
   // The private receipt is returned only through explicit protected-channel use.
   return Object.defineProperties(response.report, { receipt: { value: response.receipt, enumerable: false },
     ciphertext: { value: source.destination, enumerable: false } });
@@ -132,10 +133,11 @@ function verifyPython(execution) {
   } finally { fs.closeSync(fd); }
 }
 
-export function inspectNativeGuest(execution,binding,interval,{timeoutMs}={}) {
+export function inspectNativeGuest(execution,binding,interval,{timeoutMs,dependency}={}) {
   if(process.platform!=='linux'||!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>60000)throw failure();
   const commitment=nativeServiceCommitment(execution),{python,...source}=execution.source;verifyPython(execution);
-  const input=JSON.stringify({protocol,operation:'prepare',profile:execution.profile,...commitment,source,binding,interval});
+  const input=JSON.stringify({protocol,operation:'prepare',profile:execution.profile,...commitment,source,binding,interval,
+    ...(dependency?{dependency:structuredClone(dependency.signed.handoff)}:{})});
   if(Buffer.byteLength(input)>65536)throw failure();
   const env={PATH:'/usr/local/bin:/usr/bin:/bin',LANG:'C.UTF-8'};
   for(const key of ['CANNABIS_JOB_CGROUP','CANNABIS_JOB_CONTROL','CANNABIS_JOB_DEADLINE','CANNABIS_JOB_TOTAL','CANNABIS_JOB_CONTROL_LIMITS'])

@@ -59,7 +59,7 @@ def launch(vm):
             with GuestCiphertextStorage(source,profile.ciphertext), GuestJobScope(vm.job_parent,profile.total,profile.control,deadline=deadline) as scope:
                 proc = scope.start(NODE,pins[NODE],ENTRY,pins[ENTRY],launch_fd=snapshot.fd)
                 relay_guest(scope,proc,sys.stdin.fileno(),sys.stdout.fileno(),max_ciphertext_bytes=transport['maxCiphertextBytes'],
-                    max_input_ciphertext_bytes=profile.ciphertext.inputBytes)
+                    max_input_ciphertext_bytes=profile.ciphertext.inputBytes+profile.ciphertext.dependencyBytes)
             deadline.check()
         deadline.check()
         vm.verify()

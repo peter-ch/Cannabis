@@ -75,11 +75,11 @@ class NativeTaskPlan:
         self._runtime, self._resources, self._used = runtime, resources, False
 
     @contextmanager
-    def _outputs(self, parent, task, spec, staging, helper_limits, staging_limits, cancelled):
+    def _outputs(self, parent, task, spec, staging, helper_limits, staging_limits, cancelled, input_root, input_files):
         launch = task['launch']
         if launch.get('schema') == GRAPH_SCHEMA:
-            yield run_native_graph(parent, self._root, self._runtime['digestSHA256'], task, spec['files'],
-                staging.path / 'inputs', staging.path / 'graph', limits=self._limits, scratch=self._scratch,
+            yield run_native_graph(parent, self._root, self._runtime['digestSHA256'], task, input_files,
+                input_root, staging.path / 'graph', limits=self._limits, scratch=self._scratch,
                 helper_limits=helper_limits, staging_limits=staging_limits, deadline=self._deadline, cancelled=cancelled)
             return
         if set(launch) - {'argv', 'environment', 'stdout', 'stderr'} or 'argv' not in launch:
@@ -89,7 +89,7 @@ class NativeTaskPlan:
         log_names = [safe_name(launch[k]) for k in ('stdout', 'stderr') if k in launch]
         if len(set(log_names)) != len(log_names) or any(name not in task['outputs'] for name in log_names):
             raise ValueError('Returned logs must have distinct declared encrypted output paths')
-        with NativeSandbox(parent, self._root, staging.path / 'inputs', self._runtime['digestSHA256'],
+        with NativeSandbox(parent, self._root, input_root, self._runtime['digestSHA256'],
                 self._limits, self._scratch, deadline=self._deadline) as sandbox:
             executed = sandbox.run(launch['argv'], environment=launch.get('environment'), cancelled=cancelled)
             if not executed['success']:
@@ -108,7 +108,8 @@ class NativeTaskPlan:
                     os.link(sandbox._path / stream, target, follow_symlinks=False)
             yield sandbox.output_directory
 
-    def run(self, parent, ciphertext, key, binding, destination, *, age, helper_limits, staging_limits, max_input_bytes, max_output_ciphertext_bytes, cancelled=None):
+    def run(self, parent, ciphertext, key, binding, destination, *, age, helper_limits, staging_limits, max_input_bytes, max_output_ciphertext_bytes,
+            cancelled=None, dependency=None, max_dependency_bytes=0):
         """Consume one guest-opened job key; publish only fully sealed ciphertext.
 
         helper_limits/staging_limits are explicit additional reservation budgets,
@@ -116,6 +117,7 @@ class NativeTaskPlan:
         separate checked cgroup and guardian; native execution has its own.
         """
         binding = copy.deepcopy(binding)
+        dependency = copy.deepcopy(dependency)
         if self._used or not isinstance(key, RecoveredJobKey):
             raise ValueError('Require an unused retained plan and guest-opened key')
         self._used = True
@@ -127,6 +129,17 @@ class NativeTaskPlan:
             raise ValueError('Require retained helper and staging budgets')
         if type(max_input_bytes) is not int or not 0 <= max_input_bytes <= staging_limits.bytes:
             raise ValueError('Require a bounded approved input size')
+        if (type(max_dependency_bytes) is not int or max_dependency_bytes < 0
+                or max_dependency_bytes+max_input_bytes > staging_limits.bytes):
+            raise ValueError('Require a shared bounded dependency staging budget')
+        if dependency is not None:
+            if not isinstance(dependency,dict) or set(dependency) != {'handoff','ciphertext'}:
+                raise ValueError('Require the retained authenticated dependency input')
+            h=dependency['handoff'];context=h['context']
+            if (context['jobId'] != key.job_id or h['recipient'] != key.input_recipient
+                    or context['inputRecipient'] != key.input_recipient
+                    or any(context.get(k) != v for k,v in binding.items())):
+                raise ValueError('Dependency input differs from the opened job key or assignment')
         if type(max_output_ciphertext_bytes) is not int or not 1 <= max_output_ciphertext_bytes <= 1024**4:
             raise ValueError('Require a bounded approved encrypted output size')
         if tree_digest(self._root) != self._runtime['digestSHA256']:
@@ -149,9 +162,23 @@ class NativeTaskPlan:
             task = spec['tasks'][decoded_report['taskIndex']]
             if canonical(task['runtime']) != canonical(self._runtime) or canonical(task['resources']) != canonical(self._resources):
                 raise ValueError('Private task differs from retained matching metadata')
-            if task.get('dependsOn', []):
-                raise ValueError('Dependency tasks require authenticated input reconstruction before this adapter can run')
-            with self._outputs(parent, task, spec, staging, helper_limits, staging_limits, cancelled) as output_root:
+            input_root, input_files = staging.path / 'inputs', list(spec['files'])
+            if bool(task.get('dependsOn', [])) != bool(dependency):
+                raise ValueError('Dependency tasks require their retained authenticated input')
+            if dependency:
+                if task.get('dependencyInputMaxBytes', max_dependency_bytes+1) > max_dependency_bytes:
+                    raise ValueError('Private dependency budget exceeds the reserved service')
+                run_guarded_helper(parent, helper_limits, {'operation':'decode-dependency','spec':spec,
+                    'handoff':dependency['handoff'],'source':dependency['ciphertext'],'identity':key.identity.decode('ascii'),
+                    'destination':str(staging.path/'dependencies'),'age':age},cancelled=cancelled,deadline=self._deadline)
+                mappings=task['dependencyInputs']
+                input_files += [m['destination'] for m in mappings]
+                items=[{'source':'inputs/'+name,'destination':name} for name in spec['files']]
+                items += [{'source':'dependencies/'+m['destination'],'destination':m['destination']} for m in mappings]
+                input_root=staging.path/'combined'
+                run_guarded_helper(parent,helper_limits,{'operation':'copy-artifacts','root':str(staging.path),'items':items,
+                    'destination':str(input_root),'maxBytes':max_input_bytes+max_dependency_bytes},cancelled=cancelled,deadline=self._deadline)
+            with self._outputs(parent, task, spec, staging, helper_limits, staging_limits, cancelled, input_root, input_files) as output_root:
                 receipt = run_guarded_helper(parent, helper_limits, {'operation': 'seal-result', 'spec': spec,
                     'taskId': task['id'], 'packageSHA256': binding['packageSHA256'],
                     'root': str(output_root), 'recipient': key.result_recipient,

@@ -1,5 +1,6 @@
-// A requester sends only a public attestation challenge on its already booked
-// TLS channel. Configuration, initialization and proof stay provider-retained.
+// A requester sends a public attestation challenge and, when required, a signed
+// dependency commitment on its already booked TLS channel. Configuration,
+// initialization and proof stay provider-retained.
 // This capability binds boot intake; it is never confidential-hardware admission.
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
@@ -8,6 +9,7 @@ import { inspectLaunchConsent } from './guest_consent.mjs';
 import { guestInitialization } from './guest_initialization.mjs';
 import { validateAttestationPolicy } from './attestation.mjs';
 import { prepareGuestLaunch,encodeLaunchJSON } from './guest_launch.mjs';
+import { inspectGuestDependency } from './guest_dependency.mjs';
 
 const protocol='cannabis.launch-handoff.v1',used=new WeakSet(),tickets=new WeakMap();
 const fail=()=>Error('Booked launch handoff failed; retain the assignment and reconcile its consumed dispatch');
@@ -53,20 +55,28 @@ async function bounded(channel,limit,signal,action) {
   try {return await Promise.race([Promise.resolve().then(()=>{check(!signal?.aborted);return action();}),stopped]);}
   finally {clearTimeout(timer);signal?.removeEventListener('abort',abort);}
 }
-function description(local,challenge) {
+function dependencyChecked(local,dependency,now) {
+  return inspectGuestDependency({proof:local.proof,network:local.checked.configuration.network,
+    binding:local.initialization.binding,execution:local.checked.configuration.execution,dependency,now});
+}
+function description(local,challenge,dependency) {
   return {protocol,assignmentSHA256:local.checked.assignmentSHA256,
-    channelBinding:local.binding.channelBinding,challengeSHA256:sha(challenge)};
+    channelBinding:local.binding.channelBinding,challengeSHA256:sha(challenge),
+    ...(dependency?{dependencyApprovalDigest:dependency.approvalDigest}:{})};
 }
 
 // Call before sendEncryptedInput. The requester retains the same challenge in
 // its attestation ledger and later appraises evidence before wrapping any key.
-export async function sendLaunchHandoff(channel,input,challenge,{timeoutMs=30000,signal,clock=seconds}={}) {
+export async function sendLaunchHandoff(channel,input,challenge,{timeoutMs=30000,signal,clock=seconds,dependency}={}) {
   try {
     check(integer(timeoutMs,1,60000)&&typeof clock==='function');
     const local=retained(channel,'requester',input,clock),life=lifetime(channel,local,clock);
-    challenge=challengeChecked(local,challenge,life.active());const d=description(local,challenge);
+    challenge=challengeChecked(local,challenge,life.active());
+    const selected=dependencyChecked(local,dependency,clock()),d=description(local,challenge,selected);
+    const request=selected?{dependency:{descriptor:selected.descriptor,signed:selected.signed}}:{};
+    check(Buffer.byteLength(JSON.stringify({...d,challenge,...request}))<=128*1024-128);
     return await bounded(channel,Math.min(timeoutMs,life.remaining()),signal,async()=>{
-      life.active();await channel.writeJSON({...d,operation:'challenge',challenge});
+      life.active();await channel.writeJSON({...d,operation:'challenge',challenge,...request});
       const ack=await channel.readJSON(2048);life.active();challengeChecked(local,challenge,clock());
       exact(ack,[...Object.keys(d),'operation','hardwareValidated','executionAuthorized','keyReleaseAuthorized']);
       check(Object.entries(d).every(([key,value])=>ack[key]===value)&&ack.operation==='challenge-accepted'&&
@@ -84,11 +94,14 @@ export async function receiveLaunchHandoff(channel,input,{timeoutMs=30000,signal
     check(integer(timeoutMs,1,60000)&&typeof clock==='function');
     const local=retained(channel,'provider',input,clock),life=lifetime(channel,local,clock);
     return await bounded(channel,Math.min(timeoutMs,life.remaining()),signal,async()=>{
-      life.active();const message=await channel.readJSON(16384);life.active();
-      exact(message,['protocol','operation','assignmentSHA256','channelBinding','challengeSHA256','challenge']);
-      const challenge=challengeChecked(local,message.challenge,clock()),d=description(local,challenge);
+      life.active();const message=await channel.readJSON(128*1024);life.active();
+      const hasDependency=Object.hasOwn(message??{},'dependency');
+      exact(message,['protocol','operation','assignmentSHA256','channelBinding','challengeSHA256','challenge',
+        ...(hasDependency?['dependency','dependencyApprovalDigest']:[])]);
+      const challenge=challengeChecked(local,message.challenge,clock());
+      const dependency=dependencyChecked(local,message.dependency,clock()),d=description(local,challenge,dependency);
       check(Object.entries(d).every(([key,value])=>message[key]===value)&&message.operation==='challenge');
-      const request={proof:local.proof,challenge};
+      const request={proof:local.proof,challenge,...(dependency?{dependency:{descriptor:dependency.descriptor,signed:dependency.signed}}:{})};
       const launch=await prepareGuestLaunch(local.signed,local.initialization,request,{clock:life.active});
       life.active();challengeChecked(local,challenge,clock());
       await channel.writeJSON({...d,operation:'challenge-accepted',hardwareValidated:false,executionAuthorized:false,keyReleaseAuthorized:false});

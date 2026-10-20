@@ -20,13 +20,16 @@ class CiphertextLimits:
     inodes: int
     inputBytes: int
     outputBytes: int
+    dependencyBytes: int = 0
 
     def __post_init__(self):
         ScratchLimits(self.bytes, self.inodes)
         for value in [self.inputBytes, self.outputBytes]:
             if type(value) is not int or not 1 <= value <= 1024**4:
                 raise ValueError('Invalid ciphertext file bound')
-        if sum((v+4095)//4096*4096 for v in [self.inputBytes,self.outputBytes]) > self.bytes:
+        if type(self.dependencyBytes) is not int or not 0 <= self.dependencyBytes <= 1024**4:
+            raise ValueError('Invalid dependency ciphertext bound')
+        if sum((v+4095)//4096*4096 for v in [self.inputBytes,self.outputBytes,self.dependencyBytes]) > self.bytes:
             raise ValueError('Ciphertext storage cannot hold both bounded files')
 
 
@@ -96,33 +99,47 @@ class GuestCiphertextStorage:
 
 class CiphertextAdmission:
     """Retain the real volume and verified input before the key-ready frame."""
-    def __init__(self, source, limits, expected, deadline, cancelled):
+    def __init__(self, source, limits, expected, deadline, cancelled, dependency=None):
         if not isinstance(expected,str) or not re.fullmatch('[0-9a-f]{64}',expected):
             raise ValueError('Require the retained encrypted package commitment')
         self.path, self.limits = ciphertext_directory(source), limits
         self.deadline, self.cancelled = deadline, cancelled
-        self.directory = self.file = None
+        self.directory = self.file = self.dependency_file = None
         try:
             self.directory = verify_storage(self.path,limits)
-            self.file = os.open('workload.age',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=self.directory)
-            info = os.fstat(self.file)
+            self.file, self.identity = self._admit('workload.age', expected, limits.inputBytes)
+            if dependency is not None:
+                if (not isinstance(dependency,dict) or set(dependency) != {'ciphertextSHA256','ciphertextBytes'}
+                        or not isinstance(dependency['ciphertextSHA256'],str) or not re.fullmatch('[0-9a-f]{64}',dependency['ciphertextSHA256'])
+                        or type(dependency['ciphertextBytes']) is not int or not 1 <= dependency['ciphertextBytes'] <= limits.dependencyBytes):
+                    raise ValueError('Dependency ciphertext differs from the reserved input capacity')
+                self.dependency_file, self.dependency_identity = self._admit('dependency.age', dependency['ciphertextSHA256'],
+                    limits.dependencyBytes, dependency['ciphertextBytes'])
+            self.verify()
+        except BaseException:
+            self.close()
+            raise
+
+    def _admit(self, name, expected, limit, exact_bytes=None):
+        fd = os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=self.directory)
+        try:
+            info = os.fstat(fd)
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o400
                     or info.st_nlink != 1 or info.st_dev != os.fstat(self.directory).st_dev
-                    or not 1 <= info.st_size <= limits.inputBytes):
+                    or not 1 <= info.st_size <= limit or exact_bytes is not None and info.st_size != exact_bytes):
                 raise ValueError('Unsafe or unbounded encrypted input')
-            self.identity = self._identity(info)
             state, count = hashlib.sha256(), 0
             while True:
-                deadline.check(cancelled)
-                chunk = os.read(self.file,min(1024*1024,info.st_size+1-count))
+                self.deadline.check(self.cancelled)
+                chunk = os.read(fd,min(1024*1024,info.st_size+1-count))
                 if not chunk:break
                 count += len(chunk);state.update(chunk)
                 if count > info.st_size:raise ValueError('Encrypted input grew during inspection')
             if count != info.st_size or state.hexdigest() != expected:
                 raise ValueError('Encrypted input differs from the retained assignment')
-            self.verify()
+            return fd, self._identity(info)
         except BaseException:
-            self.close()
+            os.close(fd)
             raise
 
     @staticmethod
@@ -138,10 +155,13 @@ class CiphertextAdmission:
                     or self._identity(os.fstat(self.file)) != self.identity
                     or self._identity(os.stat('workload.age',dir_fd=current,follow_symlinks=False)) != self.identity):
                 raise ValueError('Admitted ciphertext storage or input changed')
+            if self.dependency_file is not None and (self._identity(os.fstat(self.dependency_file)) != self.dependency_identity
+                    or self._identity(os.stat('dependency.age',dir_fd=current,follow_symlinks=False)) != self.dependency_identity):
+                raise ValueError('Admitted dependency ciphertext changed')
         finally:
             os.close(current)
 
     def close(self):
-        for name in ['file','directory']:
+        for name in ['file','dependency_file','directory']:
             fd = getattr(self,name,None)
             if fd is not None:os.close(fd);setattr(self,name,None)

@@ -16,6 +16,7 @@ export const approvalTypes={JobKeyDelivery:[
   ['resultKeySHA256','bytes32']
 ].map(([name,type])=>({name,type}))};
 export const approvalTypesV3={JobKeyDelivery:[...approvalTypes.JobKeyDelivery,{name:'configurationSHA256',type:'bytes32'}]};
+export const approvalTypesV4={JobKeyDelivery:[...approvalTypesV3.JobKeyDelivery,{name:'dependencyApprovalDigest',type:'bytes32'}]};
 const enc=new TextEncoder(),utf8=new TextDecoder('utf-8',{fatal:true});
 const requireValue=(test,message='Recovery does not match the requester-approved execution')=>{if(!test)throw Error(message);};
 const fields=(v,names)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join()===names.slice().sort().join();
@@ -42,9 +43,9 @@ export async function validateRecoveryBundle(input) {
   const slots=[];
   for(const entry of bundle.entries) {
     requireValue(fields(entry,['approval','recipient','custody','envelope']));
-    const p=entry.approval,d=p?.domain,v=p?.value,types=d?.version==='3'?approvalTypesV3:approvalTypes;
+    const p=entry.approval,d=p?.domain,v=p?.value,types=d?.version==='4'?approvalTypesV4:d?.version==='3'?approvalTypesV3:approvalTypes;
     requireValue(fields(p,['domain','value','digest','requester','jobId','requesterSignature'])&&
-      fields(d,['name','version','chainId','verifyingContract'])&&d.name==='Cannabis confidential key delivery'&&['2','3'].includes(d.version)&&
+      fields(d,['name','version','chainId','verifyingContract'])&&d.name==='Cannabis confidential key delivery'&&['2','3','4'].includes(d.version)&&
       Number(d.chainId)===c.chainId&&getAddress(d.verifyingContract)===c.escrow&&getAddress(p.requester)===c.requester&&
       fields(v,types.JobKeyDelivery.map(f=>f.name))&&/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(p.jobId)&&boundedJSON(p,16384));
     for(const {name,type} of types.JobKeyDelivery)if(type==='bytes32')requireValue(b32(v[name]));

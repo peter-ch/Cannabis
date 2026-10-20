@@ -8,6 +8,7 @@ import { guestInitialization } from './guest_initialization.mjs';
 import { validateAttestationPolicy } from './attestation.mjs';
 import { GuestFunding } from './guest_funding.mjs';
 import { nativeServiceCommitment } from './guest_execution.mjs';
+import { inspectGuestDependency } from './guest_dependency.mjs';
 
 const fail=()=>{throw Error('Guest launch configuration is not authorized');};
 const exact=(v,keys)=>{if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).sort().join()!==keys.sort().join())fail();};
@@ -78,9 +79,12 @@ export function readLaunchJSON(file,{limit=256*1024,trusted=false}={}) {
 }
 export async function prepareGuestLaunch(signed,initialization,request,{clock=()=>Math.floor(Date.now()/1000)}={}) {
   const started=performance.now(),now=clock();
-  signed=structuredClone(signed);request=structuredClone(request);exact(request,['proof','challenge']);
+  signed=structuredClone(signed);request=structuredClone(request);
+  exact(request,['proof','challenge',...(Object.hasOwn(request??{},'dependency')?['dependency']:[])]);
   const checked=inspectLaunchConsent(signed,initialization,request.proof,now),c=checked.configuration;
   const retained=guestInitialization(initialization);
+  const dependency=inspectGuestDependency({proof:request.proof,network:c.network,binding:retained.assignment.binding,
+    execution:c.execution,dependency:request.dependency,now});
   if(Buffer.byteLength(canonical(request))>16*1024*1024||retained.assignment.tee!==c.attestationPolicyTemplate.tee)fail();
   const policy=structuredClone(c.attestationPolicyTemplate);policy.measurements.initData=retained.digest;
   const digest=validateAttestationPolicy(policy),challenge=request.challenge;
@@ -110,5 +114,5 @@ export async function prepareGuestLaunch(signed,initialization,request,{clock=()
   // awaiting this function and charge all elapsed authorization time to it.
   return {initialization:retained.assignment,policy,challenge,funding,execution:c.execution,bootstrap:c.bootstrap,
     interval,transport:{...c.transport,timeoutMs:Math.min(c.transport.timeoutMs,(interval.end-now)*1000)},
-    configurationSHA256:checked.configurationSHA256};
+    configurationSHA256:checked.configurationSHA256,...(dependency?{dependency}: {})};
 }

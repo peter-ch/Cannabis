@@ -38,6 +38,7 @@ import {sendLaunchHandoff,receiveLaunchHandoff,consumeLaunchHandoff,inspectLaunc
 import {stageOperatingGuest,relayOperatingGuest} from '../operator/guest-boot-channel.mjs';
 import {operatingBootFixture} from './helpers/operating_boot_fixture.mjs';
 import {inspectExecutionPlan,taskCommitment} from '../compute/execution_plan.mjs';
+import {dependencyHandoffPayload} from '../compute/dependency_handoff.mjs';
 
 const h = n => '0x' + n.toString(16).padStart(64, '0');
 const utc = n => new Date(n * 1000).toISOString().replace('.000Z', 'Z');
@@ -90,11 +91,13 @@ contract MarketConsentWallet {
 });
 after(() => { provider?.destroy(); node?.child.kill(); });
 
-async function setup({ token = false, activate = true, execution, contractProvider = false, planned = false } = {}) {
+async function setup({ token = false, activate = true, execution, contractProvider = false, planned = false, sequential = false } = {}) {
   await provider.send('evm_revert', [initial]); initial = await provider.send('evm_snapshot', []);
   let time = (await provider.getBlock('latest')).timestamp;
   await provider.send('evm_setNextBlockTimestamp', [time + 1]); await provider.send('evm_mine', []); ++time;
-  const clock = () => time, start = time + 1000, end = start + 100, escrow = token ? tokenEscrow : native;
+  planned ||= sequential;
+  const clock = () => time, start = time + 1000, end = start + (sequential ? 200 : 100), escrow = token ? tokenEscrow : native;
+  const window = i => ({start:start+(sequential?i*100:0),end:start+(sequential?i*100:0)+100});
   const account = await owner.getAddress(), addresses = await Promise.all(workers.map(w => w.getAddress()));
   if(contractProvider)addresses[0]=await contractWorker.getAddress();
   const workerCall=async(i,target,name,args)=>{
@@ -117,12 +120,12 @@ async function setup({ token = false, activate = true, execution, contractProvid
   if(planned) {
     executionPlan=inspectExecutionPlan({schema:'cannabis.execution-plan.v1',chainId:31337,genesisHash:network.genesisHash,
       market:network.market,escrow:network.escrow,token:network.token,requester:account,jobId:job.id,packageSHA256:job.packageSHA256,policySHA256:job.policySHA256,
-      requirements:addresses.map((_,task)=>({task,taskSHA256:taskCommitment(job.packageSHA256,task),dependsOn:[],
-        runtime:{adapter:'native-linux-x86_64-v1',architecture:'x86_64',os:'linux',digestSHA256:h(73).slice(2)},
-        resources:{cpus:1,memoryMiB:128,scratchMiB:8,wallSeconds:60,nodes:1}})),
-      assignments:addresses.map((provider,i)=>({task:i,rank:0,attempt:1,acceleratorClass:'cpu',provider,serviceSHA256:h(20+i),
+      requirements:addresses.map((_,task)=>({task,taskSHA256:taskCommitment(job.packageSHA256,task),dependsOn:sequential&&task===1?[0]:[],
+        runtime:execution?.profile.runtime??{adapter:'native-linux-x86_64-v1',architecture:'x86_64',os:'linux',digestSHA256:h(73).slice(2)},
+        resources:execution?.profile.resources??{cpus:1,memoryMiB:128,scratchMiB:8,wallSeconds:60,nodes:1}})),
+      assignments:addresses.map((provider,i)=>({task:i,rank:0,attempt:1,acceleratorClass:'cpu',provider,serviceSHA256:execution?nativeServiceCommitment(execution).serviceSHA256:h(20+i),
         booking:{reservationId:h(50+i),offerId:keccak256(coder.encode(['address','bytes32'],[provider,h(40+i)])),
-          start:String(start),end:String(end),units:'1',gross:'10000',holdUntil:String(time+600)}}))}).plan;
+          start:String(window(i).start),end:String(window(i).end),units:'1',gross:'10000',holdUntil:String(time+600)}}))}).plan;
     job.schema='cannabis.compute.order.v3';job.executionPlanSHA256=inspectExecutionPlan(executionPlan).digestSHA256;
   }
   const terms = settlementTerms(job, settlement), orderId = await escrow.orderId(account, terms.terms.jobHash);
@@ -131,11 +134,11 @@ async function setup({ token = false, activate = true, execution, contractProvid
   for (let i = 0; i < 2; ++i) {
     await workerCall(i,market,'publishResource',[h(10 + i),execution?nativeServiceCommitment(execution).serviceSHA256:h(20 + i),1]);
     const resource = await market.resourceKey(addresses[i], h(10 + i));
-    const offer = { resource, escrow: network.escrow, policyHash: '0x' + job.policySHA256, manifestHash: h(30 + i), start, end,
+    const offer = { resource, escrow: network.escrow, policyHash: '0x' + job.policySHA256, manifestHash: h(30 + i), ...window(i),
       expiresAt: time + 900, units: 1, grossPerUnitSecond: 100 };
     await workerCall(i,market,'publishOffer',[h(40 + i),offer]);
     const offerId = keccak256(coder.encode(['address', 'bytes32'], [addresses[i], h(40 + i)]));
-    const booking = { reservationId: h(50 + i), offerId, requester: account, orderId, termsDigest: digest, start, end, units: 1, gross: '10000', holdUntil: time + 600 };
+    const booking = { reservationId: h(50 + i), offerId, requester: account, orderId, termsDigest: digest, ...window(i), units: 1, gross: '10000', holdUntil: time + 600 };
     const p = bookingPayload(context, booking); bookings.push(booking); ids.push(p.digest);
     if(contractProvider&&i===0)await (await contractWorker.connect(workers[0]).approveDigest(p.digest,true)).wait();
     signatures.push(await workers[i].signTypedData(p.domain, p.types, p.value));
@@ -147,7 +150,7 @@ async function setup({ token = false, activate = true, execution, contractProvid
   time = (await provider.getBlock('latest')).timestamp;
   const input = { job, settlement, bookingIds: ids,...(planned?{executionPlan}:{}) };
   const proof = activate ? await createMarketLeaseProof(network, input, clock) : null;
-  const run = planned?verifyMarketLeaseProof(proof,context).assignments[0].run:
+  const run = planned?verifyMarketLeaseProof(proof,context).assignments.find(a=>a.task===(sequential?1:0)).run:
     { runtimeSHA256: execution?.profile.runtime.digestSHA256??h(73).slice(2), taskSHA256: h(74).slice(2), attempt: 1, rank: 0, worldSize: 1, acceleratorClass: 'cpu' };
   const setTime = async value => { time = value; await provider.send('evm_setNextBlockTimestamp', [time]); await provider.send('evm_mine', []); };
   return { network, context, input, proof, clock, setTime, start, end, escrow, orderId, ids, run, addresses, workerCall };
@@ -324,9 +327,15 @@ test('requester approval and encrypted result recovery retain the market group w
   } finally { attestations.close(); g.funding.close(); }
 });
 
-async function configuredFixture(t,{contractProvider=false,transportTimeoutMs=60000}={}) {
-  const f=launchFixture(),d=await setup({execution:f.configuration.execution,contractProvider});await d.setTime(d.start+1);
-  const lease=verifyMarketLeaseProof(d.proof,d.context),r=lease.reservations.find(r=>!contractProvider||r.provider===d.addresses[0]),key=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
+async function configuredFixture(t,{contractProvider=false,transportTimeoutMs=60000,sequential=false}={}) {
+  const f=launchFixture();
+  if(sequential) {
+    const p=f.configuration.execution.profile;p.schema='cannabis.guest-native-service.v3';p.maxDependencyBytes=1024;
+    p.ciphertext.dependencyBytes=4*1024**2;p.ciphertext.bytes+=p.ciphertext.dependencyBytes;
+  }
+  const d=await setup({execution:f.configuration.execution,contractProvider,sequential});await d.setTime(d.start+(sequential?101:1));
+  const lease=verifyMarketLeaseProof(d.proof,d.context),r=lease.reservations.find(r=>sequential?
+    r.reservationId===lease.assignments.find(a=>a.task===1).reservationId:!contractProvider||r.provider===d.addresses[0]),key=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
   const configuration={...f.configuration,schema:'cannabis.guest-launch-configuration.v3',context:d.context,network:d.network,
     provider:r.provider,resourceId:r.resourceId,validFrom:d.start-10,validUntil:d.end+10};
   configuration.attestationPolicyTemplate.signingJwk=key.publicKey.export({format:'jwk'});
@@ -1037,6 +1046,43 @@ async function handoffTicket(t,x) {
   assert.equal(ack.challengeSHA256,ticket.challengeSHA256);assert.equal(ack.keyReleaseAuthorized,false);
   return {requester,provider,ticket};
 }
+
+test('dependent launch preserves signed input after the upstream booking ends and rechecks live funding',async t=>{
+  const x=await configuredFixture(t,{sequential:true}),local=handoffLocal(x),target=x.lease.assignments.find(a=>a.task===1),
+    source=x.lease.assignments.find(a=>a.task===0),descriptor=x.request.descriptor;
+  assert.ok(x.lease.reservations.find(r=>r.reservationId===source.reservationId).end<x.clock());
+  // Public receipt commitments are owned fixtures here; encrypted archive
+  // authentication is exercised by dependency-handoff and actual-kernel checks.
+  const handoff={schema:'cannabis.dependency-handoff.v1',format:'age-v1+ustar',recipient:descriptor.recipient,
+    ciphertextSHA256:h(190).slice(2),ciphertextBytes:1024,context:{schema:'cannabis.dependency-context.v1',
+      chainId:x.network.chainId,genesisHash:x.network.genesisHash,escrow:x.network.escrow,requester:x.lease.requester,
+      jobId:x.lease.job.id,packageSHA256:x.lease.job.packageSHA256,policySHA256:x.lease.job.policySHA256,
+      executionPlanSHA256:x.lease.executionPlan.digestSHA256,leaseDigest:x.lease.digest,orderId:x.orderId,
+      reservationId:target.reservationId,task:1,...target.run,inputRecipient:descriptor.recipient,
+      sources:[{reservationId:source.reservationId,task:0,taskSHA256:source.run.taskSHA256,attempt:1,rank:0,worldSize:1,
+        approvalDigest:h(191),receiptSHA256:h(192).slice(2),ciphertextSHA256:h(193).slice(2),ciphertextBytes:1024}]}};
+  const window={notBefore:x.clock(),expiresAt:x.clock()+60};
+  const approval=dependencyHandoffPayload(x.proof,x.network,x.r.reservationId,descriptor,handoff,window);
+  const dependency={descriptor,signed:{handoff,window,requesterSignature:await owner.signTypedData(approval.domain,approval.types,approval.value)}};
+  const request={proof:x.proof,challenge:x.challenge,dependency};
+  const launch=await prepareGuestLaunch(x.source.consent,x.initialization,request,{clock:x.clock});
+  assert.equal(launch.dependency.approvalDigest,approval.digest);
+  const funding=new GuestFunding(launch.funding,launch.initialization,{clock:x.clock});t.after(()=>funding.close());
+  assert.equal((await funding.refresh()).leaseDigest,x.lease.digest);
+  const [requester,providerChannel]=await handoffPair(t,x);
+  const [ack,ticket]=await Promise.all([sendLaunchHandoff(requester,local,x.challenge,{clock:x.clock,dependency}),
+    receiveLaunchHandoff(providerChannel,local,{clock:x.clock})]);
+  assert.equal(ack.dependencyApprovalDigest,approval.digest);assert.equal(ticket.hardwareValidated,false);
+  const staged=consumeLaunchHandoff(ticket);
+  assert.deepEqual(JSON.parse(staged.publicFiles[2]).dependency,dependency);
+  assert.equal(staged.launch.dependency.approvalDigest,approval.digest);
+  await assert.rejects(prepareGuestLaunch(x.source.consent,x.initialization,{proof:x.proof,challenge:x.challenge},{clock:x.clock}),/Dependency/);
+  const altered=structuredClone(request);altered.dependency.signed.handoff.ciphertextSHA256=h(194).slice(2);
+  await assert.rejects(prepareGuestLaunch(x.source.consent,x.initialization,altered,{clock:x.clock}));
+  await (await x.escrow.connect(workers[0]).deliver(x.orderId,h(195))).wait();
+  await assert.rejects(prepareGuestLaunch(x.source.consent,x.initialization,request,{clock:x.clock}),/fully accepted active/);
+  await assert.rejects(funding.refresh(),/fully accepted active/);
+});
 
 test('launch handoff retains exact public boot files and refuses copied or reused capabilities',async t=>{
   const x=await configuredFixture(t),{ticket,provider}=await handoffTicket(t,x);

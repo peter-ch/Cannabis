@@ -11,6 +11,7 @@ import { matchGuestInitialization } from './guest_initialization.mjs';
 import { GuestFunding } from './guest_funding.mjs';
 import { nativeServiceCommitment, executeNativeGuest } from './guest_execution.mjs';
 import { sealResultDelivery } from './result_delivery.mjs';
+import { inspectGuestDependency } from './guest_dependency.mjs';
 
 export const GUEST_COMPONENTS_REVISION = 'eae0bf63a3a9db7721f86e0a2b0b9941a7fcba3a';
 export const GUEST_AGENT_VERSION = 'Guest Components Version: v0.22.0';
@@ -66,7 +67,7 @@ export async function probeGuestAgent({ agentUrl = 'http://127.0.0.1:8006', agen
 
 export class GuestEvidenceSession {
   #policy; #challenge; #requester; #jobId; #key; #publicKey; #clock; #agent; #timer;
-  #abort = new AbortController(); #state = 'ready'; #evidence; #preparationAbort; #funding; #execution;
+  #abort = new AbortController(); #state = 'ready'; #evidence; #preparationAbort; #funding; #execution; #dependency;
   constructor(guard, options, key, publicKey) {
     if (guard !== construction) throw Error('Use GuestEvidenceSession.create');
     this.#policy = options.policy; this.#challenge = options.challenge;
@@ -75,10 +76,11 @@ export class GuestEvidenceSession {
     this.#clock = options.clock; this.#key = key; this.#publicKey = publicKey;
     this.#funding = options.funding;
     this.#execution = options.execution;
+    this.#dependency = options.dependency;
     this.#timer = setTimeout(() => this.close(), Math.max(1, options.challenge.expiresAt - this.#clock()) * 1000);
     this.#timer.unref();
   }
-  static async create({ initialization, policy, challenge, expectedBinding, requester, jobId, funding, execution, agentUrl = 'http://127.0.0.1:8006' }, { clock = nowSeconds } = {}) {
+  static async create({ initialization, policy, challenge, expectedBinding, requester, jobId, funding, execution, dependency, agentUrl = 'http://127.0.0.1:8006' }, { clock = nowSeconds } = {}) {
     policy = structuredClone(policy); challenge = structuredClone(challenge); expectedBinding = structuredClone(expectedBinding);
     endpoint(agentUrl);
     requester = getAddress(requester);
@@ -91,12 +93,15 @@ export class GuestEvidenceSession {
       if (!retainedFunding) throw Error('Native execution requires a signed funding configuration');
       retainedFunding.assertService(nativeServiceCommitment(execution));
     }
+    const retainedDependency=funding?inspectGuestDependency({proof:funding.proof,network:funding.network,binding:expectedBinding,execution,
+      dependency:dependency?{descriptor:dependency.descriptor,signed:dependency.signed}:undefined,now:clock()}):null;
+    if(dependency&&!funding)throw Error('Dependency inputs require retained funding');
     // The caller cannot supply a channel key. The private key is non-extractable
     // and held only in this session; no file, environment or serialization path.
     const pair = await webcrypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
     const publicKey = await exportJWK(pair.publicKey);
     trusteeReportData(policy, challenge, publicKey, clock());
-    return new GuestEvidenceSession(construction, { policy, challenge, requester, jobId, agentUrl, clock, funding: retainedFunding, execution }, pair.privateKey, publicKey);
+    return new GuestEvidenceSession(construction, { policy, challenge, requester, jobId, agentUrl, clock, funding: retainedFunding, execution, dependency:retainedDependency }, pair.privateKey, publicKey);
   }
   get channelJwk() { return structuredClone(this.#publicKey); }
   get status() { return { state: this.#state, nonce: this.#challenge.nonce, expiresAt: this.#challenge.expiresAt, fundingRequired: !!this.#funding, executionAuthorized: false }; }
@@ -129,10 +134,14 @@ export class GuestEvidenceSession {
   #match(expected) {
     const b = this.#challenge.binding, v = expected?.value, d = expected?.domain;
     if (!v || !d || expected.requester !== this.#requester || expected.jobId !== this.#jobId ||
-        d.name !== 'Cannabis confidential key delivery' || !['1','2','3'].includes(d.version) || BigInt(d.chainId) !== BigInt(b.chainId) ||
+        d.name !== 'Cannabis confidential key delivery' || !['1','2','3','4'].includes(d.version) || BigInt(d.chainId) !== BigInt(b.chainId) ||
         getAddress(d.verifyingContract) !== getAddress(b.escrow)) throw Error('Delivery differs from retained guest assignment');
-    if((d.version==='3')!==Object.hasOwn(b,'configurationSHA256'))throw Error('Delivery configuration version differs from retained assignment');
-    const fields = { ...(d.version==='3'?{configurationSHA256:b.configurationSHA256}:{}),leaseDigest: b.leaseDigest, orderId: b.orderId, reservationId: b.reservationId,
+    if((['3','4'].includes(d.version))!==Object.hasOwn(b,'configurationSHA256'))throw Error('Delivery configuration version differs from retained assignment');
+    if((d.version==='4')!==!!this.#dependency||this.#dependency&&(v.dependencyApprovalDigest!==this.#dependency.approvalDigest||
+      this.#clock()<this.#dependency.signed.window.notBefore||this.#clock()>=this.#dependency.signed.window.expiresAt||
+      v.notBefore<this.#dependency.signed.window.notBefore||v.expiresAt>this.#dependency.signed.window.expiresAt))
+      throw Error('Key delivery differs from the retained dependency approval');
+    const fields = { ...(['3','4'].includes(d.version)?{configurationSHA256:b.configurationSHA256}:{}),leaseDigest: b.leaseDigest, orderId: b.orderId, reservationId: b.reservationId,
       nonce: '0x' + this.#challenge.nonce, attestationPolicySHA256: '0x' + this.#challenge.attestationPolicySHA256,
       channelKeySHA256: '0x' + createHash('sha256').update(canonical(this.#publicKey)).digest('hex'),
       attempt: b.attempt, rank: b.rank, worldSize: b.worldSize };
@@ -189,7 +198,7 @@ export class GuestEvidenceSession {
     let resultKey;
     try {
       expected = structuredClone(expected); this.#match(expected);
-      if(!['2','3'].includes(expected.domain.version))throw Error('Native execution requires an approved confidential result channel');
+      if(!['2','3','4'].includes(expected.domain.version))throw Error('Native execution requires an approved confidential result channel');
       this.#funding.assertService(nativeServiceCommitment(this.#execution));
       const binding = Object.fromEntries(['packageSHA256', 'policySHA256', 'runtimeSHA256', 'taskSHA256',
         'attempt', 'rank', 'worldSize', 'acceleratorClass'].map(k => [k, this.#challenge.binding[k]]));
@@ -199,7 +208,7 @@ export class GuestEvidenceSession {
         resultKey=key.resultKey;
         if (running.signal.aborted) throw Error('Guest execution cancelled during key opening');
         this.#funding.assertWindow(); return key;
-      }, { timeoutMs: this.#funding.remainingMilliseconds(), signal: running.signal });
+      }, { timeoutMs: this.#funding.remainingMilliseconds(), signal: running.signal,dependency:this.#dependency });
       await this.#funding.refresh(); this.#funding.assertWindow();
       if (running.signal.aborted) throw Error('Guest execution cancelled before result acceptance');
       const resultEnvelope=await sealResultDelivery(result.receipt,resultKey,expected);

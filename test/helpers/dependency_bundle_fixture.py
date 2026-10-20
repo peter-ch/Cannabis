@@ -28,6 +28,9 @@ if r['action'] == 'setup':
              for i, name in enumerate(['first', 'second', 'join'])]
     tasks[-1].update(dependencyInputs=[{'task': name, 'rank': rank, 'output': 'selected.txt', 'destination': f'inputs/{name}-{rank}.txt'}
                                      for name, rank in [('first', 0), ('second', 0), ('second', 1)]], dependencyInputMaxBytes=128)
+    if r.get('native'):
+        tasks[-1]['runtime'] = {**runtime, 'adapter': 'native-linux-x86_64-v1'}
+        tasks[-1]['runtime'].pop('collectiveBackend')
     spec = {'schema': 'cannabis.workload.v1', 'id': 'owned-handoff', 'policySHA256': '03'*32,
             'resultRecipient': owner, 'tasks': tasks, 'files': ['program.txt'], 'assembly': []}
     artifacts = root / 'artifacts'; artifacts.mkdir()

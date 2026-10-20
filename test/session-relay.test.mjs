@@ -38,7 +38,7 @@ async function fixture(t,version='2') {
     ...Object.fromEntries(['orderId','leaseDigest','reservationId','attempt','rank','worldSize'].map(k=>[k,initialValue[k]])),
     ...Object.fromEntries(['packageSHA256','policySHA256','runtimeSHA256','taskSHA256'].map(k=>[k,initialValue[k].slice(2)])),acceleratorClass:'cpu'};
   const initialization={schema:'cannabis.guest-initialization.v1',tee:'snp',requester:f.owner.address,jobId:f.spec.id,binding};
-  if(version==='3'){initialization.schema='cannabis.guest-initialization.v2';binding.configurationSHA256=initialValue.configurationSHA256;}
+  if(['3','4'].includes(version)){initialization.schema='cannabis.guest-initialization.v2';binding.configurationSHA256=initialValue.configurationSHA256;}
   const now=Math.floor(Date.now()/1000),verifier=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
   const policy={schema:'cannabis.attestation.trustee-policy.v1',issuer:'Owned protocol fixture',signingJwk:verifier.publicKey.export({format:'jwk'}),
     verifierBuild:'Synthetic protocol only',appraisalPolicyId:'owned-fixture',maxTokenAgeSeconds:90,maxTokenLifetimeSeconds:120,challengeTTLSeconds:90,tee:'snp',
@@ -49,6 +49,13 @@ async function fixture(t,version='2') {
   // funding or hardware admission. The kernel integration checks those separately.
   const launch={initialization,policy,challenge,interval:{start:now-1,end:now+90},
     transport:{timeoutMs:15000,maxCiphertextBytes:1024*1024},execution:{profile:{ciphertext:{inputBytes:1024*1024,outputBytes:1024*1024}}}};
+  const dependencyFile=path.join(dir,'dependency.age'),guestDependency=path.join(dir,'guest-dependency.age');
+  if(version==='4') {
+    const bytes=Buffer.from(await enc.encrypt(randomBytes(90000)));fs.writeFileSync(dependencyFile,bytes);
+    launch.execution.profile.ciphertext.dependencyBytes=1024*1024;
+    launch.dependency={approvalDigest:initialValue.dependencyApprovalDigest,
+      signed:{handoff:{ciphertextSHA256:hash(bytes),ciphertextBytes:bytes.length}}};
+  }
   const portServer=net.createServer();await new Promise(r=>portServer.listen(0,'127.0.0.1',r));const port=portServer.address().port;await new Promise(r=>portServer.close(r));
   const origin='http://127.0.0.1:'+port,{server,relay}=createWorkServer({file:':memory:',resultFile:':memory:',origin});await new Promise(r=>server.listen(port,'127.0.0.1',r));
   const inbox=new ResultInbox(path.join(dir,'inbox.sqlite'),f.bundle.context),wires=[],streams=[],captured=[];
@@ -62,6 +69,10 @@ async function fixture(t,version='2') {
     try {
       await receiveEncryptedInput(guest,{destination:guestInput,packageSHA256,maxCiphertextBytes:1024*1024});
       assert.deepEqual(fs.readFileSync(guestInput),inputBytes);
+      if(version==='4') {
+        await receiveEncryptedInput(guest,{destination:guestDependency,packageSHA256:launch.dependency.signed.handoff.ciphertextSHA256,maxCiphertextBytes:1024*1024});
+        assert.deepEqual(fs.readFileSync(guestDependency),fs.readFileSync(dependencyFile));
+      }
       channel=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
       const raw=Buffer.from(JSON.stringify({syntheticOwnedProtocolEvidence:true}));
       evidence={schema:'cannabis.guest-evidence.v1',nonce:challenge.nonce,channelJwk:channel.publicKey.export({format:'jwk'}),
@@ -99,6 +110,8 @@ async function fixture(t,version='2') {
   const requesterRun=async({changeRecord=r=>r,changeAccess=a=>a}={})=>{
     try {
       await sendEncryptedInput(requester,{source:input,packageSHA256,maxCiphertextBytes:1024*1024});
+      if(version==='4')await sendEncryptedInput(requester,{source:dependencyFile,
+        packageSHA256:launch.dependency.signed.handoff.ciphertextSHA256,maxCiphertextBytes:1024*1024});
       const record=await prepare(await receiveGuestEvidence(requester));await sendGuestExecution(requester,await changeRecord(record));
       const access=changeAccess(await receiveSessionResultAccess(requester,{approvalDigest:expected.digest,origin}));
       return await receiveHostedResult(requester,{inbox,approvalDigest:expected.digest,loadResultKey:b=>recoverResultKey(entry.custody,f.identity,b),
@@ -128,7 +141,7 @@ test('configuration-bound session refuses downgrade or substitution before execu
   }
 });
 
-for(const version of ['2','3'])test(`v${version} session preserves input/evidence ordering, sealed execution, role-specific access and requester acknowledgement`,async t=>{
+for(const version of ['2','3','4'])test(`v${version} session preserves input/evidence ordering, sealed execution, role-specific access and requester acknowledgement`,async t=>{
   const f=await fixture(t,version),results=await f.run();for(const r of results)assert.equal(r.status,'fulfilled',results.map(x=>x.reason?.message).join(' | '));
   assert.equal(f.executions,1);assert.equal(f.reservations,1);assert.equal(results[0].value.requesterAcknowledgedStorage,true);
   assert.equal(results[1].value.hardwareValidated,false);assert.equal(results[1].value.guestCompletionObserved,false);
@@ -144,6 +157,22 @@ test('changed encrypted input cannot reach evidence, reservation or execution',a
   const f=await fixture(t),write=f.requester.writeChunk.bind(f.requester);let changed=false;
   f.requester.writeChunk=async bytes=>{const b=Buffer.from(bytes);if(!changed){changed=true;b[42]^=1;}return write(b);};
   failed(await f.run());assert.equal(f.executions,0);assert.equal(f.reservations,0);assert.equal(fs.existsSync(f.guestInput),false);
+});
+
+test('dependency-bound session rejects corrupted second input and changed input approval before execution',async t=>{
+  for(const mode of ['ciphertext','approval','downgrade']) {
+    const f=await fixture(t,'4');
+    if(mode==='ciphertext') {
+      const write=f.requester.writeChunk.bind(f.requester);let frames=0;
+      f.requester.writeChunk=async bytes=>{const b=Buffer.from(bytes);if(++frames===4)b[42]^=1;return write(b);};
+    }
+    const client=mode==='ciphertext'?{}:{changeRecord:r=>{
+      if(mode==='approval')r.expectedApproval.value.dependencyApprovalDigest='0x'+'99'.repeat(32);
+      else {r.schema='cannabis.key-delivery.record.v3';r.expectedApproval.domain.version='3';delete r.expectedApproval.value.dependencyApprovalDigest;}
+      return r;
+    }};
+    failed(await f.run({},client));assert.equal(f.executions,0);assert.equal(f.reservations,0);
+  }
 });
 
 test('changed signed workload, channel header and approval signature fail before reservation or guest forwarding',async t=>{
