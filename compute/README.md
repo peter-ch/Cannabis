@@ -4,6 +4,13 @@ The compute components package arbitrary software into streaming encrypted archi
 
 The [guest session](../docs/guest-attestation.md) now connects the local SNP/TDX attestation agent to the requester approval and encrypted key-envelope APIs. It retains a guest-generated channel key through evidence collection and one verified opening. Operational confidential execution still requires a reviewed measured launcher and compatible hardware.
 
+The [protected group adapter](../docs/protected-groups.md) adds explicit coordinated
+CPU ranks, authenticated encrypted peer networking, a shared signed start and
+group-bound result recovery. Its combined Linux checkpoint connects retained
+guest sessions, native execution, separate operators and isolated-chain settlement.
+Refreshed measured images and actual hardware admission remain unfinished. See the
+[requester workflow](../docs/requester-workflow.md) for dispatch and recovery.
+
 ## Commands
 
 ```sh

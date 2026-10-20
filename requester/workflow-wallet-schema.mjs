@@ -13,13 +13,21 @@ const key=fields([['releaseId','bytes32'],['leaseDigest','bytes32'],['orderId','
   ['attempt','uint32'],['rank','uint32'],['worldSize','uint32'],['notBefore','uint64'],['expiresAt','uint64'],['resultKeySHA256','bytes32'],
   ['configurationSHA256','bytes32']]);
 const stored=fields([['approvalDigest','bytes32'],['envelopeSHA256','bytes32'],['ciphertextSHA256','bytes32'],['ciphertextBytes','uint64']]);
+const group=fields([['genesisHash','bytes32'],['leaseDigest','bytes32'],['executionPlanSHA256','bytes32'],
+  ['taskSHA256','bytes32'],['attempt','uint32'],['worldSize','uint32'],['groupDigest','bytes32'],
+  ['requester','address'],['validFrom','uint64'],['validUntil','uint64']]);
+const start=fields([['groupDigest','bytes32'],['readinessDigest','bytes32'],['requester','address'],['validFrom','uint64'],['validUntil','uint64']]);
 const check=v=>{if(!v)throw Error('Unsupported, expired or changed workflow approval');};
 const exact=(v,n)=>check(v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join()===[...n].sort().join());
 export function workflowSigningSchema(kind,version) {
   const data={peer:['Cannabis booked peer channel','BookedPeerChannel',peer],dependency:['Cannabis dependency handoff','DependencyHandoff',dependency],
-    'key-release':['Cannabis confidential key delivery','JobKeyDelivery',version==='4'?[...key,{name:'dependencyApprovalDigest',type:'bytes32'}]:key],
+    'key-release':['Cannabis confidential key delivery','JobKeyDelivery',[...key,
+      ...(['5','6'].includes(version)?fields([['groupDigest','bytes32'],['groupStartDigest','bytes32']]):[]),
+      ...(['4','6'].includes(version)?fields([['dependencyApprovalDigest','bytes32']]):[])]],
+    group:['Cannabis protected group','ProtectedGroup',group],
+    'group-start':['Cannabis protected group start','ProtectedGroupStart',start],
     stored:['Cannabis encrypted result stored','ResultStored',stored]}[kind];
-  check(data&&(kind==='key-release'?['3','4'].includes(version):version==='1'));
+  check(data&&(kind==='key-release'?['3','4','5','6'].includes(version):version==='1'));
   return {name:data[0],primaryType:data[1],types:{[data[1]]:data[2]}};
 }
 export function validateWorkflowReview(review,now=Date.now()) {
@@ -46,5 +54,8 @@ export function validateWorkflowReview(review,now=Date.now()) {
     d.message.origin.startsWith('https://'));
   if(['dependency','key-release'].includes(review.kind))check(d.message.reservationId===review.reservationId&&BigInt(d.message.expiresAt)>BigInt(d.message.notBefore));
   if(review.kind==='dependency')check(d.message.genesisHash===review.genesisHash);
+  if(['group','group-start'].includes(review.kind))check(d.message.requester.toLowerCase()===review.requester.toLowerCase()&&
+    BigInt(d.message.validUntil)>BigInt(d.message.validFrom));
+  if(review.kind==='group')check(d.message.genesisHash===review.genesisHash&&BigInt(d.message.worldSize)>=2n&&BigInt(d.message.worldSize)<=64n);
   return structuredClone(review);
 }

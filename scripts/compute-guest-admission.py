@@ -16,7 +16,7 @@ def main():
         raw=sys.stdin.buffer.read(65537)
         if len(raw)>65536:raise ValueError('Admission input bound')
         request=json.loads(raw,object_pairs_hook=_unique)
-        admission=NativeExecutionAdmission(request,deadline,parent);admission.verify()
+        admission=NativeExecutionAdmission(request,deadline,parent,inspect_only=True);admission.verify()
         print(json.dumps({'schema':'cannabis.guest-admission-check.v1','serviceSHA256':admission.profile.service_sha256,
             'controlContained':True,'runtimeVerified':True,'ciphertextVerified':True,'ciphertextStorageVerified':True,
             'hardwareValidated':False,'executionAuthorized':False}))

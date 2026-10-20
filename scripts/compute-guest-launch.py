@@ -49,7 +49,14 @@ def launch(vm):
         profile, deadline, transport, source = authorize_launch(NODE,pins[NODE],VERIFIER,pins[VERIFIER],snapshot.fd)
         vm.admit(profile)
         runtime = image_runtime(ROOT/'runtime.json')
-        if source['rootfs'] != runtime['path'] or profile.value['runtime'] != runtime['runtime']:
+        selected_runtime = dict(profile.value['runtime'])
+        if profile.value['schema'] == 'cannabis.guest-native-service.v4':
+            # Group networking changes the measured controller, not the pinned
+            # application root. NativeServiceProfile validates this adapter pair.
+            if selected_runtime.pop('collectiveBackend', None) != 'attested-tls-ip-v1':
+                raise ValueError('Unsupported protected collective backend')
+            selected_runtime['adapter'] = 'native-linux-x86_64-v1'
+        if source['rootfs'] != runtime['path'] or selected_runtime != runtime['runtime']:
             raise ValueError('The authorized runtime is not provided by this image')
         with FrozenRuntime(runtime['path'],runtime['runtime']['digestSHA256'],
                 max_bytes=runtime['fileBytes'],max_entries=runtime['inventoryEntries']) as prepared:

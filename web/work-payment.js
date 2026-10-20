@@ -14,7 +14,7 @@ export async function reviewedResultCommitment(configuration,plan) {
   await current.assertCurrent();check(current===selected&&current.epoch===epoch);
   const p=plan.plan,d=plan.detail,s=current.snapshot,b=s.bundle;
   check(BigInt(b.context.chainId)===BigInt(c.chainId)&&b.context.escrow===d.asset.escrow&&b.context.requester===d.requester&&s.jobId===p.job.id&&
-    s.bundle.entries.length===current.archives.length&&b.entries.every(e=>['3','4'].includes(e.approval.domain.version)&&e.approval.value.orderId===d.orderId&&
+    s.bundle.entries.length===current.archives.length&&b.entries.every(e=>['3','4','5','6'].includes(e.approval.domain.version)&&e.approval.value.orderId===d.orderId&&
       e.approval.value.packageSHA256==='0x'+p.job.packageSHA256&&e.approval.value.policySHA256==='0x'+p.job.policySHA256));
   const commitment=resultCommitment({chainId:c.chainId,genesisHash:c.genesisHash,escrow:d.asset.escrow,requester:d.requester,
     orderId:d.orderId,termsDigest:d.termsDigest,packageSHA256:p.job.packageSHA256,policySHA256:p.job.policySHA256},current.archives);

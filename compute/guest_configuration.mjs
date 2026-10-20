@@ -41,9 +41,10 @@ export function validateGuestConfiguration(configuration,{chainId,maxValiditySec
   address(n.escrow);address(c.provider);if(!bytes32(c.resourceId))fail();
   nativeServiceCommitment(c.execution);
   const profile=c.execution.profile;
-  const dependencies=profile.schema==='cannabis.guest-native-service.v3';
-  exact(profile,['schema','units','runtime','resources','total','control','helper','processLimit','scratchInodes','staging','ciphertext','maxInputBytes','tools',...(dependencies?['maxDependencyBytes']:[])]);
-  exact(profile.runtime,['adapter','architecture','os','digestSHA256']);
+  const grouped=profile.schema==='cannabis.guest-native-service.v4';
+  const dependencies=grouped||profile.schema==='cannabis.guest-native-service.v3';
+  exact(profile,['schema','units','runtime','resources','total','control','helper','processLimit','scratchInodes','staging','ciphertext','maxInputBytes','tools',...(dependencies?['maxDependencyBytes']:[]),...(grouped?['group']:[])]);
+  exact(profile.runtime,['adapter','architecture','os','digestSHA256',...(grouped?['collectiveBackend']:[])]);
   exact(profile.resources,['cpus','memoryMiB','scratchMiB','wallSeconds','nodes']);
   exact(profile.total,['cpu_millis','memory_bytes','processes','wall_seconds','children']);
   for(const name of ['control','helper'])exact(profile[name],['cpu_millis','memory_bytes','processes','wall_seconds']);
@@ -57,6 +58,15 @@ export function validateGuestConfiguration(configuration,{chainId,maxValiditySec
     Object.values(profile.tools).some(v=>typeof v!=='string'||!/^[0-9a-f]{64}$/.test(v))||
     typeof profile.runtime.digestSHA256!=='string'||!/^[0-9a-f]{64}$/.test(profile.runtime.digestSHA256)||
     Object.values(profile.runtime).some(v=>typeof v!=='string'||!/^[A-Za-z0-9_.-]{1,128}$/.test(v)))fail();
+  if(grouped) {
+    const g=profile.group;exact(g,['protocol','bindHost','port','maxBufferedBytes','maxTrafficBytes']);
+    if(g.protocol!=='cannabis.group-tls-ip.v1'||!['0.0.0.0','127.0.0.1','::','::1'].includes(g.bindHost)||
+      !integer(g.port,1024,65535)||!integer(g.maxBufferedBytes,131072,8*1024**2)||!integer(g.maxTrafficBytes,1,1024**4)||
+      !integer(profile.resources.nodes,2,64)||profile.runtime.adapter!=='native-group-linux-x86_64-v1'||
+      profile.runtime.collectiveBackend!=='attested-tls-ip-v1'||profile.runtime.architecture!=='x86_64'||profile.runtime.os!=='linux'||
+      profile.control.processes<16||profile.control.memory_bytes<260*1024**2+2*g.maxBufferedBytes+
+        (profile.resources.nodes-1)*(g.maxBufferedBytes+262144))fail();
+  } else if(profile.runtime.adapter==='native-group-linux-x86_64-v1')fail();
   for(const file of Object.values(c.execution.source))if(!path.posix.isAbsolute(file)||file.includes('\\')||file.includes('\0')||file.split('/').includes('..'))fail();
   const b=c.bootstrap;exact(b,['agentBinary','bridgeBinary','runtimeDirectory','port']);
   for(const field of ['agentBinary','bridgeBinary','runtimeDirectory'])if(typeof b[field]!=='string'||!path.posix.isAbsolute(b[field])||b[field].includes('\\')||b[field].includes('\0')||b[field].split('/').includes('..'))fail();

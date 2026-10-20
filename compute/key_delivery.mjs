@@ -15,6 +15,7 @@ import { guestInitialization } from './guest_initialization.mjs';
 import { nativeServiceCommitment } from './guest_execution.mjs';
 import { inspectLaunchConsent } from './guest_consent.mjs';
 import { inspectGuestDependency } from './guest_dependency.mjs';
+import { verifyGroupAdmission, groupDeliveryBinding } from './group_admission.mjs';
 
 const hash = data => createHash('sha256').update(data).digest('hex');
 const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -92,9 +93,12 @@ export const deliveryTypes = { JobKeyDelivery: [
 export const deliveryTypesV2={JobKeyDelivery:[...deliveryTypes.JobKeyDelivery,{name:'resultKeySHA256',type:'bytes32'}]};
 export const deliveryTypesV3={JobKeyDelivery:[...deliveryTypesV2.JobKeyDelivery,{name:'configurationSHA256',type:'bytes32'}]};
 export const deliveryTypesV4={JobKeyDelivery:[...deliveryTypesV3.JobKeyDelivery,{name:'dependencyApprovalDigest',type:'bytes32'}]};
+export const deliveryTypesV5={JobKeyDelivery:[...deliveryTypesV3.JobKeyDelivery,
+  {name:'groupDigest',type:'bytes32'},{name:'groupStartDigest',type:'bytes32'}]};
+export const deliveryTypesV6={JobKeyDelivery:[...deliveryTypesV5.JobKeyDelivery,{name:'dependencyApprovalDigest',type:'bytes32'}]};
 export function deliveryApprovalTypes(version) {
   if(version==='1')return deliveryTypes;if(version==='2')return deliveryTypesV2;if(version==='3')return deliveryTypesV3;
-  if(version==='4')return deliveryTypesV4;
+  if(version==='4')return deliveryTypesV4;if(version==='5')return deliveryTypesV5;if(version==='6')return deliveryTypesV6;
   throw Error('Unsupported key-delivery approval version');
 }
 
@@ -108,10 +112,11 @@ function custody(descriptor, job) {
 }
 
 // A wallet-review payload. No signing, key recovery, RPC or key delivery occurs here.
-export function keyDeliveryPayload(capacity, attestations, request, now = nowSeconds()) {
+export function keyDeliveryPayload(capacity, attestations, request, now = nowSeconds(), {groupAdmission}={}) {
   const withResult=Object.hasOwn(request??{},'resultKeySHA256');
   const withDependency=Object.hasOwn(request??{},'dependency');
-  exact(request, ['releaseId', 'leaseId', 'nonce', 'channelJwk', 'descriptor', 'notBefore', 'expiresAt',...(withResult?['resultKeySHA256']:[]),...(withDependency?['dependency']:[])]);
+  const withGroup=Object.hasOwn(request??{},'group');
+  exact(request, ['releaseId', 'leaseId', 'nonce', 'channelJwk', 'descriptor', 'notBefore', 'expiresAt',...(withResult?['resultKeySHA256']:[]),...(withDependency?['dependency']:[]),...(withGroup?['group']:[])]);
   if(withResult)bytes32(request.resultKeySHA256);
   bytes32(request.releaseId); bytes32(request.leaseId);
   const challenge = attestations.pending(request.nonce), b = challenge.binding;
@@ -120,6 +125,8 @@ export function keyDeliveryPayload(capacity, attestations, request, now = nowSec
   if (!reservation) throw Error('Challenge does not reference this funded reservation');
   const run = Object.fromEntries(['runtimeSHA256', 'taskSHA256', 'attempt', 'rank', 'worldSize', 'acceleratorClass'].map(k => [k, b[k]]));
   const configured=!!lease.configuration;
+  if(withGroup!==(lease.configuration?.execution.profile.schema==='cannabis.guest-native-service.v4')||withGroup!==!!groupAdmission)
+    throw Error('Group key delivery requires the complete independently verified peer admission');
   if(configured!==Object.hasOwn(b,'configurationSHA256')||configured&&!withResult)
     throw Error('Configuration-bound delivery requires its reviewed configuration and result channel');
   const expected = configured
@@ -151,6 +158,9 @@ export function keyDeliveryPayload(capacity, attestations, request, now = nowSec
   integer(request.expiresAt, Math.max(request.notBefore, now) + 1, Math.min(reservation.end, challenge.expiresAt));
   if(dependency&&(request.notBefore<dependency.signed.window.notBefore||request.expiresAt>dependency.signed.window.expiresAt))
     throw Error('Key delivery exceeds the approved dependency input window');
+  const group=withGroup?groupDeliveryBinding(groupAdmission,request.group,b,request.channelJwk,now):null;
+  if(group&&(request.notBefore<request.group.start.payload.value.validFrom||request.expiresAt>request.group.start.payload.value.validUntil))
+    throw Error('Key delivery exceeds the approved protected group start window');
   const value = {
     releaseId: request.releaseId, leaseDigest: b.leaseDigest, orderId: b.orderId, reservationId: b.reservationId,
     packageSHA256: '0x' + b.packageSHA256, policySHA256: '0x' + b.policySHA256,
@@ -161,9 +171,9 @@ export function keyDeliveryPayload(capacity, attestations, request, now = nowSec
     notBefore: request.notBefore, expiresAt: request.expiresAt,
     ...(withResult?{resultKeySHA256:request.resultKeySHA256}:{}),
     ...(configured?{configurationSHA256:lease.configurationSHA256}:{}),
-    ...(dependency?{dependencyApprovalDigest:dependency.approvalDigest}:{})
+    ...(dependency?{dependencyApprovalDigest:dependency.approvalDigest}:{}),...(group??{})
   };
-  const d=domain(b,dependency?'4':configured?'3':withResult?'2':'1'),types=deliveryApprovalTypes(d.version);
+  const d=domain(b,group?(dependency?'6':'5'):dependency?'4':configured?'3':withResult?'2':'1'),types=deliveryApprovalTypes(d.version);
   return { domain: d, types, value, digest: TypedDataEncoder.hash(d, types, value),
     requester: getAddress(lease.agreement.request.job.requester), provider: reservation.provider,
     jobId: lease.agreement.request.job.id, leaseId: lease.leaseId,
@@ -210,7 +220,9 @@ export async function sealJobKeyDelivery(capacity, attestations, signed, token, 
   if(marketSource(capacity))capacity=structuredClone(capacity);
   exact(signed, ['request', 'requesterSignature']);
   initializeJournal(attestations);
-  const request = signed.request, payload = keyDeliveryPayload(capacity, attestations, request, clock());
+  const request = signed.request;
+  const groupAdmission=request?.group?await verifyGroupAdmission(capacity.proof,network,request.group.approval,{clock}):undefined;
+  const payload = keyDeliveryPayload(capacity, attestations, request, clock(), {groupAdmission});
   if (verifyTypedData(payload.domain, payload.types, payload.value, signed.requesterSignature) !== payload.requester) throw Error('Requester key-delivery approval signature mismatch');
   checkWindow(payload, clock());
   if (attestations.db.prepare('SELECT 1 FROM key_deliveries WHERE releaseId=? OR (leaseDigest=? AND taskSHA256=? AND attempt=? AND rank=?)').get(payload.value.releaseId, payload.value.leaseDigest, payload.value.taskSHA256, payload.value.attempt, payload.value.rank)) throw Error('A key delivery already exists for this release or rank attempt');
@@ -240,7 +252,7 @@ export async function sealJobKeyDelivery(capacity, attestations, signed, token, 
     deriveInputRecipient(recovered.identity, ageKeygen) !== payload.value.inputRecipient) throw Error('Recovered key does not belong to this approved job');
   let envelope,resultKey,cleartext;
   try {
-    if(['2','3','4'].includes(payload.domain.version)) {
+    if(['2','3','4','5','6'].includes(payload.domain.version)) {
       if(typeof loadResultKey!=='function')throw Error('Require requester-held result-key custody');
       resultKey=await loadResultKey({releaseId:request.releaseId,recipient:recovered.resultRecipient,resultKeySHA256:payload.value.resultKeySHA256});
       if(resultKeyCommitment(resultKey)!==payload.value.resultKeySHA256)throw Error('Result key differs from signed approval');
@@ -263,14 +275,14 @@ export async function sealJobKeyDelivery(capacity, attestations, signed, token, 
   return attestations.transaction(() => {
     checkWindow(payload, clock());
     if (clock() >= appraisal.expiresAt) throw Error('Attestation expired during key wrapping');
-    const current = keyDeliveryPayload(capacity, attestations, request, clock());
+    const current = keyDeliveryPayload(capacity, attestations, request, clock(), {groupAdmission});
     if (current.digest !== payload.digest || agreement(capacity, request.leaseId).digest !== lease.digest) throw Error('Delivery approval or lease changed during wrapping');
     const record = { schema: 'cannabis.key-delivery.record.v'+payload.domain.version, releaseId: request.releaseId, approvalDigest: payload.digest,
       nonce: request.nonce, issuedAt: clock(), expiresAt: Math.min(request.expiresAt, appraisal.expiresAt),
       envelope, envelopeSHA256: hash(envelope), attestationTokenSHA256: appraisal.tokenSHA256,
       finalizedBlock: finalized.finalizedBlock, observedHead: finalHead.headBlock,
       keyWrapped: true, transmitted: false, executionAuthorized: false,
-      ...(['2','3','4'].includes(payload.domain.version)?{expectedApproval:{...structuredClone(payload),requesterSignature:signed.requesterSignature}}:{}) };
+      ...(['2','3','4','5','6'].includes(payload.domain.version)?{expectedApproval:{...structuredClone(payload),requesterSignature:signed.requesterSignature}}:{}) };
     attestations.db.prepare('INSERT INTO key_deliveries VALUES (?,?,?,?,?,?,?,?)').run(request.releaseId, payload.digest, request.nonce,
       payload.value.leaseDigest, payload.value.taskSHA256, payload.value.attempt, payload.value.rank, JSON.stringify(record));
     const consumed = attestations.db.prepare('UPDATE attestation_challenges SET consumed=1,tokenSHA256=? WHERE nonce=? AND consumed=0').run(appraisal.tokenSHA256, request.nonce);
@@ -297,7 +309,7 @@ export async function openJobKeyDelivery(envelope, channelPrivateKey, expected, 
   try { decoded = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plaintext)); }
   catch { throw Error('Malformed protected job-key delivery'); }
   finally { plaintext.fill(0); }
-  const types=deliveryApprovalTypes(expected?.domain?.version),withResult=['2','3','4'].includes(expected.domain.version);
+  const types=deliveryApprovalTypes(expected?.domain?.version),withResult=['2','3','4','5','6'].includes(expected.domain.version);
   exact(expected.value,types.JobKeyDelivery.map(f=>f.name));
   exact(decoded, ['schema', 'notAfter', 'approval', 'job',...(withResult?['resultKey']:[])]);
   const a = decoded.approval;

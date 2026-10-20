@@ -20,7 +20,7 @@ export async function bridgeEncryptedResult(guest,requester,{expected,access,ori
       (!signal||signal instanceof AbortSignal));
     expected=structuredClone(expected);access=validateUploadAccess(access,origin);
     const types=deliveryApprovalTypes(expected?.domain?.version);
-    check(expected?.domain?.name==='Cannabis confidential key delivery'&&['2','3','4'].includes(expected.domain.version)&&
+    check(expected?.domain?.name==='Cannabis confidential key delivery'&&['2','3','4','5','6'].includes(expected.domain.version)&&
       fields(expected.value,types.JobKeyDelivery.map(x=>x.name))&&
       expected.digest===access.approvalDigest&&TypedDataEncoder.hash(expected.domain,types,expected.value)===expected.digest&&
       verifyTypedData(expected.domain,types,expected.value,expected.requesterSignature)===expected.requester);

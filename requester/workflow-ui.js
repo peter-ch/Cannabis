@@ -9,7 +9,8 @@ async function api(route,body) {
 }
 $('connect').onclick=async()=>{try{wallet.select(window.ethereum);const accounts=await wallet.connect();message('Connected '+accounts[0]);}catch{message('Wallet connection unavailable. Open this local page in a browser with your wallet extension.');}};
 $('start').onclick=async()=>{try{await api('start',{});$('start').disabled=true;message('Workflow started. Review each request below.');}catch(e){message(e.message);}};
-const labels={peer:'Connect to the booked provider',dependency:'Approve the selected dependency input','key-release':'Release the input key to the verified guest',stored:'Acknowledge encrypted result storage'};
+const labels={peer:'Connect to the booked provider',dependency:'Approve the selected dependency input','key-release':'Release the input key to the verified guest',
+  group:'Approve the complete worker group','group-start':'Start the authenticated worker group',stored:'Acknowledge encrypted result storage'};
 function addReview(review) {
   const div=document.createElement('div');div.className='request';
   const title=document.createElement('h3');title.textContent=labels[review.kind];div.append(title);

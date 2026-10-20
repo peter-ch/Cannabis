@@ -137,6 +137,13 @@ jobs:
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-guest-execution.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py
           sudo env PATH="$PATH" /usr/bin/python3 -I -B scripts/check-funded-native.py --hosted
+          sudo mkdir -m 755 /tmp/cannabis-group-tools
+          sudo install -m 755 "$(command -v node)" /tmp/cannabis-group-tools/node
+          sudo install -m 755 "$(command -v age)" /tmp/cannabis-group-tools/age
+          sudo install -m 755 "$(command -v age-keygen)" /tmp/cannabis-group-tools/age-keygen
+          sudo /usr/bin/python3 -I -B scripts/check-guest-groups.py --tools /tmp/cannabis-group-tools
+          sudo /usr/bin/python3 -I -B scripts/check-guest-group-failures.py
+          sudo /usr/bin/python3 -I -B scripts/check-funded-groups.py --tools /tmp/cannabis-group-tools
       - run: npm audit --audit-level=high
       - run: npm run build:work-service
       - run: npm run build:site

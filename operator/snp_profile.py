@@ -84,8 +84,13 @@ class SnpProfile:
         descriptor=root_file(file,65536)
         try:value=json.loads(read_fd(descriptor,65536),object_pairs_hook=unique)
         finally:os.close(descriptor)
-        exact(value,['schema','qemu','boot','reference','machine','cpu','cpus','memoryMiB','snp','limits','cgroupParent'])
-        if value['schema']!='cannabis.host-snp-profile.v1':raise ValueError('Unsupported host profile')
+        grouped=value.get('schema')=='cannabis.host-snp-profile.v2'
+        exact(value,['schema','qemu','boot','reference','machine','cpu','cpus','memoryMiB','snp','limits','cgroupParent']+(['groupIngress'] if grouped else []))
+        if value['schema'] not in ['cannabis.host-snp-profile.v1','cannabis.host-snp-profile.v2']:raise ValueError('Unsupported host profile')
+        if grouped:
+            ingress=value['groupIngress'];exact(ingress,['bindHost','hostPort','guestPort'])
+            if (ingress['bindHost'] not in ['127.0.0.1','0.0.0.0'] or not integer(ingress['hostPort'],1024,65535)
+                    or not integer(ingress['guestPort'],1024,65535)):raise ValueError('Require one fixed group TLS ingress')
         exact(value['boot'],BOOT);exact(value['snp'],['cbitpos','reducedPhysBits','policy'])
         if (type(value['machine']) is not str or not re.fullmatch(r'pc-q35-[0-9]{1,2}\.[0-9]{1,2}',value['machine'])
                 or value['cpu']!='EPYC-Milan' or not integer(value['cpus'],4,256)
@@ -161,6 +166,12 @@ class SnpProfile:
     def arguments(self,snapshots,control,qmp,init_data):
         if not re.fullmatch('[0-9a-f]{64}',init_data):raise ValueError('Require the retained initialization digest')
         v=self.value;s=v['snp'];p=lambda name:'/proc/self/fd/'+str(snapshots[name])
+        net='user,id=controlnet,net=10.0.2.0/24,host=10.0.2.2,dns=10.0.2.3,ipv6=off'
+        if 'groupIngress' in v:
+            g=v['groupIngress']
+            # Forward opaque TLS only to the measured guest controller. No
+            # workload port, plaintext proxy or host content key is configured.
+            net+=f",hostfwd=tcp:{g['bindHost']}:{g['hostPort']}-10.0.2.15:{g['guestPort']}"
         snp={'qom-type':'sev-snp-guest','id':'sev0','cbitpos':s['cbitpos'],'reduced-phys-bits':s['reducedPhysBits'],
              'policy':s['policy'],'host-data':base64.b64encode(bytes.fromhex(init_data)).decode(),'kernel-hashes':True}
         return ['qemu-system-x86_64','-no-user-config','-nodefaults','-machine',v['machine']+',accel=kvm,confidential-guest-support=sev0,vmport=off',
@@ -170,7 +181,7 @@ class SnpProfile:
             '-chardev',f'socket,id=qmp,fd={qmp}','-mon','chardev=qmp,mode=control',
             '-chardev',f'socket,id=control,fd={control}','-device','virtio-serial-pci,id=controlbus',
             '-device','virtserialport,chardev=control,name=org.cannabis.control',
-            '-netdev','user,id=controlnet,net=10.0.2.0/24,host=10.0.2.2,dns=10.0.2.3,ipv6=off',
+            '-netdev',net,
             '-device','virtio-net-pci,netdev=controlnet,mac=52:54:00:ca:42:00,romfile=']
 
     def close(self):

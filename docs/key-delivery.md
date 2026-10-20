@@ -35,7 +35,7 @@ Use `scripts/compute-key-delivery.mjs`. Its private configuration contains:
 | `attestationLedger` | Private challenge/delivery SQLite path |
 | `network` | Reviewed RPC, chain/genesis/code pins, token/escrow, `finality: rpc-finalized`, `maxFinalizedAgeSeconds`, `maxHeadAgeSeconds` |
 | `keySource` | Trusted local `python`, `age`, `identity`, `capsule`, `descriptor` paths; Python and age executables must be absolute paths for `seal` |
-| `resultKeySource` | Local `python`, `age`, `identity`, `custody` paths for reopening the encrypted per-release result secret; required for version-2 and version-3 approvals |
+| `resultKeySource` | Local `python`, `age`, `identity`, `custody` paths for reopening the encrypted per-release result secret; required for approval versions 2 through 6 |
 | `trusteeEndpoint` | Requester-controlled AS `/attestation` URL used by `appraise`; never taken from a worker's message |
 
 These paths and executable choices are requester configuration, never worker-supplied protocol fields. For the operating market path, require `marketProofFile`, `launchConfigurationFile` and `launchConsentFile`. The CLI refuses a legacy capacity database or any missing file; it does not fall back to an older source. `inspect` only needs the existing journal and its pinned policy, while `create-result-key` does not need booking or consent files. The complete `network` object must exactly match that reviewed configuration before any key-recovery callback runs. Do not copy a host-proposed configuration into the approved slot without independent review. Python 3.12+, Node 22.22+ and the pinned age/age-keygen installation are required.
@@ -52,7 +52,7 @@ node scripts/compute-key-delivery.mjs inspect ../private/delivery-config.json ..
 - `challenge` input: `{leaseId, reservationId, run}`. `run` contains `runtimeSHA256`, `taskSHA256`, `attempt`, `rank`, `worldSize`, `acceleratorClass`. Values must come from the approved workload and placement. The challenge must be created close enough to the reserved service window to remain fresh.
 - `appraise` input: the guest's `nonce`, `channelJwk` and base64url `evidence`. It calls the configured Trustee, verifies the EAR and returns `{token, appraisal, challengeConsumed: false, ...}`. Keep the response private and pass its token into `seal`; it does not recover a key or consume the challenge. This supports the [guest-held session](guest-attestation.md).
 - `prepare` input: `{releaseId, leaseId, nonce, channelJwk, descriptor, notBefore, expiresAt, resultKeySHA256}`. `descriptor` is the requester's saved package-v2 descriptor. Times are integer Unix seconds and must fit inside both the reservation and challenge lifetime. The returned typed-data payload is ready for wallet review; it does not sign anything.
-- `create-result-key` input: `{releaseId, recipient}` using the requester's own result recipient. Save its encrypted custody record privately and durably before delivery, with the existing requester identity backup. Add its `resultKeySHA256` to the `prepare` request. The configured market path produces a version-3 approval containing both result-key and launch-configuration commitments; historical unconfigured checks produce version 2. The result secret is never printed. The retained operating entry requires version 3. Legacy version-1 envelopes support only the earlier internal preparation path.
+- `create-result-key` input: `{releaseId, recipient}` using the requester's own result recipient. Save its encrypted custody record privately and durably before delivery, with the existing requester identity backup. Add its `resultKeySHA256` to the `prepare` request. The configured market path produces a version-3 approval containing both result-key and launch-configuration commitments, or versions 4 through 6 when dependencies or a protected group are required. Historical unconfigured checks produce version 2. The result secret is never printed. The retained operating entry requires the exact version appropriate to its configuration. Legacy version-1 envelopes support only the earlier internal preparation path.
 - `seal` input: `{approval: {request, requesterSignature}, token}`. `token` is the Trustee EAR. Successful output reports `keyWrapped: true`, `transmitted: false`, `executionAuthorized: false` and includes the encrypted envelope. It contains no raw identity key.
 - `inspect` input: `{releaseId}`. Retrieves the original encrypted journal record after an interrupted caller. It does not renew expiry or create a new release. It does not consult a provider or require the booking/consent files to remain available.
 
@@ -111,9 +111,31 @@ rechecks it with funding before and after opening keys. The requester source v2
 still needs consent-aware review and refresh integration. Configuration bindings
 do not establish hardware admission or make a host-chosen measurement trustworthy.
 
+## Dependencies and coordinated groups
+
+The configured single-rank path uses approval v3. A signed encrypted dependency
+capsule adds `dependencyApprovalDigest` and selects v4. The explicit
+[protected group adapter](protected-groups.md) uses v5, adding `groupDigest` and
+`groupStartDigest` to the v3 fields. A group rank with encrypted dependencies
+uses v6, which also commits `dependencyApprovalDigest`. Domain versions and field
+sets must match exactly; a group cannot fall back to v3/v4 key delivery.
+
+For a group, `prepare` includes `group: {approval, start}`. The requester validates
+the full signed and appraised roster and the common start before recovering
+local content keys. Each guest independently checks every member's current
+funding and consent, retains its own attested channel key, and requires its live
+authenticated mesh and matching signed start before opening its envelope. A
+valid archived approval alone cannot start execution.
+
+Result records retain their original approval version and exact group/start
+commitments. Requester workflow recovery rechecks the archived group and start
+signatures at the signed historical time, allowing result retrieval after the
+booking expires. It never relaunches a rank or renews a key-release window.
+Results from different starts or attempts cannot be combined as one group.
+
 ## Authenticated private result return
 
-Each version-2 or version-3 approval commits to a fresh, random 256-bit result secret, separate
+Each approval from version 2 through 6 commits to a fresh, random 256-bit result secret, separate
 from the workload input key. The requester first encrypts this secret into an age
 custody record for its own recipient, using the pinned [age TypeScript
 implementation](https://github.com/FiloSottile/typage). Losing that custody record
@@ -158,7 +180,7 @@ synthetic appraisal and disposable custody; it does not establish live hardware.
 
 ## Requester receipt recovery and approved attempts
 
-The requester-local `ResultInbox` stores the selected signed version-2 or version-3 approval
+The requester-local `ResultInbox` stores the selected signed approval (versions 2 through 6)
 for each order, encrypted package, task and rank. Select it from the requester's
 own delivery journal before handing work to the guest. Never let an incoming
 server response select an expected approval. The SQLite database fixes its chain,
@@ -275,7 +297,7 @@ as paid jobs or establish confidentiality from a real worker operator.
 
 `compute/result_transport.mjs` connects an existing protected guest session to a
 requester through bounded binary frames. It sends public evidence, accepts the
-requester's encrypted version-2 or version-3 delivery, and streams the encrypted result receipt
+requester's encrypted delivery (versions 2 through 6), and streams the encrypted result receipt
 and age ciphertext. It never transports local file paths, requester custody files,
 identity secrets, content keys, private receipts or decrypted outputs. Relay
 operators can still observe public commitments, message timing and ciphertext sizes.

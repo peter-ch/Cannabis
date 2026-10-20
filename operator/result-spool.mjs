@@ -20,7 +20,7 @@ function syncDir(dir) {
 }
 function approval(value) {
   const expected=structuredClone(value),types=deliveryApprovalTypes(expected?.domain?.version);
-  check(expected?.domain?.name==='Cannabis confidential key delivery'&&['2','3','4'].includes(expected.domain.version)&&
+  check(expected?.domain?.name==='Cannabis confidential key delivery'&&['2','3','4','5','6'].includes(expected.domain.version)&&
     expected.digest===TypedDataEncoder.hash(expected.domain,types,expected.value)&&
     verifyTypedData(expected.domain,types,expected.value,expected.requesterSignature)===expected.requester&&
     Buffer.byteLength(JSON.stringify(expected))<=128*1024);

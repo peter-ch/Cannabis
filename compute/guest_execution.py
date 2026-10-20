@@ -54,11 +54,12 @@ class NativeServiceProfile:
     """
     def __init__(self, value, service_sha256, units):
         value = copy.deepcopy(value)
-        dependencies = value.get('schema') == 'cannabis.guest-native-service.v3'
+        grouped = value.get('schema') == 'cannabis.guest-native-service.v4'
+        dependencies = value.get('schema') in ['cannabis.guest-native-service.v3', 'cannabis.guest-native-service.v4']
         exact(value, ['schema', 'units', 'runtime', 'resources', 'total', 'control',
                       'helper', 'processLimit', 'scratchInodes', 'staging', 'ciphertext', 'maxInputBytes', 'tools']
-                      + (['maxDependencyBytes'] if dependencies else []))
-        if (value['schema'] not in ['cannabis.guest-native-service.v2', 'cannabis.guest-native-service.v3'] or type(units) is not int
+                      + (['maxDependencyBytes'] if dependencies else []) + (['group'] if grouped else []))
+        if (value['schema'] not in ['cannabis.guest-native-service.v2', 'cannabis.guest-native-service.v3', 'cannabis.guest-native-service.v4'] or type(units) is not int
                 or units != 1 or type(value['units']) is not int or value['units'] != units
                 or service_sha256 != '0x' + hashlib.sha256(canonical(value)).hexdigest()):
             raise ValueError('Native service profile differs from the signed service unit')
@@ -67,6 +68,28 @@ class NativeServiceProfile:
             raise ValueError('Require measured tool pins')
         self.total = ResourceTreeLimits(**value['total'])
         self.control = ResourceLimits(**value['control'])
+        if grouped:
+            group = value['group']
+            exact(value['resources'], ['cpus', 'memoryMiB', 'scratchMiB', 'wallSeconds', 'nodes'])
+            exact(value['runtime'], ['adapter', 'architecture', 'os', 'digestSHA256', 'collectiveBackend'])
+            exact(group, ['protocol', 'bindHost', 'port', 'maxBufferedBytes', 'maxTrafficBytes'])
+            nodes = value['resources'].get('nodes')
+            if (group['protocol'] != 'cannabis.group-tls-ip.v1' or group['bindHost'] not in ['0.0.0.0', '127.0.0.1', '::', '::1']
+                    or type(group['port']) is not int or not 1024 <= group['port'] <= 65535
+                    or type(group['maxBufferedBytes']) is not int or not 131072 <= group['maxBufferedBytes'] <= 8 * 1024**2
+                    or type(group['maxTrafficBytes']) is not int or not 1 <= group['maxTrafficBytes'] <= 1024**4
+                    or type(nodes) is not int or not 2 <= nodes <= 64
+                    or value['runtime'].get('adapter') != 'native-group-linux-x86_64-v1'
+                    or value['runtime']['architecture'] != 'x86_64' or value['runtime']['os'] != 'linux'
+                    or not isinstance(value['runtime']['digestSHA256'], str)
+                    or not re.fullmatch('[0-9a-f]{64}', value['runtime']['digestSHA256'])
+                    or value['runtime'].get('collectiveBackend') != 'attested-tls-ip-v1'):
+                raise ValueError('Require an explicit bounded protected group profile')
+            # Reserve baseline control memory plus both private packet queues,
+            # per-peer frame/TLS buffers and namespace/packet-kernel headroom.
+            minimum = 260 * 1024**2 + 2 * group['maxBufferedBytes'] + (nodes - 1) * (group['maxBufferedBytes'] + 262144)
+            if self.control.memory_bytes < minimum or self.control.processes < 16:
+                raise ValueError('Group control plane does not reserve its bounded network capacity')
         self.helper = ResourceLimits(**value['helper'])
         self.task = ResourceLimits.from_task(value['resources'], process_limit=value['processLimit'])
         self.staging = ScratchLimits(**value['staging'])
@@ -190,16 +213,16 @@ class PrivateFrames:
 
 class NativeExecutionAdmission:
     """Retain real kernel objects, the profile and runtime before reading keys."""
-    def __init__(self, request, deadline, parent):
+    def __init__(self, request, deadline, parent, *, inspect_only=False):
         exact(request, ['protocol', 'operation', 'profile', 'serviceSHA256', 'units', 'source', 'binding', 'interval']
-              + (['dependency'] if 'dependency' in request else []))
+              + (['dependency'] if 'dependency' in request else []) + (['group'] if 'group' in request else []))
         if request['protocol'] != PROTOCOL or request['operation'] != 'prepare':
             raise ValueError('Require native preparation before key release')
         self.profile = NativeServiceProfile(request['profile'], request['serviceSHA256'], request['units'])
         self.source, self.binding = copy.deepcopy(request['source']), copy.deepcopy(request['binding'])
         self.dependency = copy.deepcopy(request.get('dependency'))
         if 'dependency' in request:
-            if self.profile.value['schema'] != 'cannabis.guest-native-service.v3':
+            if self.profile.value['schema'] not in ['cannabis.guest-native-service.v3', 'cannabis.guest-native-service.v4']:
                 raise ValueError('Dependency inputs need explicit service capacity')
             exact(self.dependency, ['schema','context','ciphertextSHA256','ciphertextBytes','format','recipient'])
             if (self.dependency['schema'] != 'cannabis.dependency-handoff.v1' or self.dependency['format'] != 'age-v1+ustar'
@@ -221,7 +244,8 @@ class NativeExecutionAdmission:
         # Clamping can only shorten the outer guardian's already-running deadline.
         self.deadline = ExecutionDeadline(min(deadline.monotonic_end, interval.monotonic_end))
         self.parent = parent
-        self.tree = self.control = self.ciphertext = None
+        self.tree = self.control = self.ciphertext = self.group_network = None
+        self._probe_sockets = []
         try:
             self.path = Path(os.environ['CANNABIS_JOB_CGROUP'])
             self.control_path = Path(os.environ['CANNABIS_JOB_CONTROL'])
@@ -234,8 +258,30 @@ class NativeExecutionAdmission:
             self.verify()
             self.ciphertext = CiphertextAdmission(self.source,self.profile.ciphertext,self.binding['packageSHA256'],self.deadline,self.parent,
                 {k:self.dependency[k] for k in ['ciphertextSHA256','ciphertextBytes']} if self.dependency else None)
+            grouped = self.profile.value['schema'] == 'cannabis.guest-native-service.v4'
+            if grouped:
+                from .guest_group_network import GuestGroupNetwork
+                group = copy.deepcopy(request.get('group'))
+                if group is None:
+                    if not inspect_only:
+                        raise ValueError('Actual group execution requires the retained group approval')
+                    group = {'schema': 'cannabis.guest-group-network.v1', 'rank': self.binding['rank'],
+                             'worldSize': self.binding['worldSize'], 'groupDigest': '0x' + '11' * 32,
+                             'maxBufferedBytes': self.profile.value['group']['maxBufferedBytes']}
+                if (group.get('rank') != self.binding['rank'] or group.get('worldSize') != self.binding['worldSize']
+                        or group.get('maxBufferedBytes') != self.profile.value['group']['maxBufferedBytes']):
+                    raise ValueError('Protected group network differs from the retained rank')
+                if inspect_only:
+                    incoming, source = socket.socketpair(); destination, outgoing = socket.socketpair()
+                    self._probe_sockets = [incoming, source, destination, outgoing]
+                    self.group_network = GuestGroupNetwork.create(group, self.deadline, incoming.fileno(), outgoing.fileno())
+                else:
+                    self.group_network = GuestGroupNetwork.create(group, self.deadline)
+            elif 'group' in request:
+                raise ValueError('Single-rank service cannot receive a group network')
             self.plan = NativeTaskPlan(self.source['rootfs'], self.profile.value['runtime'], self.profile.value['resources'],
-                process_limit=self.profile.value['processLimit'], scratch_inodes=self.profile.value['scratchInodes'], deadline=self.deadline)
+                process_limit=self.profile.value['processLimit'], scratch_inodes=self.profile.value['scratchInodes'], deadline=self.deadline,
+                group_network=self.group_network)
             pins = self.profile.value['tools']
             for name, expected in [(str(Path(sys.executable).resolve()), pins['pythonSHA256']),
                     (self.source['age'], pins['ageSHA256']),
@@ -244,7 +290,8 @@ class NativeExecutionAdmission:
                 fd = _pinned_file(name, expected)
                 os.close(fd)
             if (self.binding.get('runtimeSHA256') != self.profile.value['runtime']['digestSHA256']
-                    or self.binding.get('rank') != 0 or self.binding.get('worldSize') != 1
+                    or self.binding.get('rank') != (self.group_network.rank if self.group_network else 0)
+                    or self.binding.get('worldSize') != (self.group_network.world_size if self.group_network else 1)
                     or self.binding.get('acceleratorClass') != 'cpu'):
                 raise ValueError('Native service does not match the retained assignment')
             self.verify()
@@ -254,6 +301,8 @@ class NativeExecutionAdmission:
 
     def verify(self):
         self.deadline.check(self.parent)
+        if self.group_network is not None:
+            self.group_network.assert_alive()
         if self.ciphertext is not None:self.ciphertext.verify()
         _verify(self.tree, self.profile.total)
         _verify(self.control, self.profile.control)
@@ -277,21 +326,40 @@ class NativeExecutionAdmission:
         exact(job, ['identity', 'jobId', 'packageSHA256', 'policySHA256', 'inputRecipient', 'resultRecipient'])
         key = RecoveredJobKey(job['identity'].encode('ascii'), job['jobId'], job['packageSHA256'],
                               job['policySHA256'], job['inputRecipient'], job['resultRecipient'])
+        admission = self
+        class Cancellation:
+            def is_set(self):
+                return admission.parent.is_set() or (admission.group_network is not None and admission.group_network.is_set())
         return self.plan.run(self.path, self.source['ciphertext'], key, self.binding, self.source['destination'],
             age=self.source['age'], helper_limits=self.profile.helper, staging_limits=self.profile.staging,
-            max_input_bytes=self.profile.value['maxInputBytes'], max_output_ciphertext_bytes=self.profile.ciphertext.outputBytes, cancelled=self.parent,
+            max_input_bytes=self.profile.value['maxInputBytes'], max_output_ciphertext_bytes=self.profile.ciphertext.outputBytes, cancelled=Cancellation(),
             dependency={'handoff':self.dependency,'ciphertext':str(Path(self.source['ciphertext']).with_name('dependency.age'))} if self.dependency else None,
             max_dependency_bytes=self.profile.value.get('maxDependencyBytes',0))
 
     def close(self):
+        failure = None
+        if self.group_network is not None:
+            try:
+                self.group_network.close()
+            except Exception as error:
+                failure = error
+            self.group_network = None
+        for channel in self._probe_sockets:
+            channel.close()
+        self._probe_sockets = []
         if self.ciphertext is not None:
-            self.ciphertext.close()
+            try:
+                self.ciphertext.close()
+            except Exception as error:
+                failure = error
             self.ciphertext = None
         for name in ['tree', 'control']:
             fd = getattr(self, name, None)
             if fd is not None:
                 os.close(fd)
                 setattr(self, name, None)
+        if failure is not None:
+            raise failure
 
 
 def execution_main():
@@ -310,9 +378,19 @@ def execution_main():
         exact(delivered, ['protocol', 'operation', 'nonce', 'job'])
         if delivered['protocol'] != PROTOCOL or delivered['operation'] != 'execute' or delivered['nonce'] != nonce:
             raise ValueError('Job key is not bound to this ready execution controller')
-        frames.end_input()
+        grouped = admission.group_network is not None
+        if not grouped:
+            frames.end_input()
         result = admission.run(delivered.pop('job'))
         admission.verify()
+        if grouped:
+            frames.send({'protocol': PROTOCOL, 'operation': 'group-local-complete', 'nonce': nonce})
+            retired = frames.receive()
+            exact(retired, ['protocol', 'operation', 'nonce'])
+            if retired != {'protocol': PROTOCOL, 'operation': 'group-retire', 'nonce': nonce}:
+                raise ValueError('Group completion differs from the ready controller')
+            frames.end_input()
+            admission.close()
         frames.send({'protocol':PROTOCOL, 'operation':'complete', 'nonce':nonce,
                      'report':result.report, 'receipt':result.receipt})
     finally:

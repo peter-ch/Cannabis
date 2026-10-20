@@ -8,6 +8,7 @@ import { calculateJwkThumbprint } from 'jose';
 import { guestInitialization } from '../compute/guest_initialization.mjs';
 import { trusteeEvidenceRequest } from '../compute/attestation.mjs';
 import { deliveryApprovalTypes } from '../compute/key_delivery.mjs';
+import { relayGuestGroup } from '../compute/group_transport.mjs';
 import { validateRelayAccess } from '../web/work-relay.js';
 import { validateUploadAccess } from './result-upload.mjs';
 import { bridgeEncryptedResult } from './result-bridge.mjs';
@@ -113,17 +114,20 @@ export async function relayConfiguredSession(guest,requester,{launch,origin,spoo
     trusteeEvidenceRequest(launch.policy,challenge,e.channelJwk,e.evidence);
     check(hash(Buffer.from(e.evidence,'base64url'))===e.evidenceSHA256);
     await requester.writeJSON(evidence);
+    const group=launch.execution.profile.schema==='cannabis.guest-native-service.v4'
+      ?await relayGuestGroup(launch,e,requester,guest):null;
     const command=await requester.readJSON(128*1024);active();
     check(fields(command,['protocol','operation','envelope','expected'])&&command.protocol===protocol&&command.operation==='execute'&&
       typeof command.envelope==='string'&&command.envelope.length<=32768&&
       /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(command.envelope));
     const expected=command.expected,v=expected?.value,d=expected?.domain,types=deliveryApprovalTypes(d?.version);
-    check(fields(d,['name','version','chainId','verifyingContract'])&&d.name==='Cannabis confidential key delivery'&&['2','3','4'].includes(d.version)&&
+    check(fields(d,['name','version','chainId','verifyingContract'])&&d.name==='Cannabis confidential key delivery'&&['2','3','4','5','6'].includes(d.version)&&
       d.chainId===b.chainId&&getAddress(d.verifyingContract)===b.escrow&&expected.requester===assignment.requester&&expected.jobId===assignment.jobId&&
       fields(v,types.JobKeyDelivery.map(x=>x.name)));
-    check((['3','4'].includes(d.version))===Object.hasOwn(b,'configurationSHA256')&&
-      (!['3','4'].includes(d.version)||v.configurationSHA256===b.configurationSHA256));
-    check((d.version==='4')===!!launch.dependency&&(!launch.dependency||v.dependencyApprovalDigest===launch.dependency.approvalDigest));
+    check((['3','4','5','6'].includes(d.version))===Object.hasOwn(b,'configurationSHA256')&&
+      (!['3','4','5','6'].includes(d.version)||v.configurationSHA256===b.configurationSHA256));
+    check((['4','6'].includes(d.version))===!!launch.dependency&&(!launch.dependency||v.dependencyApprovalDigest===launch.dependency.approvalDigest));
+    check((['5','6'].includes(d.version))===!!group&&(!group||v.groupDigest===group.groupDigest&&v.groupStartDigest===group.groupStartDigest));
     for(const k of ['orderId','leaseDigest','reservationId','attempt','rank','worldSize'])check(v[k]===b[k]);
     for(const k of ['packageSHA256','policySHA256','runtimeSHA256','taskSHA256'])check(v[k]==='0x'+b[k]);
     check(v.nonce==='0x'+challenge.nonce&&v.attestationPolicySHA256==='0x'+challenge.attestationPolicySHA256&&

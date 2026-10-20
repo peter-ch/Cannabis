@@ -43,6 +43,7 @@ export const guideGroups = [
     ['guest-attestation', 'Guest evidence', 'Connect guest-held channels with hardware evidence.'],
     ['guest-initialization', 'Bind the guest assignment', 'Check the approved job before opening its evidence channel.'],
     ['guest-workload', 'The approved workload', 'Move from an attested session to the protected workload.'],
+    ['protected-groups', 'Protected worker groups', 'Approve complete peer groups, coordinate execution and recover each rank’s encrypted output.'],
     ['guest-service-build', 'Build guest services', 'Reproduce the pinned evidence-service binaries.'],
     ['guest-image-build', 'Build a guest image', 'Assemble and check the kernel and boot filesystem.'],
     ['guest-firmware', 'Build guest firmware', 'Pinned firmware builds and SNP reference measurements.']

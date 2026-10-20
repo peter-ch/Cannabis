@@ -12,6 +12,7 @@ fail() {
     while :; do /bin/busybox sleep 60; done
 }
 /bin/busybox mount -t devtmpfs -o nosuid devtmpfs /dev || fail
+/bin/busybox test -c /dev/net/tun || fail
 /bin/busybox mount -t proc -o nosuid,nodev,noexec proc /proc || fail
 /bin/busybox mount -t sysfs -o nosuid,nodev,noexec sysfs /sys || fail
 /bin/busybox mount -t cgroup2 -o nosuid,nodev,noexec cgroup2 /sys/fs/cgroup || fail

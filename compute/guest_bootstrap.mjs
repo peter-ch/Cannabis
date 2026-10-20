@@ -105,8 +105,12 @@ export class InitializedGuestControlPlane {
   }
   close() {
     if (!this.#closing) {
-      this.#state = 'closing'; this.#signal?.removeEventListener('abort', this.#onAbort); this.#session?.close();
-      this.#closing = this.#cleanup().then(() => { this.#state = 'closed'; }, error => { this.#state = 'cleanup-failed'; throw error; });
+      this.#state = 'closing'; this.#signal?.removeEventListener('abort', this.#onAbort);
+      const retired=this.#session?.close();
+      this.#closing = Promise.allSettled([retired,this.#cleanup()]).then(results=>{
+        if(results.some(r=>r.status==='rejected')){this.#state='cleanup-failed';throw Error('Guest service cleanup failed');}
+        this.#state='closed';
+      });
     }
     return this.#closing;
   }

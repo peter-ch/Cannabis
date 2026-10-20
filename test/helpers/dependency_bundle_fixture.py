@@ -36,20 +36,27 @@ if r['action'] == 'setup':
         for task in tasks:
             task['runtime'] = {'adapter':'native-linux-x86_64-v1','architecture':'x86_64','os':'linux','digestSHA256':'bb'*32}
         tasks[1].update(dependsOn=['first'],dependencyInputs=[{'task':'first','rank':0,'output':'selected.txt','destination':'inputs/value'}])
+        if r.get('grouped'):
+            for task in tasks:
+                task['runtime'].update(adapter='native-group-linux-x86_64-v1',collectiveBackend='attested-tls-ip-v1')
+                task['resources']['nodes']=2
+                task['outputScope']='per-rank'
+            tasks[1]['dependencyInputs']=[{'task':'first','rank':rank,'output':'selected.txt','destination':f'inputs/value-{rank}'} for rank in range(2)]
     spec = {'schema': 'cannabis.workload.v1', 'id': 'owned-handoff', 'policySHA256': '03'*32,
             'resultRecipient': owner, 'tasks': tasks, 'files': ['program.txt'], 'assembly': []}
     if r.get('workflow'):
         spec['id']='market-private-job'
-        spec['assembly']=[{'task':'join','output':'selected.txt','destination':'answer.txt'}]
+        spec['assembly']=([{'task':'join','rank':rank,'output':'selected.txt','destination':f'answer-{rank}.txt'} for rank in range(2)]
+                          if r.get('grouped') else [{'task':'join','output':'selected.txt','destination':'answer.txt'}])
     artifacts = root / 'artifacts'; artifacts.mkdir()
     (artifacts / 'program.txt').write_text('owned non-executable fixture')
     descriptor = pack_job(spec, artifacts, owner, root / 'job', age)
     (root / 'workload.json').write_text(json.dumps(spec))
     results = []
-    for task, rank in [('first', 0), ('second', 0), ('second', 1)]:
+    for task, rank in ([('first',0),('first',1)] if r.get('grouped') else [('first', 0), ('second', 0), ('second', 1)]):
         if r.get('workflow') and task!='first':continue
         out = root / f'{task}-{rank}'; out.mkdir()
-        (out / 'selected.txt').write_text('41' if r.get('workflow') else f'{task}:{rank}:authenticated')
+        (out / 'selected.txt').write_text(str(20+rank) if r.get('grouped') else '41' if r.get('workflow') else f'{task}:{rank}:authenticated')
         (out / 'unselected.txt').write_text('This output must never enter the dependency capsule.')
         file = root / f'{task}-{rank}.age'
         receipt = seal_result(spec, task, descriptor['ciphertextSHA256'], out, owner, file, rank=rank, age=age)
@@ -58,13 +65,16 @@ if r['action'] == 'setup':
 elif r['action'] == 'workflow-result':
     spec=json.loads((root/'workload.json').read_text())
     descriptor=json.loads((root/'job/descriptor.json').read_text())
-    opened=root/'opened-dependency'
-    open_dependency_bundle(spec,r['handoff'],root/'received-dependency.age',r['identity'].encode('ascii'),opened,age=age)
-    out=root/'joined';out.mkdir()
-    (out/'selected.txt').write_text(str(int((opened/'inputs/value').read_text())+1))
+    rank=r.get('rank',0)
+    suffix=f'-{rank}' if r.get('grouped') else ''
+    opened=root/('opened-dependency'+suffix)
+    open_dependency_bundle(spec,r['handoff'],root/('received-dependency'+suffix+'.age'),r['identity'].encode('ascii'),opened,age=age)
+    out=root/('joined'+suffix);out.mkdir()
+    answer=(sum(int((opened/f'inputs/value-{i}').read_text()) for i in range(2))+1 if r.get('grouped') else int((opened/'inputs/value').read_text())+1)
+    (out/'selected.txt').write_text(str(answer))
     (out/'unselected.txt').write_text('Owned protocol fixture, not a hardware worker')
-    file=root/'joined.age'
-    receipt=seal_result(spec,'join',descriptor['ciphertextSHA256'],out,spec['resultRecipient'],file,age=age)
+    file=root/('joined'+suffix+'.age')
+    receipt=seal_result(spec,'join',descriptor['ciphertextSHA256'],out,spec['resultRecipient'],file,rank=rank,age=age)
     print(json.dumps({'file':str(file),'receipt':receipt}))
 elif r['action'] == 'open':
     spec = json.loads((root / 'workload.json').read_text())

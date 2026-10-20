@@ -23,11 +23,25 @@ try {
   const preflight=inspectNativeGuest(launch.execution,binding,launch.interval,{timeoutMs:30000});
   assert.equal(preflight.controlContained,true);assert.equal(preflight.executionAuthorized,false);
   agent=await guestAgentFixture();
-  session=await GuestEvidenceSession.create({...launch,expectedBinding:launch.initialization.binding,
-    requester:launch.initialization.requester,jobId:launch.initialization.jobId,agentUrl:agent.url});
+  const options={...launch,expectedBinding:launch.initialization.binding,
+    requester:launch.initialization.requester,jobId:launch.initialization.jobId,agentUrl:agent.url};
+  if(launch.execution.profile.schema==='cannabis.guest-native-service.v4') {
+    // Disposable negative sessions receive no content envelope or appraisal.
+    // Their failures must precede helper startup and any key opening.
+    for(const version of ['3','5']) {
+      const refused=await GuestEvidenceSession.create(options);
+      try {
+        await assert.rejects(refused.executeNative('no-content-key',{requester:options.requester,jobId:options.jobId,
+          domain:{name:'Cannabis confidential key delivery',version,chainId:launch.initialization.binding.chainId,
+            verifyingContract:launch.initialization.binding.escrow},value:{}}),
+          version==='3'?/group version/:/protected group start/);
+      }finally{await refused.close();}
+    }
+  }
+  session=await GuestEvidenceSession.create(options);
   const result=await serveGuestSession(session,wire,{maxCiphertextBytes:4*1024*1024});
   assert.equal(result.requesterAcknowledgedStorage,true);assert.equal(result.paymentAuthorized,false);
   assert.equal(session.status.state,'consumed');
   await assert.rejects(session.executeNative('replayed-delivery',{}),/closed|expired/);
 }catch{process.stderr.write('Owned separated guest fixture failed\n');process.exitCode=1;}
-finally{session?.close();await agent?.close();wire?.fail();wire?.close();}
+finally{await session?.close();await agent?.close();wire?.fail();wire?.close();}

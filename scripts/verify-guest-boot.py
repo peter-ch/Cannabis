@@ -115,6 +115,17 @@ def validate_boot_result(report, budget, result):
                     'hardwareAdmissionEstablished': False, 'realPaidJob': False, 'paymentAccepted': False}
         if result.get(name + 'Checks') != expected:
             raise ValueError('Guest workflow acceptance checks did not pass: ' + name)
+    group_cases={
+        'group':('cannabis.guest-group-check.v1',{'twoRankTcpComputation','perRankCiphertextReconstruction',
+            'unapprovedSocketRefusals','privateTunDeviceHidden','wholeTreeCleanup'}),
+        'groupFailure':('cannabis.guest-group-failure-check.v1',{'pumpDeath','queuedHeartbeatStall','inputEof',
+            'invalidFrame','wrongRankPacket','serviceExpiry','namespaceReplacement','nonPrivateDescriptor',
+            'creationFailureCleanup','ownerDeath','cancellation','wholeTreeCleanup'})}
+    for name,(schema,cases) in group_cases.items():
+        expected={'schema':schema,'kernel':report['kernelRelease'],'checks':{case:True for case in cases},
+                  'hardwareValidated':False,'realPaidJob':False}
+        if result.get(name+'Checks')!=expected:
+            raise ValueError('Protected group acceptance checks did not pass: '+name)
     job_cases = {'childCountBound', 'parentEntryRejected', 'retainedLeafHandlesAfterParentCleanup',
         'partialLeafCleanup', 'aggregateOOMKillsAllLeaves', 'aggregatePIDLimit', 'pinnedControlAndWorkloadCompletion',
         'busyControlExitRefused', 'stoppedControlAndDetachedWorkloadRetired', 'wholeTreeDeadline',

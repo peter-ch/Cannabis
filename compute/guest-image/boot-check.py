@@ -44,6 +44,20 @@ def owned_workflow_checks(name, modes, timeout, extra_summary=None):
             'paymentAccepted': False}
 
 
+def owned_group_checks(name, schema, cases, timeout, tools=False):
+    phase(name)
+    command=['/usr/bin/python3','-I','-B','/opt/cannabis/scripts/check-guest-'+name+'.py']
+    if tools: command+=['--tools','/usr/local/bin']
+    checked=subprocess.run(command,capture_output=True,timeout=timeout)
+    if checked.returncode:
+        print('CANNABIS_GROUP_FAILURE '+checked.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
+        raise RuntimeError('Protected group kernel acceptance failed')
+    expected={'schema':schema,'checks':{case:True for case in cases},'hardwareValidated':False,'realPaidJob':False}
+    if len(checked.stdout)>65536 or json.loads(checked.stdout)!=expected:
+        raise RuntimeError('Incomplete protected group kernel report')
+    return {**expected,'kernel':os.uname().release}
+
+
 def main():
     os.umask(0o077)
     processes = []
@@ -188,6 +202,12 @@ def main():
             ('success', 'wrong-context', 'altered-ciphertext', 'missing-capsule', 'input-budget',
              'combined-quota', 'cancel-after-input', 'deadline', 'channel-success', 'channel-input-refusal'),
             900)
+        group_checks=owned_group_checks('groups','cannabis.guest-group-check.v1',
+            ('twoRankTcpComputation','perRankCiphertextReconstruction','unapprovedSocketRefusals',
+             'privateTunDeviceHidden','wholeTreeCleanup'),180,tools=True)
+        group_failure_checks=owned_group_checks('group-failures','cannabis.guest-group-failure-check.v1',
+            ('pumpDeath','queuedHeartbeatStall','inputEof','invalidFrame','wrongRankPacket','serviceExpiry',
+             'namespaceReplacement','nonPrivateDescriptor','creationFailureCleanup','ownerDeath','cancellation','wholeTreeCleanup'),180)
         phase('aggregate_job_boundary')
         job = subprocess.run(['/usr/bin/python3', '-I', '-B', '/opt/cannabis/scripts/check-guest-job.py'], capture_output=True, timeout=180)
         if job.returncode:
@@ -206,7 +226,7 @@ def main():
             print('CANNABIS_LAUNCHER_FAILURE '+launcher.stderr.decode(errors='replace')[-8192:].replace('\n',' | '),flush=True)
             raise RuntimeError('Outer launch transport checks failed')
         launcher_checks=json.loads(launcher.stdout)
-        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'graphChecks': graph_checks, 'dependenciesChecks': dependency_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'runtimeChecks':runtime_checks, 'ciphertextChecks':ciphertext_checks, 'vmChecks':vm_checks, 'supervisionChecks':supervision_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
+        print('CANNABIS_BOOT_RESULT ' + json.dumps({'schema': 'cannabis.guest-boot-check.v1', 'kernel': os.uname().release, 'tee': info['tee'], 'profileChecks': checks, 'initializationChecks': initialization_checks, 'resourceChecks': resource_checks, 'guardianChecks': guardian_checks, 'sandboxChecks': sandbox_checks, 'nativeChecks': native_checks, 'graphChecks': graph_checks, 'dependenciesChecks': dependency_checks, 'groupChecks':group_checks, 'groupFailureChecks':group_failure_checks, 'jobChecks': job_checks, 'executionChecks': execution_checks, 'launcherChecks':launcher_checks, 'runtimeChecks':runtime_checks, 'ciphertextChecks':ciphertext_checks, 'vmChecks':vm_checks, 'supervisionChecks':supervision_checks, 'pythonChecks': python_checks, 'configuredEntryClosed': True, 'outerLauncherClosed':True, 'imageFilesVerified': len(manifest), 'requestedEvidence': False, 'acceptedJobKeys': False, 'launchedCustomerWork': False, 'hardwareValidated': False}), flush=True)
     finally:
         for process in reversed(processes):
             try:

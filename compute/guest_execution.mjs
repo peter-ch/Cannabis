@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
+import {GroupPacketPipe} from './group_packet_pipe.mjs';
 
 const protocol = 'cannabis.guest-native.pipe.v1', maxResponse = 5 * 1024 * 1024;
 const failure = () => Error('Protected native execution failed; retire the job');
@@ -23,7 +24,7 @@ export function nativeServiceCommitment(execution) {
   execution = structuredClone(execution);
   if (!fields(execution, ['profile', 'source']) || !fields(execution.source, ['python', 'rootfs', 'age', 'ciphertext', 'destination']) ||
       Object.values(execution.source).some(p => typeof p !== 'string' || !path.isAbsolute(p) || p.includes('\0')) ||
-      !['cannabis.guest-native-service.v2','cannabis.guest-native-service.v3'].includes(execution.profile?.schema) || execution.profile.units !== 1) throw failure();
+      !['cannabis.guest-native-service.v2','cannabis.guest-native-service.v3','cannabis.guest-native-service.v4'].includes(execution.profile?.schema) || execution.profile.units !== 1) throw failure();
   const bytes = Buffer.from(canonical(execution.profile));
   if (bytes.length > 32768) throw failure();
   return { serviceSHA256: '0x' + createHash('sha256').update(bytes).digest('hex'), units: execution.profile.units };
@@ -32,7 +33,9 @@ export function nativeServiceCommitment(execution) {
 // A fixed measured helper is used by executeNative below. This lower-level
 // transport accepts a trusted entry point so hostile-protocol fixtures can verify
 // the lifecycle without manufacturing a production attestation bypass.
-export async function runNativeGuestPipe(python, script, request, releaseKey, { timeoutMs, signal } = {}) {
+export async function runNativeGuestPipe(python, script, request, releaseKey, { timeoutMs, signal, groupPipe } = {}) {
+  if((request.profile?.schema==='cannabis.guest-native-service.v4')!==(groupPipe instanceof GroupPacketPipe))throw failure();
+  if(groupPipe&&canonical(request.group)!==canonical(groupPipe.metadata()))throw failure();
   if (process.platform !== 'linux' || ![python, script].every(p => typeof p === 'string' && path.isAbsolute(p) && !p.includes('\0')) ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647 || typeof releaseKey !== 'function' ||
       (signal !== undefined && !(signal instanceof AbortSignal)) || signal?.aborted) throw failure();
@@ -46,7 +49,7 @@ export async function runNativeGuestPipe(python, script, request, releaseKey, { 
       for (const key of ['CANNABIS_JOB_CGROUP', 'CANNABIS_JOB_CONTROL', 'CANNABIS_JOB_DEADLINE', 'CANNABIS_JOB_TOTAL', 'CANNABIS_JOB_CONTROL_LIMITS']) {
         if (process.env[key] !== undefined) env[key] = process.env[key];
       }
-      child = spawn(python, ['-I', '-B', script], { stdio: ['pipe', 'pipe', 'ignore'], shell: false, detached: true, env });
+      child = spawn(python, ['-I', '-B', script], { stdio: ['pipe', 'pipe', 'ignore',...(groupPipe?['pipe','pipe']:[])], shell: false, detached: true, env });
     } catch { preparation.fill(0); reject(failure()); return; }
     const wipe = () => { pending.fill(0); pending = Buffer.alloc(0); for (const bytes of outbound) bytes.fill(0); outbound.clear(); };
     const stop = () => { if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { if (e.code !== 'ESRCH') return false; } } return true; };
@@ -59,6 +62,7 @@ export async function runNativeGuestPipe(python, script, request, releaseKey, { 
     const fail = () => {
       if (failed || settled) return;
       failed = true; wipe(); child.stdin.destroy(); stop();
+      groupPipe?.close().catch(()=>{});
       cleanupTimer = setTimeout(() => finish(false), 5000);
     };
     const timer = setTimeout(fail, timeoutMs);
@@ -75,9 +79,16 @@ export async function runNativeGuestPipe(python, script, request, releaseKey, { 
         Promise.resolve().then(() => { if (failed || settled || signal?.aborted) throw failure(); return releaseKey(); }).then(job => {
           if (failed || settled || signal?.aborted) return;
           const bytes = frame({ protocol, operation: 'execute', nonce, job: { ...job, identity: job.identity } });
-          state = 'executing'; write(bytes, true);
+          state = 'executing'; write(bytes, !groupPipe);
         }).catch(fail);
-      } else if (state === 'executing') {
+      } else if (state==='executing'&&groupPipe&&value?.operation==='group-local-complete') {
+        if(!fields(value,['protocol','operation','nonce'])||value.protocol!==protocol||value.nonce!==nonce)throw failure();
+        state='group-finishing';
+        groupPipe.finish().then(()=>{
+          if(failed||settled||signal?.aborted)throw failure();
+          state='retiring';write(frame({protocol,operation:'group-retire',nonce}),true);
+        }).catch(fail);
+      } else if (state === 'executing'&&!groupPipe||state==='retiring'&&groupPipe) {
         if (!fields(value, ['protocol', 'operation', 'nonce', 'report', 'receipt']) || value.protocol !== protocol || value.operation !== 'complete' ||
             !fields(value.report,['schema','executionCompleted','resultEncrypted','runtimeCleanupVerified','hardwareAdmissionEstablished','paymentAccepted']) ||
             value.nonce !== nonce || value.report?.schema !== 'cannabis.guest-native-result.v1' || value.report.executionCompleted !== true ||
@@ -106,7 +117,9 @@ export async function runNativeGuestPipe(python, script, request, releaseKey, { 
     child.on('error', fail); child.stdin.on('error', fail); child.stdout.on('error', fail);
     child.on('exit', code => { if (code !== 0 || !stop()) fail(); });
     child.on('close', code => finish(!failed && code === 0 && state === 'completed' && pending.length === 0));
-    if (signal?.aborted) fail(); else write(preparation);
+    try {if(groupPipe)groupPipe.attach(child.stdio[3],child.stdio[4],fail);
+      if (signal?.aborted) fail(); else write(preparation);
+    } catch {fail();}
   });
 }
 
@@ -115,9 +128,12 @@ export async function executeNativeGuest(execution, binding, interval, releaseKe
   const commitment = nativeServiceCommitment(execution), { python, ...source } = execution.source;
   verifyPython(execution);
   const script = fileURLToPath(new URL('../scripts/compute-guest-native-pipe.py', import.meta.url));
-  const {dependency,...transport}=options??{};
-  const response = await runNativeGuestPipe(python, script, { protocol, operation: 'prepare', profile: execution.profile,
-    ...commitment, source, binding, interval,...(dependency?{dependency:structuredClone(dependency.signed.handoff)}:{}) }, releaseKey, transport);
+  const {dependency,groupPipe,...transport}=options??{};
+  let response;
+  try {response = await runNativeGuestPipe(python, script, { protocol, operation: 'prepare', profile: execution.profile,
+    ...commitment, source, binding, interval,...(dependency?{dependency:structuredClone(dependency.signed.handoff)}:{}),
+    ...(groupPipe?{group:groupPipe.metadata()}:{}) }, releaseKey, {...transport,groupPipe});
+  } finally {if(groupPipe)await groupPipe.close();}
   // The private receipt is returned only through explicit protected-channel use.
   return Object.defineProperties(response.report, { receipt: { value: response.receipt, enumerable: false },
     ciphertext: { value: source.destination, enumerable: false } });

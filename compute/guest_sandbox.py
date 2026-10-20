@@ -151,7 +151,12 @@ def tree_digest(path, *, max_bytes=512 * 1024**2, max_entries=50000):
     return hashlib.sha256(json.dumps(rows, separators=(',', ':'), ensure_ascii=True).encode()).hexdigest()
 
 
-def _filter():
+def _filter(group_network=None):
+    if group_network is not None:
+        from .guest_group_network import GuestGroupNetwork
+        if not isinstance(group_network, GuestGroupNetwork):
+            raise ValueError('Require an owned protected group namespace')
+        group_network.assert_alive()
     """An explicit native x86-64 CPU syscall profile; unknown calls fail closed."""
     if os.uname().machine != 'x86_64':
         raise ValueError('This native syscall profile requires x86-64')
@@ -206,6 +211,16 @@ def _filter():
         # Permit local UNIX IPC only. There is no IP, netlink, packet or vsock path.
         rule('socket', comparisons=[(0, 4, 1, 0)])  # SCMP_CMP_EQ AF_UNIX
         rule('socketpair', comparisons=[(0, 4, 1, 0)])
+        if group_network is not None:
+            # IPv4 TCP/UDP exist only inside the retained group namespace. No
+            # raw, packet, netlink, IPv6 or vsock socket is enabled by this path.
+            for socket_type in (1, 2):
+                for protocol in (0, 6 if socket_type == 1 else 17):
+                    rule('socket', comparisons=[(0, 4, 2, 0), (1, 7, 0xf, socket_type), (2, 4, protocol, 0)])
+            # Read-only interface queries for compatible collective libraries.
+            # No address, route, MTU, flag or TUN creation ioctl is permitted.
+            for request in [0x8912, 0x8913, 0x8915, 0x8919, 0x891b, 0x8921, 0x8933]:
+                rule('ioctl', comparisons=[(1, 4, request, 0)])
         # Ordinary processes/threads, without any new namespace flag.
         rule('clone', comparisons=[(0, 7, 0x7e020080, 0)])  # SCMP_CMP_MASKED_EQ
         rule('clone3', action=0x00050000 | errno.ENOSYS)  # let libc use the filtered clone
@@ -261,7 +276,13 @@ class NativeSandbox:
     logs. Never print those plaintext files or pass them outside the protected VM.
     A non-success result is not accepted useful work. This is not a TEE verifier.
     """
-    def __init__(self, parent, rootfs, inputs, expected_root, limits, scratch, *, workspace='/', deadline=None):
+    def __init__(self, parent, rootfs, inputs, expected_root, limits, scratch, *, workspace='/', deadline=None, group_network=None):
+        if group_network is not None:
+            from .guest_group_network import GuestGroupNetwork
+            if not isinstance(group_network, GuestGroupNetwork):
+                raise ValueError('Require an owned protected group namespace')
+            group_network.assert_alive()
+        self._group_network = group_network
         if not isinstance(limits, ResourceLimits) or not isinstance(scratch, ScratchLimits):
             raise ValueError('Require validated resource and storage limits')
         if deadline is not None:
@@ -354,9 +375,10 @@ class NativeSandbox:
         self._fds.append(input_fd)
         bwrap_fd = _pinned_file(BWRAP, BWRAP_SHA256)
         self._fds.append(bwrap_fd)
-        filter_fd = _filter()
+        filter_fd = _filter(self._group_network)
         self._fds.append(filter_fd)
-        args = [BWRAP, '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-net', '--unshare-uts',
+        args = [BWRAP, '--unshare-user', '--unshare-pid', '--unshare-ipc',
+            *([] if self._group_network is not None else ['--unshare-net']), '--unshare-uts',
             '--unshare-cgroup', '--disable-userns', '--assert-userns-disabled', '--new-session', '--die-with-parent',
             '--uid', '65534', '--gid', '65534', '--cap-drop', 'ALL', '--hostname', 'cannabis-workload',
             '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin', '--setenv', 'LANG', 'C.UTF-8',
@@ -374,6 +396,12 @@ class NativeSandbox:
         # in a possibly threaded application. No command or content is logged.
         settings = {'group': str(self._guard.path), 'limits': self.limits.__dict__, 'bwrapFD': bwrap_fd,
                     'args': args, 'keepFDs': self._fds, 'fileBytes': self.scratch.bytes}
+        if self._group_network is not None:
+            self._group_network.assert_alive()
+            network_fd = os.dup(self._group_network.namespace_fd)
+            self._fds.append(network_fd)
+            settings['networkFD'] = network_fd
+            settings['networkIdentity'] = list(self._group_network.namespace_identity)
         config_fd = os.memfd_create('cannabis-launch', os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
         self._fds.append(config_fd)
         os.write(config_fd, json.dumps(settings).encode())
@@ -483,6 +511,16 @@ def launch_from_fd(fd):
         resource.setrlimit(kind, (maximum, maximum))
     os.setgroups([])
     os.chdir('/')
+    if 'networkFD' in config:
+        network_fd = config['networkFD']
+        current = os.fstat(network_fd)
+        if ([current.st_dev, current.st_ino] != config['networkIdentity']
+                or not os.readlink(f'/proc/self/fd/{network_fd}').startswith('net:[')
+                or '--unshare-net' in config['args']):
+            raise ValueError('Protected network namespace changed')
+        _call(_libc().setns(network_fd, 0x40000000))
+        os.close(network_fd)
+        config['keepFDs'].remove(network_fd)
     os.setresgid(65534, 65534, 65534)
     os.setresuid(65534, 65534, 65534)
     _call(_libc().prctl(38, 1, 0, 0, 0))  # no_new_privs before bwrap itself

@@ -17,11 +17,12 @@ its [on-chain bookings](decentralized-compute.md), and obtain the exact bilatera
 launch consent and initialization for every booking. Review each provider's
 runtime, confidential-execution policy, Trustee endpoint and result-hosting origin.
 
-This dispatch version supports native Linux x86-64 CPU tasks with one rank per
-booking, including requester-mediated dependencies between tasks. It rejects an
-incomplete plan or unsupported rank/runtime before dispatching any task. Native
-step graphs inside a booking remain supported. Direct collectives and additional
-runtime/device adapters require their own integration and admission.
+Native Linux x86-64 CPU tasks support one rank per booking, including encrypted
+dependencies and private native step graphs. The new
+[protected group adapter](protected-groups.md) adds whole-group dispatch and
+encrypted rank networking; its full runtime/release integration remains underway.
+It requires an explicit entrypoint and per-rank output for every rank. Incomplete
+plans and unsupported rank/runtime combinations are refused before dispatch.
 
 Keep configuration, the private workload, encrypted input, custody backups and
 the workflow directory on your requester device. Use absolute paths. A private
@@ -69,8 +70,10 @@ certificate file; it never disables certificate verification. The input and resu
 identities remain separate. `age-keygen` must be beside the selected age executable.
 Use the supported [requester identity custody format](job-key-custody.md).
 
-`maxParallel` is 1–8. `maxStoredBytes` must cover all declared result and dependency
-ciphertext limits plus bounded per-booking metadata allowances. This is a planning
+`maxParallel` is 1–64 and counts rank bookings. It must accommodate the largest
+group as a whole. Group assignments also require their reviewed `groupEndpoint`.
+`maxStoredBytes` must cover all declared result and dependency ciphertext limits,
+per-booking metadata and group authorization allowances. This is a planning
 bound; your requester filesystem still needs adequate storage. It is not a disk
 quota. Hosted results currently support up to 64 MiB per booking.
 
@@ -99,6 +102,10 @@ The screen shows each booking and its pending requests. Review and approve each:
    Current funding and the pinned attestation policy are checked before wrapping.
 4. A storage signature acknowledges that encrypted output was received. It does
    not accept output quality or approve payment.
+
+Coordinated groups also require approval of the complete attested peer roster
+and a common start after authenticated readiness. These signatures precede key
+release and do not authorize payment.
 
 The wallet must report the selected chain and genesis block. Changing accounts
 or networks invalidates pending approval. No wallet keys enter this client, and

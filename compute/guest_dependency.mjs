@@ -16,7 +16,7 @@ export function inspectGuestDependency({proof,network,binding,execution,dependen
   }
   if(!required) {if(dependency!==undefined&&dependency!==null)fail();return null;}
   if(!dependency||Object.keys(dependency).sort().join()!=='descriptor,signed'||
-      execution?.profile?.schema!=='cannabis.guest-native-service.v3')fail();
+      !['cannabis.guest-native-service.v3','cannabis.guest-native-service.v4'].includes(execution?.profile?.schema))fail();
   const retained=structuredClone(dependency);
   const checked=verifyDependencyHandoff(proof,network,binding.reservationId,retained.descriptor,retained.signed,now);
   const h=retained.signed.handoff,c=h.context,p=execution.profile;

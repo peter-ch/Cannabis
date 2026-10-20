@@ -21,6 +21,8 @@ import {receiveGuestEvidence,sendGuestExecution} from '../compute/result_transpo
 import {receiveSessionResultAccess} from './session-access.mjs';
 import {receiveHostedResult} from './hosted-result.mjs';
 import {WorkflowStore,workflowCheck as check,canonical,sha,privateDirectory,readWorkflowJSON as read,saveWorkflowJSON as save} from './workflow-store.mjs';
+import {groupEndpoint,GROUP_ADAPTER,GROUP_BACKEND,verifyGroupAdmission,groupDeliveryBinding} from '../compute/group_admission.mjs';
+import {WorkflowGroup} from './workflow-group.mjs';
 
 const seconds=()=>Math.floor(Date.now()/1000),MIB=1024**2;
 const exact=(v,keys)=>check(v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join()===[...keys].sort().join());
@@ -44,7 +46,7 @@ const createFileHash=()=>createHash('sha256');
 export function readWorkflow(configFile,{verifyInput=true}={}) {
   const c=read(configFile);exact(c,['schema','proofFile','descriptorFile','manifestFile','ciphertextFile','directory','keySource',
     'reconstruction','resultRecipient','maxParallel','maxStoredBytes','assignments']);
-  check(c.schema==='cannabis.requester-workflow.v1'&&Number.isSafeInteger(c.maxParallel)&&c.maxParallel>=1&&c.maxParallel<=8&&
+  check(c.schema==='cannabis.requester-workflow.v1'&&Number.isSafeInteger(c.maxParallel)&&c.maxParallel>=1&&c.maxParallel<=64&&
     Number.isSafeInteger(c.maxStoredBytes)&&c.maxStoredBytes>0&&c.maxStoredBytes<=1024**4&&/^age1[0-9a-z]{58}$/.test(c.resultRecipient));
   for(const k of ['proofFile','descriptorFile','manifestFile','ciphertextFile','directory'])absolute(c[k]);
   exact(c.keySource,['python','age','identity','capsule','descriptor']);Object.values(c.keySource).forEach(absolute);
@@ -54,15 +56,21 @@ export function readWorkflow(configFile,{verifyInput=true}={}) {
   if(saved){exact(saved,['config','proof','descriptor','manifest','assignments']);check(canonical(saved.config)===canonical(c)&&saved.assignments.length===c.assignments.length);}
   const proof=saved?.proof??read(c.proofFile),descriptor=saved?.descriptor??read(c.descriptorFile),manifest=saved?.manifest??read(c.manifestFile);
   const assignments=c.assignments.map(input=>{
-    exact(input,['reservationId','origin','resultOrigin','consentFile','initializationFile','trusteeEndpoint',...(Object.hasOwn(input,'caFile')?['caFile']:[])]);
+    exact(input,['reservationId','origin','resultOrigin','consentFile','initializationFile','trusteeEndpoint',...(Object.hasOwn(input,'caFile')?['caFile']:[]),
+      ...(Object.hasOwn(input,'groupEndpoint')?['groupEndpoint']:[])]);
     absolute(input.consentFile);absolute(input.initializationFile);origin(input.origin);validEndpoint(input.resultOrigin);
     check(new URL(input.resultOrigin).origin===input.resultOrigin);validEndpoint(input.trusteeEndpoint,true);
     const retained=saved?.assignments.find(a=>a.reservationId===input.reservationId);if(saved)check(retained);
     const signed=retained?.signed??read(input.consentFile,256*1024),initialization=retained?.initialization??read(input.initializationFile,65536);
     const payload=launchConsentPayload(signed.configuration,initialization,proof,'requester');
     const description=inspectLaunchConsent(signed,initialization,proof,payload.value.validFrom),r=description.reservation;
-    check(r.reservationId===input.reservationId&&initialization.binding.worldSize===1&&initialization.binding.rank===0&&
-      initialization.binding.acceleratorClass==='cpu'&&signed.configuration.execution.profile.runtime.adapter==='native-linux-x86_64-v1');
+    const profile=signed.configuration.execution.profile,grouped=profile.schema==='cannabis.guest-native-service.v4';
+    check(r.reservationId===input.reservationId&&initialization.binding.acceleratorClass==='cpu'&&grouped===Object.hasOwn(input,'groupEndpoint'));
+    if(grouped) {
+      groupEndpoint(input.groupEndpoint);
+      check(initialization.binding.worldSize>=2&&initialization.binding.worldSize<=c.maxParallel&&
+        profile.runtime.adapter===GROUP_ADAPTER&&profile.runtime.collectiveBackend===GROUP_BACKEND);
+    } else check(initialization.binding.worldSize===1&&initialization.binding.rank===0&&profile.runtime.adapter==='native-linux-x86_64-v1');
     const policy=structuredClone(signed.configuration.attestationPolicyTemplate);policy.measurements.initData=guestInitialization(initialization).digest;
     let ca;if(input.caFile){absolute(input.caFile);
       if(retained){check(typeof retained.ca==='string'&&Buffer.byteLength(retained.ca)<=262144);ca=retained.ca;}
@@ -81,9 +89,13 @@ export function readWorkflow(configFile,{verifyInput=true}={}) {
     check(verifyMarketLeaseProof(proof,a.signed.configuration.network).digest===lease.digest&&
       a.signed.configuration.network.genesisHash===network.genesisHash&&p.ciphertext.outputBytes<=64*MIB);
     a.task=planned.task;a.dependsOn=lease.executionPlan.plan.requirements[a.task].dependsOn;
-    check(!a.dependsOn.length||p.schema==='cannabis.guest-native-service.v3');
+    if(p.schema==='cannabis.guest-native-service.v4') {
+      const task=manifest.tasks?.[a.task];check(task?.outputScope==='per-rank'&&Array.isArray(task.launch?.argv)&&!task.launch.schema);
+    }
+    check(!a.dependsOn.length||['cannabis.guest-native-service.v3','cannabis.guest-native-service.v4'].includes(p.schema));
     budget+=p.ciphertext.outputBytes+(a.dependsOn.length?p.ciphertext.dependencyBytes:0)+8*MIB;inputBound=Math.min(inputBound,p.ciphertext.inputBytes);
   }
+  budget+=new Set(assignments.filter(a=>a.initialization.binding.worldSize>1).map(a=>a.task)).size*5*MIB;
   check(budget<=c.maxStoredBytes);
   if(verifyInput){const input=hashFile(c.ciphertextFile,inputBound);check(input.sha256===descriptor.ciphertextSHA256);}
   const commitment={schema:c.schema,config:c,proof,descriptor,manifest,assignments:assignments.map(a=>({
@@ -124,10 +136,10 @@ export class RequesterWorkflow {
     const row=this.#store.snapshot().find(r=>r.releaseId===expected.releaseId);check(row);
     return recoverRequesterResultKey(this.#recoverySource(row.reservationId),expected);
   };
-  async #signature(a,kind,payload,until) {
-    this.#active();check(this.#clock()<until&&typeof this.#sign==='function');
+  async #signature(a,kind,payload,until,signal=this.#signal) {
+    this.#active();check(!signal?.aborted&&this.#clock()<until&&typeof this.#sign==='function');
     const controller=new AbortController(),stop=()=>controller.abort(),timer=setTimeout(stop,Math.min(60000,(until-this.#clock())*1000));
-    this.#signal?.addEventListener('abort',stop,{once:true});
+    signal?.addEventListener('abort',stop,{once:true});
     try {
       const stopped=new Promise((_,reject)=>controller.signal.addEventListener('abort',()=>reject(Error('Approval expired or cancelled')),{once:true}));
       const signature=await Promise.race([stopped,Promise.resolve().then(()=>{this.#active();check(!controller.signal.aborted);
@@ -135,7 +147,7 @@ export class RequesterWorkflow {
           genesisHash:this.#w.network.genesisHash,expiresAt:Math.min(until,this.#clock()+60),payload:structuredClone(payload)},controller.signal);})]);
       this.#active();check(!controller.signal.aborted&&this.#clock()<until&&verifyTypedData(payload.domain,payload.types,payload.value,signature)===this.#w.lease.requester);
       return signature;
-    }finally{clearTimeout(timer);this.#signal?.removeEventListener('abort',stop);controller.abort();}
+    }finally{clearTimeout(timer);signal?.removeEventListener('abort',stop);controller.abort();}
   }
   snapshot(){return {schema:'cannabis.requester-workflow-state.v1',workflowSHA256:this.#w.storeManifest.workflowSHA256,
     leaseDigest:this.#w.lease.digest,slots:this.#store.snapshot(),qualityAccepted:false,paymentAuthorized:false};}
@@ -149,7 +161,7 @@ export class RequesterWorkflow {
     const found=hashFile(this.#file(id,'result.age'),receipt.ciphertextBytes);
     check(found.sha256===receipt.ciphertextSHA256&&found.bytes===receipt.ciphertextBytes);
   }
-  async #dependency(a) {
+  async #dependency(a,signal=this.#signal) {
     if(!a.dependsOn.length)return undefined;
     const sources=this.#w.assignments.filter(s=>a.dependsOn.includes(s.task)),results=[];
     for(const source of sources)results.push(await this.#selected(source.reservationId));
@@ -159,51 +171,56 @@ export class RequesterWorkflow {
       source:{...this.#w.config.reconstruction,manifest:path.join(this.#w.config.directory,'workload.json'),destination:this.#file(a.reservationId,'dependency.age')},
       window,loadResultKey:this.#loadResult});
     const payload=reviewDependencyHandoff(this.#inbox,this.#w.proof,a.signed.configuration.network,a.reservationId,this.#w.descriptor,prepared);
-    const requesterSignature=await this.#signature(a,'dependency',payload,window.expiresAt);
+    const requesterSignature=await this.#signature(a,'dependency',payload,window.expiresAt,signal);
     reviewDependencyHandoff(this.#inbox,this.#w.proof,a.signed.configuration.network,a.reservationId,this.#w.descriptor,prepared);
     const dependency={descriptor:this.#w.descriptor,signed:{handoff:prepared.handoff,window,requesterSignature}};
     verifyDependencyHandoff(this.#w.proof,a.signed.configuration.network,a.reservationId,this.#w.descriptor,dependency.signed,this.#clock());
     save(this.#file(a.reservationId,'dependency.json'),dependency);return dependency;
   }
-  async #execute(a) {
-    this.#active();const token=this.#store.claim(a.reservationId),r=a.description.reservation,c=a.signed.configuration;
+  async #execute(a,token=this.#store.claim(a.reservationId),coordinator) {
+    const signal=coordinator?AbortSignal.any([coordinator.signal,...(this.#signal?[this.#signal]:[])]):this.#signal;
+    const active=()=>{this.#active();check(!signal?.aborted);};
+    active();const r=a.description.reservation,c=a.signed.configuration;
     let ledger,channel,stage='preparing-input';
     try {
-      const dependency=await this.#dependency(a);this.#active();
+      const dependency=await this.#dependency(a,signal);active();
       const custody=await createResultKeyCustody({releaseId:token.releaseId,recipient:this.#w.config.resultRecipient});
       save(this.#file(a.reservationId,'result-key.json'),custody);
       ledger=new AttestationLedger(this.#file(a.reservationId,'attestation.sqlite'),a.policy,this.#clock);
       stage='connecting-provider';
       channel=await connectBookedPeer({origin:a.origin,signed:a.signed,initialization:a.initialization,proof:this.#w.proof,
-        ...(a.ca?{ca:a.ca}:{}),signal:this.#signal,clock:this.#clock,
-        signApproval:p=>this.#signature(a,'peer',p,p.value.validUntil)});
+        ...(a.ca?{ca:a.ca}:{}),signal,clock:this.#clock,
+        signApproval:p=>this.#signature(a,'peer',p,p.value.validUntil,signal)});
       const challenge=ledger.challenge(a.initialization.binding);save(this.#file(a.reservationId,'challenge.json'),challenge);
       await sendLaunchHandoff(channel,{signed:a.signed,initialization:a.initialization,proof:this.#w.proof},challenge,
-        {clock:this.#clock,signal:this.#signal,...(dependency?{dependency}:{})});
+        {clock:this.#clock,signal,...(dependency?{dependency}:{})});
       stage='sending-input';
       await sendEncryptedInput(channel,{source:this.#w.config.ciphertextFile,packageSHA256:this.#w.descriptor.ciphertextSHA256,
         maxCiphertextBytes:c.execution.profile.ciphertext.inputBytes});
       if(dependency)await sendEncryptedInput(channel,{source:this.#file(a.reservationId,'dependency.age'),
         packageSHA256:dependency.signed.handoff.ciphertextSHA256,maxCiphertextBytes:c.execution.profile.ciphertext.dependencyBytes});
-      const evidence=await receiveGuestEvidence(channel);this.#active();check(evidence.nonce===challenge.nonce);
+      const evidence=await receiveGuestEvidence(channel);active();check(evidence.nonce===challenge.nonce);
       stage='appraising-evidence';
       trusteeEvidenceRequest(a.policy,challenge,evidence.channelJwk,evidence.evidence,this.#clock());
       const appraisal=await requestTrusteeResult(ledger,a.trusteeEndpoint,challenge.nonce,evidence.channelJwk,evidence.evidence);
-      this.#active();channel.assertActive();
+      active();channel.assertActive();
+      stage='joining-protected-group';
+      const group=coordinator?await coordinator.join(a.initialization.binding.rank,{channel,challenge,evidence,appraisal}):null;
+      active();channel.assertActive();
       const source={schema:'cannabis.market-requester.v3',context:c.context,proof:this.#w.proof,configuration:c,consent:a.signed};
       const request={releaseId:token.releaseId,leaseId:this.#w.lease.digest,nonce:challenge.nonce,channelJwk:evidence.channelJwk,
-        descriptor:this.#w.descriptor,notBefore:this.#clock(),expiresAt:Math.min(r.end,challenge.expiresAt),
-        resultKeySHA256:custody.resultKeySHA256,...(dependency?{dependency:dependency.signed}:{})};
-      const payload=keyDeliveryPayload(source,ledger,request,this.#clock());
+        descriptor:this.#w.descriptor,notBefore:this.#clock(),expiresAt:Math.min(r.end,challenge.expiresAt,group?.bundle.start.payload.value.validUntil??Infinity),
+        resultKeySHA256:custody.resultKeySHA256,...(dependency?{dependency:dependency.signed}:{}),...(group?{group:structuredClone(group.bundle)}:{})};
+      const payload=keyDeliveryPayload(source,ledger,request,this.#clock(),{groupAdmission:group?.admission});
       stage='approving-key-release';
-      const requesterSignature=await this.#signature(a,'key-release',payload,request.expiresAt);
+      const requesterSignature=await this.#signature(a,'key-release',payload,request.expiresAt,signal);active();
       // Recheck current upstream selections after asynchronous wallet review.
       if(dependency)this.#inbox.useCurrent(dependency.signed.handoff.context.sources.map(s=>({approvalDigest:s.approvalDigest,receiptSHA256:s.receiptSHA256})),()=>true);
       const record=await sealJobKeyDelivery(source,ledger,{request,requesterSignature},appraisal.token,c.network,
-        expected=>recoverRequesterJobKey(this.#w.config.keySource,expected),{clock:this.#clock,
+        expected=>{active();return recoverRequesterJobKey(this.#w.config.keySource,expected);},{clock:this.#clock,
           ageKeygen:path.join(path.dirname(this.#w.config.keySource.age),process.platform==='win32'?'age-keygen.exe':'age-keygen'),loadResultKey:this.#loadResult});
       save(this.#file(a.reservationId,'delivery.json'),record);token.approval(record.approvalDigest);
-      this.#inbox.activate(record,{resultRecipient:this.#w.config.resultRecipient});this.#active();channel.assertActive();
+      this.#inbox.activate(record,{resultRecipient:this.#w.config.resultRecipient});active();channel.assertActive();
       if(dependency)this.#inbox.useCurrent(dependency.signed.handoff.context.sources.map(s=>({approvalDigest:s.approvalDigest,receiptSHA256:s.receiptSHA256})),()=>true);
       await sendGuestExecution(channel,record);
       stage='receiving-result';
@@ -216,26 +233,40 @@ export class RequesterWorkflow {
         writeJSON:ack=>channel.writeJSON(ack)};
       await receiveHostedResult(wire,{inbox:this.#inbox,approvalDigest:record.approvalDigest,loadResultKey:this.#loadResult,
         destination:this.#file(a.reservationId,'result.age'),maxCiphertextBytes:c.execution.profile.ciphertext.outputBytes,
-        signStored:p=>this.#signature(a,'stored',p,r.end),access,origin:a.resultOrigin,
-        timeoutMs:Math.max(1,Math.min(3600000,(r.end-this.#clock())*1000)),signal:this.#signal});
+        signStored:p=>this.#signature(a,'stored',p,r.end,signal),access,origin:a.resultOrigin,
+        timeoutMs:Math.max(1,Math.min(3600000,(r.end-this.#clock())*1000)),signal});
       stage='checking-stored-result';await this.#reconcile(a);return true;
     }catch(error){
+      coordinator?.abort();
       save(this.#file(a.reservationId,'interrupted.json'),{stage,transportStage:error.transportStage??null,
         resultHeaderSaved:fs.existsSync(this.#file(a.reservationId,'result-header.json')),
         resultCiphertextSaved:fs.existsSync(this.#file(a.reservationId,'result.age')),executionRetried:false,recoveryRequired:true});
       throw error;
     }finally{channel?.close();ledger?.close();}
   }
-  #retainedDelivery(a) {
+  async #retainedDelivery(a) {
     const row=this.#row(a.reservationId),record=read(this.#file(a.reservationId,'delivery.json')),v=record.expectedApproval?.value,b=a.initialization.binding;
     check(row.state!=='queued'&&record.releaseId===row.releaseId&&record.expectedApproval?.jobId===this.#w.lease.job.id);
     for(const k of ['leaseDigest','orderId','reservationId','configurationSHA256','attempt','rank','worldSize'])check(v[k]===b[k]);
     for(const k of ['packageSHA256','policySHA256','runtimeSHA256','taskSHA256'])check(v[k]==='0x'+b[k]);
     check(v.inputRecipient===this.#w.descriptor.recipient);
+    if(a.initialization.binding.worldSize>1) {
+      const group=read(path.join(this.#w.config.directory,'group-'+a.task+'-approval.json')),
+        start=read(path.join(this.#w.config.directory,'group-'+a.task+'-start.json'));
+      // Recovery validates historical signatures at their signed start time.
+      // It never creates a live mesh, refreshes a booking or reopens content keys.
+      const signedAt=start?.payload?.value?.validFrom;
+      check(Number.isSafeInteger(signedAt)&&signedAt>0);
+      const admission=await verifyGroupAdmission(this.#w.proof,a.signed.configuration.network,group,{clock:()=>signedAt}),
+        own=group.group.peers[v.rank],binding=groupDeliveryBinding(admission,{approval:group,start},b,own?.channelJwk,signedAt);
+      check(['5','6'].includes(record.expectedApproval.domain.version)&&v.groupDigest===binding.groupDigest&&v.groupStartDigest===binding.groupStartDigest&&
+        group.group.task===a.task&&canonical(own.initialization)===canonical(a.initialization)&&canonical(own.signed)===canonical(a.signed)&&
+        v.channelKeySHA256==='0x'+sha(canonical(own.channelJwk))&&v.nonce==='0x'+own.challenge.nonce);
+    }
     this.#inbox.activate(record,{resultRecipient:this.#w.config.resultRecipient});return record;
   }
   async #reconcile(a) {
-    const record=this.#retainedDelivery(a),recovered=await this.#inbox.recover(record.approvalDigest,this.#loadResult);
+    const record=await this.#retainedDelivery(a),recovered=await this.#inbox.recover(record.approvalDigest,this.#loadResult);
     this.#verifyCiphertext(a.reservationId,recovered.receipt);
     this.#inbox.useCurrent([{approvalDigest:record.approvalDigest,receiptSHA256:recovered.receiptSHA256}],()=>
       this.#store.stored(a.reservationId,record.releaseId,record.approvalDigest,recovered.receiptSHA256));
@@ -245,7 +276,7 @@ export class RequesterWorkflow {
     check(!this.#running);this.#running=true;this.#sign=signApproval;this.#signal=signal;
     try {
       this.#active();const a=this.#w.assignments.find(a=>a.reservationId===reservationId);check(a);
-      const record=this.#retainedDelivery(a);
+      const record=await this.#retainedDelivery(a);
       if(!fs.existsSync(this.#file(reservationId,'result.age'))) {
         const access=read(this.#file(reservationId,'result-access.json')),header=read(this.#file(reservationId,'result-header.json')),
           controller=new AbortController();let readOnce=false;
@@ -271,18 +302,32 @@ export class RequesterWorkflow {
         for(const a of this.#w.assignments) {
           if(pending.size>=this.#w.config.maxParallel)break;
           const row=rows.find(r=>r.reservationId===a.reservationId),r=a.description.reservation;
+          if(a.initialization.binding.rank!==0)continue;
           if(row.state!=='queued'||pending.has(a.reservationId)||now<r.start||now>=r.end)continue;
           if(this.#w.assignments.some(s=>a.dependsOn.includes(s.task)&&rows.find(v=>v.reservationId===s.reservationId).state!=='stored'))continue;
-          const task=this.#execute(a).then(()=>({reservationId:a.reservationId,stored:true}),()=>({reservationId:a.reservationId,recoveryRequired:true}))
-            .then(report=>{outcomes.push(report);pending.delete(a.reservationId);notify();});
-          pending.set(a.reservationId,task);notify();
+          const members=this.#w.assignments.filter(s=>s.task===a.task).sort((x,y)=>x.initialization.binding.rank-y.initialization.binding.rank);
+          if(pending.size+members.length>this.#w.config.maxParallel||members.some(m=>pending.has(m.reservationId)||
+            rows.find(v=>v.reservationId===m.reservationId).state!=='queued'))continue;
+          const tokens=this.#store.claimGroup(members.map(m=>m.reservationId));
+          const coordinator=members.length>1?new WorkflowGroup({proof:this.#w.proof,network:a.signed.configuration.network,
+            assignments:members,clock:this.#clock,signal:this.#signal,
+            sign:(kind,payload,until,groupSignal)=>this.#signature(a,kind,payload,until,groupSignal),
+            save:(kind,value)=>save(path.join(this.#w.config.directory,'group-'+a.task+'-'+kind+'.json'),value)}):undefined;
+          const tasks=members.map((m,i)=>{
+            const task=this.#execute(m,tokens[i],coordinator).then(()=>({reservationId:m.reservationId,stored:true}),
+              ()=>({reservationId:m.reservationId,recoveryRequired:true}))
+              .then(report=>{outcomes.push(report);pending.delete(m.reservationId);notify();});
+            pending.set(m.reservationId,task);return task;
+          });
+          if(coordinator)Promise.allSettled(tasks).then(()=>coordinator.close());
+          notify();
         }
         if(!pending.size) {
           const remaining=rows.filter(r=>r.state==='queued');
           const impossible=new Set(rows.filter(r=>r.state==='uncertain').map(r=>r.reservationId));
           for(const a of this.#w.assignments)if(this.#row(a.reservationId).state==='queued'&&a.description.reservation.end<=now)impossible.add(a.reservationId);
           for(let i=0;i<this.#w.assignments.length;i++)for(const a of this.#w.assignments)
-            if(this.#w.assignments.some(s=>a.dependsOn.includes(s.task)&&impossible.has(s.reservationId)))impossible.add(a.reservationId);
+            if(this.#w.assignments.some(s=>(a.dependsOn.includes(s.task)||s.task===a.task)&&impossible.has(s.reservationId)))impossible.add(a.reservationId);
           if(!remaining.length||remaining.every(row=>impossible.has(row.reservationId)))break;
         }
         await new Promise((resolve,reject)=>{const abort=()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);reject(Error('Cancelled'));};

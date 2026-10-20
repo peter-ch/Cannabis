@@ -123,6 +123,11 @@ def main():
             shutil.rmtree(legacy)
             legacy.symlink_to('usr/' + name)
     kernel = tree / 'boot' / ('vmlinuz-' + lock['kernelRelease'])
+    # The pinned kernel provides TUN built in. Never download or load a host
+    # module to satisfy group networking in a changed image.
+    builtins=(tree/'usr/lib/modules'/lock['kernelRelease']/'modules.builtin').read_text().splitlines()
+    if 'kernel/drivers/net/tun.ko' not in builtins:
+        raise ValueError('Pinned kernel lacks the required built-in TUN device')
     shutil.copyfile(kernel, out / 'vmlinuz')
     # The kernel is already passed separately to the VMM; do not duplicate its
     # image and map in the initramfs. Only this newly created staging tree changes.
@@ -161,6 +166,10 @@ def main():
     copy_text(ROOT / 'scripts/check-guest-python.py', project / 'scripts/check-guest-python.py')
     copy_text(ROOT / 'scripts/check-guest-graph.py', project / 'scripts/check-guest-graph.py')
     copy_text(ROOT / 'scripts/check-guest-dependencies.py', project / 'scripts/check-guest-dependencies.py')
+    for name in ['check-guest-groups.py', 'check-guest-group-failures.py']:
+        copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
+    for name in ['group_fixture.mjs', 'group_native_controller.mjs', 'group_native_requester.mjs', 'launch_fixture.mjs']:
+        copy_text(ROOT / 'test/helpers' / name, project / 'test/helpers' / name)
     for name in ['compute-guest-launch.py','compute-guest-authorize.mjs','check-guest-launcher.py','check-guest-runtime.py','check-guest-ciphertext.py','compute-guest-vm.py','check-guest-vm.py','compute-guest-boot.py','check-guest-boot.py']:
         copy_text(ROOT / 'scripts' / name, project / 'scripts' / name)
     for name in lock['guestServices']:

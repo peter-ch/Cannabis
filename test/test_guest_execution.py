@@ -25,6 +25,26 @@ def profile():
 
 
 class NativeServiceTests(unittest.TestCase):
+    def test_group_profile_requires_explicit_topology_and_control_capacity(self):
+        value=profile();value.update(schema='cannabis.guest-native-service.v4',maxDependencyBytes=MIB)
+        value['runtime'].update(adapter='native-group-linux-x86_64-v1',collectiveBackend='attested-tls-ip-v1')
+        value['resources']['nodes']=2
+        value['ciphertext'].update(bytes=12*MIB,dependencyBytes=4*MIB)
+        value['group']={'protocol':'cannabis.group-tls-ip.v1','bindHost':'0.0.0.0','port':29501,
+                        'maxBufferedBytes':131072,'maxTrafficBytes':MIB}
+        def inspect(p):return NativeServiceProfile(p,'0x'+hashlib.sha256(canonical(p)).hexdigest(),1)
+        inspect(value)
+        for mutate in [lambda p:p['runtime'].pop('collectiveBackend'),lambda p:p['runtime'].update(architecture='arm64'),
+                       lambda p:p['runtime'].update(os='windows'),lambda p:p['runtime'].update(digestSHA256='invalid'),
+                       lambda p:p['resources'].update(nodes=1),
+                       lambda p:p['resources'].update(accelerators=1,acceleratorMemoryMiB=128),
+                       lambda p:p['group'].update(bindHost='example.com'),lambda p:p['group'].update(port=0),
+                       lambda p:p['group'].update(maxBufferedBytes=65536),
+                       lambda p:(p['resources'].update(nodes=64),p['group'].update(maxBufferedBytes=8*MIB)),
+                       lambda p:p.update(schema='cannabis.guest-native-service.v3')]:
+            changed=copy.deepcopy(value);mutate(changed)
+            with self.assertRaises((ValueError,KeyError)):inspect(changed)
+
     def test_dependency_capacity_is_explicit_and_page_rounded_in_the_signed_unit(self):
         value=profile();value.update(schema='cannabis.guest-native-service.v3',maxDependencyBytes=MIB)
         value['ciphertext'].update(bytes=12*MIB,dependencyBytes=4*MIB)

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { TypedDataEncoder, verifyTypedData } from 'ethers';
+import { serveGuestGroup } from './group_transport.mjs';
 
 const protocol='cannabis.guest-wire.v1',maxControl=6*1024*1024+65536,chunkSize=65536;
 const failure=()=>Error('Encrypted guest handoff failed; retain requester recovery material');
@@ -72,7 +73,7 @@ export const resultStoredTypes={ResultStored:[
   {name:'ciphertextSHA256',type:'bytes32'},{name:'ciphertextBytes',type:'uint64'}
 ]};
 export function resultStoredPayload(expected,{envelopeSHA256,ciphertextSHA256,ciphertextBytes}) {
-  if(expected?.domain?.name!=='Cannabis confidential key delivery'||!['2','3','4'].includes(expected.domain.version)||
+  if(expected?.domain?.name!=='Cannabis confidential key delivery'||!['2','3','4','5','6'].includes(expected.domain.version)||
     typeof expected.digest!=='string'||!/^0x[0-9a-f]{64}$/.test(expected.digest)||
     !digest(envelopeSHA256)||!digest(ciphertextSHA256)||!integer(ciphertextBytes,1,1024**4))throw failure();
   const domain={name:'Cannabis encrypted result stored',version:'1',chainId:expected.domain.chainId,
@@ -168,6 +169,7 @@ export async function serveGuestSession(session,wire,{maxCiphertextBytes}={}) {
   try {
     if(wire.signal.aborted)throw failure();
     const evidence=await session.evidence();await wire.writeJSON({protocol,operation:'evidence',evidence});
+    if(session.groupRequired)await serveGuestGroup(session,wire);
     const command=await wire.readJSON(128*1024);
     if(!fields(command,['protocol','operation','envelope','expected'])||command.protocol!==protocol||command.operation!=='execute')throw failure();
     const result=await session.executeNative(command.envelope,command.expected);
@@ -175,7 +177,7 @@ export async function serveGuestSession(session,wire,{maxCiphertextBytes}={}) {
     if(Date.now()>=session.serviceInterval.end*1000)throw failure();
     return handoff;
   }catch{wire.fail();throw failure();}
-  finally{wire.signal.removeEventListener('abort',cancel);session.close();}
+  finally{wire.signal.removeEventListener('abort',cancel);await session.close();}
 }
 export async function receiveGuestEvidence(wire) {
   const response=await wire.readJSON(5*1024*1024);
@@ -184,6 +186,6 @@ export async function receiveGuestEvidence(wire) {
   return response.evidence;
 }
 export async function sendGuestExecution(wire,record) {
-  if(!['2','3','4'].includes(record?.expectedApproval?.domain?.version)||record.schema!=='cannabis.key-delivery.record.v'+record.expectedApproval.domain.version||!record.expectedApproval||typeof record.envelope!=='string')throw failure();
+  if(!['2','3','4','5','6'].includes(record?.expectedApproval?.domain?.version)||record.schema!=='cannabis.key-delivery.record.v'+record.expectedApproval.domain.version||!record.expectedApproval||typeof record.envelope!=='string')throw failure();
   return wire.writeJSON({protocol,operation:'execute',envelope:record.envelope,expected:record.expectedApproval});
 }

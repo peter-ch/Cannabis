@@ -20,6 +20,8 @@ from .native_graph import SCHEMA as GRAPH_SCHEMA
 from .guest_graph import run_native_graph
 
 NATIVE_ADAPTER = 'native-linux-x86_64-v1'
+GROUP_ADAPTER = 'native-group-linux-x86_64-v1'
+GROUP_BACKEND = 'attested-tls-ip-v1'
 
 
 @contextmanager
@@ -52,20 +54,32 @@ class NativeTaskPlan:
     adapter, not a download/archive digest. A different adapter defines its own
     semantics. The caller must independently approve these retained values.
     """
-    def __init__(self, rootfs, runtime, resources, *, process_limit, scratch_inodes, deadline):
+    def __init__(self, rootfs, runtime, resources, *, process_limit, scratch_inodes, deadline, group_network=None):
         if not isinstance(deadline, ExecutionDeadline):
             raise ValueError('Require the retained signed-service deadline before key release')
         deadline.check()
         self._deadline = deadline
+        if group_network is not None:
+            from .guest_group_network import GuestGroupNetwork
+            if not isinstance(group_network, GuestGroupNetwork):
+                raise ValueError('Group execution requires its owned protected namespace')
+            group_network.assert_alive()
+        self._group_network = group_network
         runtime, resources = copy.deepcopy(runtime), copy.deepcopy(resources)
-        if (not isinstance(runtime, dict) or set(runtime) - {'adapter', 'digestSHA256', 'architecture', 'os', 'features'}
-                or runtime.get('adapter') != NATIVE_ADAPTER or runtime.get('architecture') != 'x86_64'
+        runtime_keys = {'adapter', 'digestSHA256', 'architecture', 'os', 'features'}
+        if group_network is not None:
+            runtime_keys.add('collectiveBackend')
+        if (not isinstance(runtime, dict) or set(runtime) - runtime_keys
+                or runtime.get('adapter') != (GROUP_ADAPTER if group_network else NATIVE_ADAPTER) or runtime.get('architecture') != 'x86_64'
                 or runtime.get('os') != 'linux' or runtime.get('features', []) != []):
             raise ValueError('Unsupported native runtime profile; another reviewed adapter is required')
+        if group_network is not None and runtime.get('collectiveBackend') != GROUP_BACKEND:
+            raise ValueError('Group runtime requires its protected IP transport')
         if (not isinstance(resources, dict) or set(resources) - {'cpus', 'memoryMiB', 'scratchMiB', 'wallSeconds', 'nodes', 'accelerators', 'acceleratorMemoryMiB'}
-                or resources.get('nodes') != 1 or resources.get('accelerators', 0) != 0 or resources.get('acceleratorMemoryMiB', 0) != 0
+                or resources.get('nodes') != (group_network.world_size if group_network else 1)
+                or resources.get('accelerators', 0) != 0 or resources.get('acceleratorMemoryMiB', 0) != 0
                 or type(resources.get('scratchMiB')) is not int):
-            raise ValueError('This adapter requires a single CPU rank; never reduce a group or accelerator job')
+            raise ValueError('Native resources differ from the admitted CPU rank topology; never reduce a group or accelerator job')
         self._limits = ResourceLimits.from_task(resources, process_limit=process_limit)
         self._scratch = ScratchLimits(resources['scratchMiB'] * 1024**2, scratch_inodes)
         self._root = Path(rootfs)
@@ -78,6 +92,8 @@ class NativeTaskPlan:
     def _outputs(self, parent, task, spec, staging, helper_limits, staging_limits, cancelled, input_root, input_files):
         launch = task['launch']
         if launch.get('schema') == GRAPH_SCHEMA:
+            if self._group_network is not None:
+                raise ValueError('This group adapter requires one explicit rank entrypoint; task DAGs remain in the complete plan')
             yield run_native_graph(parent, self._root, self._runtime['digestSHA256'], task, input_files,
                 input_root, staging.path / 'graph', limits=self._limits, scratch=self._scratch,
                 helper_limits=helper_limits, staging_limits=staging_limits, deadline=self._deadline, cancelled=cancelled)
@@ -86,12 +102,23 @@ class NativeTaskPlan:
             raise ValueError('Unsupported native launch settings')
         if 'environment' in launch and not isinstance(launch['environment'], dict):
             raise ValueError('Native environment must be an explicit mapping')
+        environment = dict(launch.get('environment', {}))
+        if self._group_network is not None:
+            self._group_network.assert_alive()
+            reserved = {'RANK': str(self._group_network.rank), 'WORLD_SIZE': str(self._group_network.world_size),
+                        'LOCAL_RANK': '0', 'LOCAL_WORLD_SIZE': '1', 'MASTER_ADDR': '10.211.0.1',
+                        'CANNABIS_GROUP_IP': f'10.211.0.{self._group_network.rank + 1}',
+                        'CANNABIS_GROUP_INTERFACE': 'cannabis0', 'GLOO_SOCKET_IFNAME': 'cannabis0'}
+            if any(name in environment and environment[name] != value for name, value in reserved.items()):
+                raise ValueError('Private rank environment conflicts with the approved group')
+            environment.update(reserved)
+            environment.setdefault('MASTER_PORT', '29500')
         log_names = [safe_name(launch[k]) for k in ('stdout', 'stderr') if k in launch]
         if len(set(log_names)) != len(log_names) or any(name not in task['outputs'] for name in log_names):
             raise ValueError('Returned logs must have distinct declared encrypted output paths')
         with NativeSandbox(parent, self._root, input_root, self._runtime['digestSHA256'],
-                self._limits, self._scratch, deadline=self._deadline) as sandbox:
-            executed = sandbox.run(launch['argv'], environment=launch.get('environment'), cancelled=cancelled)
+                self._limits, self._scratch, deadline=self._deadline, group_network=self._group_network) as sandbox:
+            executed = sandbox.run(launch['argv'], environment=environment, cancelled=cancelled)
             if not executed['success']:
                 raise RuntimeError('Native task failed; no result accepted')
             self._deadline.check(cancelled)
@@ -122,8 +149,9 @@ class NativeTaskPlan:
             raise ValueError('Require an unused retained plan and guest-opened key')
         self._used = True
         self._deadline.check(cancelled)
-        if (binding.get('runtimeSHA256') != self._runtime['digestSHA256'] or binding.get('worldSize') != 1
-                or binding.get('rank') != 0 or binding.get('acceleratorClass') != 'cpu'):
+        if (binding.get('runtimeSHA256') != self._runtime['digestSHA256']
+                or binding.get('worldSize') != (self._group_network.world_size if self._group_network else 1)
+                or binding.get('rank') != (self._group_network.rank if self._group_network else 0) or binding.get('acceleratorClass') != 'cpu'):
             raise ValueError('Delivered assignment differs from the retained runtime')
         if not isinstance(helper_limits, ResourceLimits) or not isinstance(staging_limits, ScratchLimits):
             raise ValueError('Require retained helper and staging budgets')
@@ -160,6 +188,8 @@ class NativeTaskPlan:
             self._deadline.check(cancelled)
             spec, decoded_report = decoded['workload'], decoded['report']
             task = spec['tasks'][decoded_report['taskIndex']]
+            if self._group_network is not None and task.get('outputScope') != 'per-rank':
+                raise ValueError('This group adapter requires explicit per-rank result receipts')
             if canonical(task['runtime']) != canonical(self._runtime) or canonical(task['resources']) != canonical(self._resources):
                 raise ValueError('Private task differs from retained matching metadata')
             input_root, input_files = staging.path / 'inputs', list(spec['files'])
@@ -182,7 +212,7 @@ class NativeTaskPlan:
                 receipt = run_guarded_helper(parent, helper_limits, {'operation': 'seal-result', 'spec': spec,
                     'taskId': task['id'], 'packageSHA256': binding['packageSHA256'],
                     'root': str(output_root), 'recipient': key.result_recipient,
-                    'destination': str(staging.path / 'result.age'), 'attempt': binding['attempt'], 'rank': 0,
+                    'destination': str(staging.path / 'result.age'), 'attempt': binding['attempt'], 'rank': binding['rank'],
                     'age': age}, cancelled=cancelled, deadline=self._deadline)
             self._deadline.check(cancelled)
             # No plaintext or private receipt is written outside the protected

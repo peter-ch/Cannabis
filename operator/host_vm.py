@@ -25,12 +25,17 @@ from .snp_profile import SnpProfile,exact,integer,unique
 
 
 def request_checked(value):
-    exact(value,['schema','initialization','initData','expectedLaunchDigest','serviceStart','serviceEnd','timeoutMs'])
-    if (value['schema']!='cannabis.host-vm-request.v1' or type(value['initialization']) is not str
+    grouped=value.get('schema')=='cannabis.host-vm-request.v2'
+    exact(value,['schema','initialization','initData','expectedLaunchDigest','serviceStart','serviceEnd','timeoutMs']+(['groupPort'] if grouped else []))
+    if (value['schema'] not in ['cannabis.host-vm-request.v1','cannabis.host-vm-request.v2'] or type(value['initialization']) is not str
             or len(value['initialization'].encode())>65536 or not re.fullmatch('[0-9a-f]{96}',value['expectedLaunchDigest'])):
         raise ValueError('Invalid retained host request')
     init=json.loads(value['initialization'],object_pairs_hook=unique)
     if init.get('schema')!='cannabis.guest-initialization.v2' or init.get('tee')!='snp':raise ValueError('Require configured SNP initialization')
+    if grouped:
+        if not integer(value['groupPort'],1024,65535) or not integer(init.get('binding',{}).get('worldSize'),2,64):
+            raise ValueError('Require a complete bounded group request')
+    elif init.get('binding',{}).get('worldSize')!=1:raise ValueError('Group cannot downgrade the VM transport')
     canonical=json.dumps(init,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False)
     if canonical!=value['initialization'] or hashlib.sha256(canonical.encode()).hexdigest()!=value['initData']:
         raise ValueError('Retained initialization digest mismatch')
@@ -99,6 +104,9 @@ class OwnedSnpVm:
         self.owner=owner_fd;self.lifeline=lifeline;self.buffer=bytearray();self.qmp_bytes=0
         self.shutdown=False;self.responses={};self.last_wall=time.time();self.heartbeat=time.monotonic()+10
         self.deadline=request_checked(request)
+        ingress=profile.value.get('groupIngress')
+        if (request['schema']=='cannabis.host-vm-request.v2') != (ingress is not None) or (ingress is not None and request['groupPort']!=ingress['guestPort']):
+            raise ValueError('VM group forwarding differs from the retained profile')
         if request['expectedLaunchDigest']!=profile.reference['expectedLaunchDigest']:raise ValueError('Selected policy/reference mismatch')
         if self.deadline-time.monotonic()>profile.limits.wall_seconds:raise ValueError('Request exceeds retained host limit')
         profile.init_data=request['initData']

@@ -17,7 +17,7 @@ export async function createWorkflowApprovalServer({snapshot,start,clock=Date.no
   }
   const signApproval=(input,signal)=>new Promise((resolve,reject)=>{
     try {
-      check(!closed&&!signal?.aborted&&requests.size<8);const p=input.payload,s=workflowSigningSchema(input.kind,p.domain.version);
+      check(!closed&&!signal?.aborted&&requests.size<64);const p=input.payload,s=workflowSigningSchema(input.kind,p.domain.version);
       check(p.domain.name===s.name&&canonical(p.types)===canonical(s.types)&&p.digest===TypedDataEncoder.hash(p.domain,p.types,p.value));
       const review=validateWorkflowReview({id:randomBytes(32).toString('hex'),kind:input.kind,reservationId:input.reservationId,
         requester:input.requester,genesisHash:input.genesisHash,expiresAt:input.expiresAt*1000,digest:p.digest,

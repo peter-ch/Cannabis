@@ -8,6 +8,15 @@ Cannabis workers must prove which protected environment will receive a job's key
 
 The current client integrates Trustee CPU appraisals for SNP and TDX. No provider deployment has yet completed the protected execution and settlement acceptance checks. CUDA, ROCm and other accelerators remain part of the network's scope; each device and interconnect path requires its own evidence.
 
+The explicit [protected group adapter](protected-groups.md) adds coordinated CPU
+ranks to the retained native path. Production requires one independently admitted
+protected VM per rank. Service profile v4 binds the fixed TLS listener and traffic
+limits; the SNP host profile v2 can forward its approved public TCP port into that
+guest. The host forwards ciphertext without terminating group TLS. This does not
+admit an ordinary server or establish a confidential GPU path. The combined
+guest/operator lifecycle passes an owned Linux checkpoint; refreshed group
+images and real hardware admission remain required.
+
 ## What the existing adapter expects
 
 | Profile | Initialization binding | Other required measurements |

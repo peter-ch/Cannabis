@@ -132,7 +132,9 @@ export function inspectLaunchHandoff(ticket) {
   challengeChecked(t.local,t.request.challenge,t.life.active());
   inspectPeerChannel(t.channel,'provider',t.local.signed,t.local.initialization,t.local.proof);
   const init=guestInitialization(t.local.initialization);check(init.assignment.tee==='snp');
-  return {request:{schema:'cannabis.host-vm-request.v1',initialization:init.canonical,initData:init.digest,
+  const group=t.launch.execution.profile.schema==='cannabis.guest-native-service.v4'?t.launch.execution.profile.group:null;
+  if(group)check(group.bindHost==='0.0.0.0'); // The pinned SNP control NIC is IPv4.
+  return {request:{schema:group?'cannabis.host-vm-request.v2':'cannabis.host-vm-request.v1',initialization:init.canonical,initData:init.digest,
     expectedLaunchDigest:t.launch.policy.measurements.launch,serviceStart:t.launch.interval.start,
-    serviceEnd:t.launch.interval.end,timeoutMs:t.life.remaining()},signal:t.channel.signal};
+    serviceEnd:t.launch.interval.end,timeoutMs:t.life.remaining(),...(group?{groupPort:group.port}:{})},signal:t.channel.signal};
 }

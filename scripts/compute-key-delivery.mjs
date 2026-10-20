@@ -5,6 +5,7 @@ import { AttestationLedger, configuredMarketAttestationBinding, requestTrusteeRe
 import { keyDeliveryPayload, sealJobKeyDelivery, inspectKeyDelivery, recoverRequesterJobKey } from '../compute/key_delivery.mjs';
 import { validateGuestConfiguration } from '../compute/guest_configuration.mjs';
 import { createResultKeyCustody, recoverRequesterResultKey } from '../compute/result_keys.mjs';
+import { verifyGroupAdmission } from '../compute/group_admission.mjs';
 
 function read(file) {
   if (fs.statSync(file).size > 5 * 1024 * 1024) throw Error('Local key-delivery input exceeds bound');
@@ -30,7 +31,10 @@ try {
   else if (action === 'challenge') result = attestations.challenge(configuredMarketAttestationBinding(
     capacity.proof,config.context,input.reservationId,input.run,validateGuestConfiguration(capacity.configuration).configurationSHA256));
   else if (action === 'appraise') result = await requestTrusteeResult(attestations, config.trusteeEndpoint, input.nonce, input.channelJwk, input.evidence);
-  else if (action === 'prepare') result = keyDeliveryPayload(capacity, attestations, input);
+  else if (action === 'prepare') {
+    const groupAdmission=input.group?await verifyGroupAdmission(capacity.proof,config.network,input.group.approval):undefined;
+    result=keyDeliveryPayload(capacity,attestations,input,undefined,{groupAdmission});
+  }
   else if (action === 'inspect') result = inspectKeyDelivery(attestations, input.releaseId);
   else {
     const source = config.keySource;

@@ -72,11 +72,18 @@ export class WorkflowStore {
     check(Number.isSafeInteger(now)&&now>0&&old&&now>=old.last_time);this.#db.prepare('UPDATE workflow_settings SET last_time=? WHERE id=1').run(now);return now;}
   snapshot(){return this.#tx(()=>{this.#time();return this.#db.prepare('SELECT id AS reservationId,state,release_id AS releaseId,approval_digest AS approvalDigest,receipt_hash AS receiptSHA256 FROM workflow_slots ORDER BY id').all();});}
   claim(reservationId) {
-    const owner=sha(randomBytes(32)),releaseId='0x'+randomBytes(32).toString('hex');
-    this.#tx(()=>{this.#time();check(this.#db.prepare("UPDATE workflow_slots SET state='uncertain',release_id=?,owner_hash=? WHERE id=? AND state='queued'").run(releaseId,owner,reservationId).changes===1);});
+    return this.claimGroup([reservationId])[0];
+  }
+  claimGroup(reservationIds) {
+    check(Array.isArray(reservationIds)&&reservationIds.length>0&&reservationIds.length<=64&&new Set(reservationIds).size===reservationIds.length);
+    const tokens=reservationIds.map(reservationId=>({reservationId,owner:sha(randomBytes(32)),releaseId:'0x'+randomBytes(32).toString('hex')}));
+    // One durable transaction consumes the WHOLE attempt before any rank sends a
+    // launch byte. A crash can never leave part of this group queued for retry.
+    this.#tx(()=>{this.#time();for(const {reservationId,releaseId,owner} of tokens)
+      check(this.#db.prepare("UPDATE workflow_slots SET state='uncertain',release_id=?,owner_hash=? WHERE id=? AND state='queued'").run(releaseId,owner,reservationId).changes===1);});
     // Unknown outcomes remain consumed, including crashes before the first frame.
-    return Object.freeze({releaseId,approval:digest=>this.#tx(()=>{this.#time();check(/^0x[0-9a-f]{64}$/.test(digest));
-      check(this.#db.prepare("UPDATE workflow_slots SET approval_digest=? WHERE id=? AND owner_hash=? AND state='uncertain' AND approval_digest IS NULL").run(digest,reservationId,owner).changes===1);})});
+    return tokens.map(({reservationId,owner,releaseId})=>Object.freeze({releaseId,approval:digest=>this.#tx(()=>{this.#time();check(/^0x[0-9a-f]{64}$/.test(digest));
+      check(this.#db.prepare("UPDATE workflow_slots SET approval_digest=? WHERE id=? AND owner_hash=? AND state='uncertain' AND approval_digest IS NULL").run(digest,reservationId,owner).changes===1);})}));
   }
   stored(reservationId,releaseId,approvalDigest,receiptSHA256) {
     check(/^0x[0-9a-f]{64}$/.test(approvalDigest)&&/^[0-9a-f]{64}$/.test(receiptSHA256));

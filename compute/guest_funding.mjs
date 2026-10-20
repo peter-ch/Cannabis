@@ -6,12 +6,13 @@ import { verifyMarketLeaseProof, readMarketLeaseState } from './market_lease.mjs
 import { guestInitialization } from './guest_initialization.mjs';
 import { readFinalizedEscrow, readCurrentEscrow, readFundedEscrowAtAnchor } from './finality.mjs';
 import { inspectLaunchConsent } from './guest_consent.mjs';
+import { inspectGroupAdmission } from './group_admission.mjs';
 
 const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':
   v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
 
 export class GuestFunding {
-  #lease; #reservation; #network; #clock; #last; #end; #market; #approvals; #closed = false; #busy = false;
+  #lease; #reservation; #network; #clock; #last; #end; #market; #approvals; #groupApprovals; #closed = false; #busy = false;
   constructor(options, initialization, { clock = () => Math.floor(Date.now() / 1000) } = {}) {
     // All configuration except proof is independently approved measured-guest
     // configuration. A host may transport it, but must not choose its pins/RPC.
@@ -49,6 +50,14 @@ export class GuestFunding {
     this.#end = performance.now() + Math.max(0, reservation.end - now) * 1000;
   }
   get interval() { return { start: this.#reservation.start, end: this.#reservation.end }; }
+  bindGroup(admission) {
+    this.assertWindow();
+    const d=inspectGroupAdmission(admission);
+    if(this.#groupApprovals||!this.#market||d.leaseDigest!==this.#lease.digest||
+      !d.peers.some(p=>p.reservationId===this.#reservation.reservationId))throw Error('Group differs from retained funding');
+    this.#groupApprovals=d.group.peers.filter(p=>p.initialization.binding.reservationId!==this.#reservation.reservationId)
+      .map(p=>inspectLaunchConsent(p.signed,p.initialization,this.#lease.proof,this.#clock()).approvals);
+  }
   assertService({ serviceSHA256, units }) {
     this.assertWindow();
     if (serviceSHA256 !== this.#reservation.serviceSHA256 || !Number.isSafeInteger(units) || units !== this.#reservation.units) {
@@ -80,6 +89,17 @@ export class GuestFunding {
       if (this.#market) {
         const state = await readMarketLeaseState(this.#lease.proof, this.#network, () => this.assertWindow(),
           this.#approvals?{launchApprovals:this.#approvals}:{});
+        // Each rank independently checks every booked peer's signatures against
+        // current chain state. Four bounded readers avoid unbounded RPC fanout.
+        if(this.#groupApprovals) {
+          let next=0;
+          await Promise.all(Array.from({length:Math.min(4,this.#groupApprovals.length)},async()=>{
+            while(next<this.#groupApprovals.length) {
+              const approvals=this.#groupApprovals[next++];
+              await readMarketLeaseState(this.#lease.proof,this.#network,()=>this.assertWindow(),{launchApprovals:approvals});
+            }
+          }));
+        }
         this.assertWindow();
         if (state.headBlock.timestamp < this.#reservation.start || state.headBlock.timestamp >= this.#reservation.end)
           throw Error('Funding head is outside the reserved service interval');
