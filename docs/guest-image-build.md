@@ -161,7 +161,7 @@ python3 scripts/verify-guest-boot.py \
   --output /work/cannabis-image-first-boot
 ```
 
-This uses QEMU's ordinary TCG CPU emulation and the measured reference profile:
+By default this uses QEMU's ordinary TCG CPU emulation and the measured reference profile:
 four vCPUs and 4 GiB of RAM for the minimal runtime, or 8 GiB for the CPU PyTorch
 profile. It attaches no NIC, disk, shared filesystem, monitor,
 QMP or debugger. Before the full boot, two separate guests must refuse insufficient
@@ -177,6 +177,15 @@ each real job must still finish within its approved workload and shared deadline
 Failure or timeout does not count as success. Keep the serial
 logs and verification JSON private. Bounded phase names distinguish slow or
 stalled checks without customer content.
+
+On a Linux host with working KVM and permission to access `/dev/kvm`, add
+`--accelerator kvm` to use ordinary hardware acceleration. Both boot-verification
+commands support this option and record the selected accelerator. Selection is
+explicit: unavailable KVM fails without falling back to emulation. The image,
+guest resource profile, startup checks, cleanup assertions and time limits stay
+the same. This can avoid emulation delays on a busy development machine. Retain
+earlier failures; a later pass does not erase them. Neither TCG nor ordinary KVM
+establishes confidential hardware admission or authorizes customer-key release.
 
 Inside the VM, the entry point mounts ephemeral runtime storage, disables core dumps and further kernel-module loading, checks embedded files, exercises the Python extensions and age executable, and starts the actual attestation agent and REST bridge on loopback. Both production CPU probes must reject the unsupported sample profile with their exact structured refusal. Import errors, missing libraries and unexpected success fail the check. No hardware evidence, channel key, job key or customer computation is requested. The services are terminated and the VM powers off.
 
@@ -332,6 +341,8 @@ python3 scripts/verify-operating-boot.py \
   --image /work/cannabis-operating-first \
   --output /work/cannabis-operating-refusals
 ```
+
+Add `--accelerator kvm` for the same explicitly selected ordinary KVM checks.
 
 It sends only invalid owned public requests. It requires public staging followed
 by refusal, malformed/oversized prefix refusal, bounded stalled intake, and

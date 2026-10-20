@@ -29,12 +29,16 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--accelerator',choices=('tcg','kvm'),default='tcg',
+                        help='Ordinary VM acceleration for software checks; neither option supplies confidential admission')
     args=parser.parse_args()
     image,out=args.image.resolve(),args.output.resolve()
     if sys.platform!='linux' or out.exists() or out==ROOT or ROOT in out.parents:
         raise ValueError('Require Linux and a new private output directory')
     qemu=shutil.which('qemu-system-x86_64')
     if qemu is None:raise ValueError('Require QEMU')
+    if args.accelerator=='kvm' and not os.access('/dev/kvm',os.R_OK|os.W_OK):
+        raise ValueError('Selected KVM checks require access to /dev/kvm; no emulation fallback')
     report=json.loads((image/'build.json').read_text())
     if (report['schema']!='cannabis.guest-image-build.v1' or report.get('operatingEntryConfigured') is not True
             or report['executionAuthorized'] is not False or report['hardwareValidated'] is not False):
@@ -53,7 +57,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix='cannabis-boot-') as directory:
             sockpath=Path(directory)/'control.sock'
             qmppath=Path(directory)/'qmp.sock'
-            command=[qemu,'-machine','q35,accel=tcg','-cpu','max','-smp',str(reference['cpus']),
+            command=[qemu,'-machine','q35,accel='+args.accelerator,'-cpu','max','-smp',str(reference['cpus']),
                 '-m',str(reference['memoryMiB']),'-nodefaults','-display','none',
                 '-monitor','none','-qmp','unix:'+str(qmppath)+',server=on,wait=off','-serial','file:'+str(serial),'-no-reboot',
                 '-kernel',str(image/'vmlinuz'),'-initrd',str(image/'initramfs.cpio.gz'),'-append',cmdline]
@@ -146,6 +150,7 @@ def main():
     final={'schema':'cannabis.operating-boot-refusal.v1','checkedAt':datetime.now(timezone.utc).isoformat(),
         'image':report['outputs'],'referenceVM':reference,'checks':checks,'networkAttached':True,'externalNetworkEnabled':False,
         'hostFilesystemsAttached':False,'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0],
+        'accelerator':args.accelerator,
         'qmpScope':'Private local event observation only; no VM-control or memory-read command.',
         'hardwareValidated':False,'authorizedJobCompleted':False,'customerKeysUsed':False,'realPaidJob':False}
     (out/'verification.json').write_text(json.dumps(final,indent=2)+'\n')

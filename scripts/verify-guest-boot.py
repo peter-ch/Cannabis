@@ -165,6 +165,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--accelerator', choices=('tcg', 'kvm'), default='tcg',
+                        help='Ordinary VM acceleration for software checks; neither option supplies confidential admission')
     parser.add_argument('--timeout', type=int, help='Bounded boot deadline; defaults to the selected runtime profile')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -178,6 +180,8 @@ def main():
     qemu = shutil.which('qemu-system-x86_64')
     if not qemu:
         raise ValueError('Install qemu-system-x86_64')
+    if args.accelerator == 'kvm' and not os.access('/dev/kvm', os.R_OK | os.W_OK):
+        raise ValueError('Selected KVM checks require access to /dev/kvm; no emulation fallback')
     report = json.loads((image / 'build.json').read_text())
     maximum_timeout = 3600 if report.get('runtimeProfile') == 'pytorch-cpu' else 1800
     if args.timeout is None:
@@ -203,8 +207,9 @@ def main():
     out.mkdir(parents=True)
     log = out / 'serial.log'
     # No disks, shared filesystem, NIC, monitor, QMP, GDB or incoming migration.
-    # TCG intentionally cannot provide confidential-hardware acceptance evidence.
-    command = [qemu, '-machine', 'q35,accel=tcg', '-cpu', 'max', '-smp', str(reference['cpus']), '-m', str(reference['memoryMiB']), '-nodefaults', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-serial', 'stdio', '-no-reboot', '-kernel', str(image / 'vmlinuz'), '-initrd', str(image / 'initramfs.cpio.gz'), '-append', cmdline]
+    # Ordinary TCG and KVM checks cannot provide confidential-hardware acceptance.
+    # Select exactly one accelerator; failure must not silently change the run.
+    command = [qemu, '-machine', 'q35,accel=' + args.accelerator, '-cpu', 'max', '-smp', str(reference['cpus']), '-m', str(reference['memoryMiB']), '-nodefaults', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-serial', 'stdio', '-no-reboot', '-kernel', str(image / 'vmlinuz'), '-initrd', str(image / 'initramfs.cpio.gz'), '-append', cmdline]
     capacity_refusals={}
     # The refusal VM must unpack the selected image before PID 1 can reject its
     # complete reservation. A fixed 2 GiB VM cannot even unpack larger runtime
@@ -238,7 +243,7 @@ def main():
         raise ValueError('Guest boot check failed; inspect private serial log')
     result = json.loads(lines[0])
     validate_boot_result(report, budget, result)
-    final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'image':report['outputs'], 'result':result, 'referenceVM':reference, 'earlyCapacityRefusals':capacity_refusals, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}
+    final = {'checkedAt':datetime.now(timezone.utc).isoformat(), 'qemuVersion':subprocess.check_output([qemu,'--version'],text=True).splitlines()[0], 'accelerator':args.accelerator, 'image':report['outputs'], 'result':result, 'referenceVM':reference, 'earlyCapacityRefusals':capacity_refusals, 'networkAttached':False, 'hostFilesystemsAttached':False, 'bootFirmware':'local QEMU direct kernel boot; not a confidential measured launch', 'hardwareValidated':False}
     (out / 'verification.json').write_text(json.dumps(final,indent=2)+'\n')
     print(json.dumps(final))
 
