@@ -35,6 +35,8 @@ export function releaseGetters(plan) {
   add('registrar', 'enrollment() returns (address)', a.enrollment);
   add('registrar', 'registryQuorum() returns (uint8)', c.registryQuorum);
   add('registrar', 'roundCount() returns (uint64)', 0);
+  add('registrar', 'reviewerEpoch() returns (uint64)', 0);
+  add('registrar', 'registryReviewerCount() returns (uint256)', c.registryReviewers.length);
   c.registryReviewers.forEach((address, i) => {
     add('registrar', 'registryReviewers(uint256) returns (address)', address, [i]);
     add('registrar', 'isRegistryReviewer(address) returns (bool)', true, [address]);

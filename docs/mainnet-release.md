@@ -75,8 +75,10 @@ Create a private JSON configuration with exactly these fields:
 | `registryReviewers` | Three to nine actual reviewer wallet addresses, strictly increasing by numeric address |
 | `registryQuorum` | Integer from two-thirds rounded up through the reviewer count |
 
-Reviewers are the permanent ceremony registry quorum. Wallet addresses alone do
-not establish independent people, real ceremony operations or completed review.
+Reviewers are the initial ceremony registry quorum. Later additions or removals
+need approval from the then-current quorum, recorded on-chain with a new reviewer
+epoch. Wallet addresses alone do not establish independent people, real ceremony
+operations or completed review. Disclose who controls the initial reviewer keys.
 Choose real reviewers through that process; do not fill the configuration with
 synthetic people. The claim minimum and the registry quorum serve different purposes.
 

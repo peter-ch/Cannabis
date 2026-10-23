@@ -36,7 +36,7 @@ Each venue submits one complete roster per round. Participants inspect their ent
 
 ## What the software enforces
 
-`contracts/CommunityRegistrar.sol` fixes the enrollment controller and three to nine registry-reviewer addresses with a quorum of at least two thirds. It has no owner, privileged enrollment call, history reset or identity replacement. Quorum-signed round definitions are sequential, cannot overlap submission windows, and cannot be overwritten or rescheduled. Each fixes a venue-policy Merkle root, shared presence interval and a submission deadline one to thirty days afterward.
+`contracts/CommunityRegistrar.sol` fixes the enrollment controller and starts with three to nine registry-reviewer addresses and a quorum of at least two thirds. The reviewer set can grow, shrink or be replaced only through `changeReviewers`, approved by the current quorum over the complete next set and its quorum. Each approval binds a reviewer epoch and a deadline at most thirty days away, so a completed change cannot be replayed and removed reviewers lose authority immediately. Approvals not yet submitted must be signed again by the current set. A newly added reviewer cannot also act as a witness, so avoid adding a key named as a witness in a pending round. It has no owner, privileged enrollment call, history reset or identity replacement. Quorum-signed round definitions are sequential, cannot overlap submission windows, and cannot be overwritten or rescheduled. Each fixes a venue-policy Merkle root, shared presence interval and a submission deadline one to thirty days afterward.
 
 Venues have opaque identifiers, capacity up to 256, three to nine witness addresses and a quorum of at least two thirds. The contract rejects registry-reviewer keys acting as venue witnesses. The complete-policy checker also rejects witness-key reuse across simultaneous venues. Reviewers must inspect that full policy before signing its root; a contract sees only the venue proof supplied with each roster.
 
@@ -46,7 +46,7 @@ Any relay can submit a fully approved roster without changing its contents. All 
 
 ## Prepare approvals locally
 
-`claims/community-enrollment.mjs` exports policy normalization, constructor configuration, `prepareRoundPolicy`, `verifyRoundApprovals`, `prepareVenueRoster` and `verifyVenueApprovals`. These build typed review messages and unsigned calls without network access, provider accounts or private signing keys.
+`claims/community-enrollment.mjs` exports policy normalization, constructor configuration, `prepareRoundPolicy`, `verifyRoundApprovals`, `prepareVenueRoster`, `verifyVenueApprovals`, `prepareReviewerChange` and `verifyReviewerChange`. These build typed review messages and unsigned calls without network access, provider accounts or private signing keys.
 
 The private policy uses these exact fields:
 
@@ -55,7 +55,7 @@ The private policy uses these exact fields:
 | `schema` | `cannabis.ceremony-policy.v2` |
 | `chainId` | Canonical decimal chain ID |
 | `registrar`, `enrollment` | Verified or deterministically predicted contract addresses |
-| `registryReviewers`, `registryQuorum` | The fixed registry reviewers and required threshold |
+| `registryReviewers`, `registryQuorum` | The current registry reviewers and required threshold |
 | `round` | Positive sequential round number |
 | `startsAt`, `endsAt`, `submissionsCloseAt` | UTC Unix seconds for that round |
 | `venues` | Objects with `id`, `capacity`, `quorum`, and `witnesses` |

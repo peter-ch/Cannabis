@@ -10,7 +10,7 @@ import {Group} from '@semaphore-protocol/group';
 import {generateProof} from '@semaphore-protocol/proof';
 import {compile} from '../scripts/compile.mjs';
 import {startNode,deployLocal,localSources,localIdentity,end24Months,closeProver} from '../scripts/lib.mjs';
-import {normalizeCeremonyPolicy,ceremonyConfiguration,prepareRoundPolicy,verifyRoundApprovals,prepareVenueRoster,verifyVenueApprovals,venueLeaf} from '../claims/community-enrollment.mjs';
+import {normalizeCeremonyPolicy,ceremonyConfiguration,prepareRoundPolicy,verifyRoundApprovals,prepareVenueRoster,verifyVenueApprovals,venueLeaf,prepareReviewerChange,verifyReviewerChange} from '../claims/community-enrollment.mjs';
 
 let node,provider,artifacts,policy,registrar,token,enrollment,owner,snapshot;
 const witnesses=Array.from({length:9},()=>Wallet.createRandom());
@@ -81,7 +81,7 @@ test('unknown rounds, early/late rosters and replayed venue submissions fail',as
   await reverts(registrar.registerVenue({round:99,venue:r.venue,proof:r.proof,commitments:r.commitments,personTags:r.personTags,witnessApprovals:[],registryApprovals:[]}));
   await time(policy.submissionsCloseAt+1);await reverts(submit(policy,policy.venues[1].id,[member(200)],witnesses.slice(3,5)));
 });
-test('round approval requires immutable reviewers, seven days notice and ordered nonoverlapping rounds',async()=>{
+test('round approval requires current reviewers, seven days notice and ordered nonoverlapping rounds',async()=>{
   await reset();const c=ceremonyConfiguration(policy),request=prepareRoundPolicy(policy);
   await reverts(registrar.authorizeRound(c.round,await signatures(request,reviewers.slice(0,2))));
   const future={...policy,round:2,startsAt:policy.submissionsCloseAt+10*86400,endsAt:policy.submissionsCloseAt+10*86400+3600,submissionsCloseAt:policy.submissionsCloseAt+11*86400+3600};
@@ -130,6 +130,60 @@ test('first-round capacity may be one and a witnessed singleton claims without a
   const proof=await generateProof(localIdentity(10000),group,BigInt(recipient),await token.claimScope());
   await time(Number(await token.claimsStartAt()));await (await token.claim(recipient,proof)).wait();
   assert.equal(await token.balanceOf(recipient),420n*10n**18n);await reverts(token.claim(recipient,proof));
+});
+test('current reviewer quorum adds and removes reviewers once per epoch; removed keys lose authority',async()=>{
+  await reset();const now=(await provider.getBlock('latest')).timestamp,added=Wallet.createRandom(),deadline=now+86400;
+  const sorted=keys=>[...keys].sort((a,b)=>BigInt(a.address)<BigInt(b.address)?-1:1);
+  const base={chainId:'31337',registrar:policy.registrar,epoch:0,currentReviewers:reviewers.map(x=>x.address),currentQuorum:2};
+  // Add one reviewer (4 keys, quorum 3), then remove the original first reviewer (3 keys, quorum 2).
+  const grown=sorted([...reviewers,added]),change={...base,reviewers:grown.map(x=>x.address),quorum:3,deadline};
+  const request=prepareReviewerChange(change);
+  assert.deepEqual(request.added,[added.address]);assert.deepEqual(request.removed,[]);
+  assert.equal(await registrar.reviewerChangeDigest(request.reviewers,3,deadline),request.digest);
+  const one=await signatures(request,reviewers.slice(0,1)),outsiders=await signatures(request,witnesses.slice(0,2));
+  assert.throws(()=>verifyReviewerChange(change,one,now));
+  assert.throws(()=>verifyReviewerChange(change,outsiders,now));
+  const checked=verifyReviewerChange(change,await signatures(request,reviewers.slice(0,2)),now);
+  const parsed=registrar.interface.decodeFunctionData('changeReviewers',checked.transaction.data);
+  for(const [r,q,d,a] of [[request.reviewers,3,deadline,[parsed[3][0]]],[request.reviewers,2,deadline,Array.from(parsed[3])],
+    [request.reviewers,3,deadline+1,Array.from(parsed[3])]])await reverts(registrar.changeReviewers(r,q,d,a));
+  await (await (await provider.getSigner(10)).sendTransaction(checked.transaction)).wait();
+  assert.equal(await registrar.reviewerEpoch(),1n);assert.equal(await registrar.registryQuorum(),3n);
+  assert.equal(await registrar.registryReviewerCount(),4n);assert.equal(await registrar.isRegistryReviewer(added.address),true);
+  await reverts(owner.sendTransaction(checked.transaction)); // Epoch-bound approvals cannot be replayed.
+  const removedKey=reviewers[0],next=grown.filter(x=>x!==removedKey);
+  const shrink={...base,epoch:1,currentReviewers:grown.map(x=>x.address),currentQuorum:3,reviewers:next.map(x=>x.address),quorum:2,deadline};
+  const shrinkRequest=prepareReviewerChange(shrink);assert.deepEqual(shrinkRequest.removed,[removedKey.address]);
+  const short=await signatures(shrinkRequest,grown.slice(0,2));assert.throws(()=>verifyReviewerChange(shrink,short,now));
+  await (await owner.sendTransaction(verifyReviewerChange(shrink,await signatures(shrinkRequest,grown.slice(0,3)),now).transaction)).wait();
+  assert.equal(await registrar.reviewerEpoch(),2n);assert.equal(await registrar.registryReviewerCount(),3n);
+  assert.equal(await registrar.isRegistryReviewer(removedKey.address),false);
+  // Enrollment now needs the current set: the removed reviewer's approval is refused.
+  await time(policy.endsAt+1);const r=prepareVenueRoster(policy,policy.venues[0].id,[member(300)]);
+  const ws=await signatures(r.witnessRequest,sorted(witnesses.slice(0,2)));
+  const s={round:r.round,venue:r.venue,proof:r.proof,commitments:r.commitments,personTags:r.personTags,witnessApprovals:ws};
+  const withKeys=async list=>Array.from(await signatures(r.registryRequest,sorted(list)));
+  await reverts(registrar.registerVenue({...s,registryApprovals:await withKeys([removedKey,next[0]])}));
+  await (await registrar.registerVenue({...s,registryApprovals:await withKeys(next.slice(0,2))})).wait();
+  assert.equal(await enrollment.enrolledCount(),1n);
+});
+test('reviewer changes refuse invalid sets, stale or distant deadlines and witness-unchanged no-ops',async()=>{
+  await reset();const now=(await provider.getBlock('latest')).timestamp,base={chainId:'31337',registrar:policy.registrar,epoch:0,
+    currentReviewers:reviewers.map(x=>x.address),currentQuorum:2,reviewers:reviewers.map(x=>x.address),quorum:2,deadline:now+3600};
+  assert.throws(()=>prepareReviewerChange(base));
+  assert.throws(()=>prepareReviewerChange({...base,reviewers:reviewers.slice(0,2).map(x=>x.address)}));
+  assert.throws(()=>prepareReviewerChange({...base,quorum:1}));
+  const sign=async(list,quorum,deadline)=>{
+    const digest=await registrar.reviewerChangeDigest(list,quorum,deadline);
+    return Promise.all(reviewers.map(k=>k.signingKey.sign(digest).serialized)).then(a=>a.map((sig,i)=>({sig,a:reviewers[i].address}))
+      .sort((x,y)=>BigInt(x.a)<BigInt(y.a)?-1:1).slice(0,2).map(x=>x.sig));
+  };
+  const extra=Array.from({length:3},()=>Wallet.createRandom().address).sort((a,b)=>BigInt(a)<BigInt(b)?-1:1);
+  for(const [list,quorum,deadline] of [[extra.slice(0,2),2,now+3600],[[...extra].reverse(),2,now+3600],[extra,1,now+3600],
+    [[extra[0],extra[0],extra[1]],2,now+3600],[extra,2,now-1],[extra,2,now+31*86400],[[policy.enrollment,...extra].sort((a,b)=>BigInt(a)<BigInt(b)?-1:1),3,now+3600]])
+    await reverts(registrar.changeReviewers(list,quorum,deadline,await sign(list,quorum,deadline)));
+  await (await registrar.changeReviewers(extra,2,now+3600,await sign(extra,2,now+3600))).wait();
+  assert.equal(await registrar.registryReviewers(0),extra[0]);assert.equal(await registrar.isRegistryReviewer(reviewers[0].address),false);
 });
 test('policy rejects role/key reuse, inadequate quorums, malformed schedules and repeated records',()=>{
   for(const change of [{chainId:'01'},{round:0},{endsAt:policy.startsAt+10},{extra:true}])assert.throws(()=>normalizeCeremonyPolicy({...policy,...change}));

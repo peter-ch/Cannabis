@@ -27,9 +27,13 @@ export const rosterTypes=Object.freeze({VenueRoster:[
   {name:'venueId',type:'bytes32'},{name:'commitmentsHash',type:'bytes32'},{name:'personTagsHash',type:'bytes32'}
 ]});
 export const personTypes=Object.freeze({PersonApproval:[{name:'rosterDigest',type:'bytes32'}]});
+export const reviewerChangeTypes=Object.freeze({ReviewerChange:[
+  {name:'epoch',type:'uint64'},{name:'reviewersHash',type:'bytes32'},{name:'quorum',type:'uint8'},{name:'deadline',type:'uint64'}
+]});
 export const registrarInterface=new Interface([
   'function authorizeRound((uint64 number,bytes32 policyRoot,uint64 startsAt,uint64 endsAt,uint64 submissionsCloseAt) round,bytes[] approvals)',
-  'function registerVenue((uint64 round,(bytes32 id,uint16 capacity,uint8 quorum,address[] witnesses) venue,bytes32[] proof,uint256[] commitments,bytes32[] personTags,bytes[] witnessApprovals,bytes[] registryApprovals) submission)'
+  'function registerVenue((uint64 round,(bytes32 id,uint16 capacity,uint8 quorum,address[] witnesses) venue,bytes32[] proof,uint256[] commitments,bytes32[] personTags,bytes[] witnessApprovals,bytes[] registryApprovals) submission)',
+  'function changeReviewers(address[] reviewers,uint8 quorum,uint64 deadline,bytes[] approvals)'
 ]);
 export function venueLeaf(v){return keccak256(keccak256(abi.encode(['bytes32','bytes32','uint16','uint8','bytes32'],
   [id('Cannabis venue policy v1'),v.id,v.capacity,v.quorum,keccak256(abi.encode(['address[]'],[v.witnesses]))])));}
@@ -113,4 +117,29 @@ export function verifyVenueApprovals(input,venueId,members,witnessSignatures,reg
   return {schema:'cannabis.ceremony-approval.v2',digest:request.witnessRequest.digest,witnesses:witness.map(x=>x.signer),reviewers:registry.map(x=>x.signer),
     witnessQuorumVerified:true,registryQuorumVerified:true,humanUniquenessEstablished:false,enrolled:false,sent:false,
     transaction:transaction(policy,'registerVenue',[submission])};
+}
+
+// Reviewer additions/removals: the current quorum approves the complete next set for one epoch.
+function reviewerChange(input){
+  exact(input,['chainId','registrar','epoch','currentReviewers','currentQuorum','reviewers','quorum','deadline']);
+  if(typeof input.chainId!=='string'||!(/^[1-9][0-9]{0,77}$/).test(input.chainId))throw Error('Invalid reviewer change');
+  const current=keys(input.currentReviewers,input.currentQuorum),reviewers=keys(input.reviewers,input.quorum);
+  integer(input.epoch,0,Number.MAX_SAFE_INTEGER);integer(input.deadline,1,Number.MAX_SAFE_INTEGER);
+  if(current.join()===reviewers.join()&&input.currentQuorum===input.quorum)throw Error('Reviewer change does not change anything');
+  const p={chainId:input.chainId,registrar:address(input.registrar)};
+  const domain={name:'Cannabis community registrar',version:'1',chainId:p.chainId,verifyingContract:p.registrar};
+  const message={epoch:input.epoch,reviewersHash:keccak256(abi.encode(['address[]'],[reviewers])),quorum:input.quorum,deadline:input.deadline};
+  return {p,current,reviewers,quorum:input.quorum,deadline:input.deadline,request:typed(domain,reviewerChangeTypes,message)};
+}
+export function prepareReviewerChange(input){
+  const c=reviewerChange(input);
+  return {schema:'cannabis.reviewer-change-request.v1',reviewers:c.reviewers,quorum:c.quorum,
+    added:c.reviewers.filter(a=>!c.current.includes(a)),removed:c.current.filter(a=>!c.reviewers.includes(a)),...c.request};
+}
+export function verifyReviewerChange(input,signatures,now=Math.floor(Date.now()/1000)){
+  const c=reviewerChange(input);integer(now,1,Number.MAX_SAFE_INTEGER);
+  if(c.deadline<now||c.deadline>now+30*86400)throw Error('Reviewer change deadline must be within thirty days');
+  const signed=approvals(c.request,signatures,c.current,input.currentQuorum);
+  return {schema:'cannabis.reviewer-change.v1',digest:c.request.digest,signatureQuorumVerified:true,sent:false,
+    transaction:transaction(c.p,'changeReviewers',[c.reviewers,c.quorum,c.deadline,signed.map(x=>x.signature)])};
 }
