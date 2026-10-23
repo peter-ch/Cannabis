@@ -18,11 +18,14 @@ export async function dependencyRPC(mutate = () => {}, chainId = '8453') {
       if (body.method === 'eth_chainId') result = '0x' + BigInt(chainId).toString(16);
       else if (body.method === 'eth_getBlockByNumber') result = structuredClone(['finalized', '0x64'].includes(body.params[0]) ? anchor : head);
       else if (body.method === 'eth_getCode') result = codes[Object.keys(addresses).find(name => addresses[name].toLowerCase() === body.params[0].toLowerCase())] ?? '0x';
+      else if (body.method === 'eth_getTransactionCount') result = '0x0';
       else if (body.method === 'eth_call') result = abi.encodeFunctionResult('verifier', [addresses.verifier]);
       else throw Error('Unexpected fixture RPC method');
       const payload = { jsonrpc: '2.0', id: body.id, result };
       await mutate(body, payload, { requests, anchor, head });
-      response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(payload));
+      // In-process compilation can block this fixture's event loop past an idle
+      // socket timeout. Keep each observation independent of connection pooling.
+      response.writeHead(200, { 'content-type': 'application/json', connection: 'close' }); response.end(JSON.stringify(payload));
     } catch { response.writeHead(500); response.end(); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

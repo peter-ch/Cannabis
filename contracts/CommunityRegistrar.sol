@@ -13,14 +13,17 @@ interface ICommunityEnrollment {
 /// @notice Recurring Cannabis ceremonies with a permanent append-only registry.
 /// @dev Venue and registry quorums attest human checks; signatures/tags do not prove people.
 /// No founder bypass, identity replacement, registry reset or privileged token mint.
+/// The registry reviewer set changes only by a quorum of the current reviewers.
 contract CommunityRegistrar is EIP712 {
     uint256 public constant FIELD = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
     bytes32 public constant ROUND_TYPEHASH = keccak256("RoundPolicy(uint64 number,bytes32 policyRoot,uint64 startsAt,uint64 endsAt,uint64 submissionsCloseAt)");
     bytes32 public constant ROSTER_TYPEHASH = keccak256("VenueRoster(uint64 round,bytes32 policyRoot,address enrollment,uint64 startsAt,uint64 endsAt,uint64 submissionsCloseAt,bytes32 venueId,bytes32 commitmentsHash,bytes32 personTagsHash)");
     bytes32 public constant PERSON_TYPEHASH = keccak256("PersonApproval(bytes32 rosterDigest)");
     bytes32 public constant VENUE_TYPEHASH = keccak256("Cannabis venue policy v1");
+    bytes32 public constant REVIEWERS_TYPEHASH = keccak256("ReviewerChange(uint64 epoch,bytes32 reviewersHash,uint8 quorum,uint64 deadline)");
     ICommunityEnrollment public immutable enrollment;
-    uint8 public immutable registryQuorum;
+    uint8 public registryQuorum;
+    uint64 public reviewerEpoch;
     address[] public registryReviewers;
     mapping(address => bool) public isRegistryReviewer;
     uint64 public roundCount;
@@ -42,21 +45,48 @@ contract CommunityRegistrar is EIP712 {
     error InvalidApproval();
     event RoundAuthorized(uint64 indexed number, bytes32 policyRoot, uint64 startsAt, uint64 endsAt, uint64 submissionsCloseAt);
     event VenueEnrolled(uint64 indexed round, bytes32 indexed venueId, bytes32 commitmentsHash, bytes32 personTagsHash, uint256 count);
+    event ReviewersChanged(uint64 indexed epoch, bytes32 reviewersHash, uint8 quorum, uint256 count);
 
     constructor(address expectedEnrollment, address[] memory reviewers, uint8 quorum)
         EIP712("Cannabis community registrar", "1")
     {
-        if (expectedEnrollment == address(0) || reviewers.length < 3 || reviewers.length > 9 ||
+        if (expectedEnrollment == address(0)) revert InvalidPolicy();
+        enrollment = ICommunityEnrollment(expectedEnrollment);
+        _setReviewers(reviewers, quorum);
+    }
+
+    function registryReviewerCount() external view returns (uint256) {
+        return registryReviewers.length;
+    }
+
+    function reviewerChangeDigest(address[] calldata reviewers, uint8 quorum, uint64 deadline) public view returns (bytes32) {
+        return _hashTypedDataV4(keccak256(abi.encode(REVIEWERS_TYPEHASH, reviewerEpoch,
+            keccak256(abi.encode(reviewers)), quorum, deadline)));
+    }
+
+    /// @notice Replace the reviewer set (adding and/or removing reviewers) with approval of the current quorum.
+    /// Each approval is bound to the current epoch, so a completed change cannot be replayed.
+    function changeReviewers(address[] calldata reviewers, uint8 quorum, uint64 deadline, bytes[] calldata approvals) external {
+        if (deadline < block.timestamp || deadline > block.timestamp + 30 days) revert InvalidApproval();
+        _registryApproval(reviewerChangeDigest(reviewers, quorum, deadline), approvals);
+        for (uint256 i; i < registryReviewers.length; ++i) isRegistryReviewer[registryReviewers[i]] = false;
+        delete registryReviewers;
+        ++reviewerEpoch;
+        _setReviewers(reviewers, quorum);
+    }
+
+    function _setReviewers(address[] memory reviewers, uint8 quorum) private {
+        if (reviewers.length < 3 || reviewers.length > 9 ||
             quorum < (2 * reviewers.length + 2) / 3 || quorum > reviewers.length) revert InvalidPolicy();
         address previous;
         for (uint256 i; i < reviewers.length; ++i) {
-            if (reviewers[i] <= previous) revert InvalidPolicy();
+            if (reviewers[i] <= previous || reviewers[i] == address(enrollment)) revert InvalidPolicy();
             previous = reviewers[i];
             isRegistryReviewer[previous] = true;
         }
-        enrollment = ICommunityEnrollment(expectedEnrollment);
         registryReviewers = reviewers;
         registryQuorum = quorum;
+        emit ReviewersChanged(reviewerEpoch, keccak256(abi.encode(reviewers)), quorum, reviewers.length);
     }
 
     function roundDigest(Round calldata round) public view returns (bytes32) {

@@ -14,8 +14,8 @@ As of 19 October 2026, the status is **Preparing mainnet launch**. Ethereum main
 | Enrollment | No recruitment quota for deployment; initial claim minimum is configurable (default 1); later founder increases are bounded by enrolled membership, with small-group privacy disclosed |
 | Common opening | Not announced; the release tool requires at least seven days' notice |
 | Independent security, privacy and applicable release review | Outstanding |
-| Protected paid computing | Runtime isolation, real hardware admission and end-to-end paid acceptance outstanding |
-| Decentralized compute coordination | Permissionless market contract and direct chain readers implemented; protected guest integration, peer transport and independent review outstanding |
+| Protected paid computing | Runtime software checkpoint completed; actual confidential hardware, protected operation, independent review and genuine paid acceptance outstanding |
+| Decentralized compute coordination | On-chain discovery/booking/settlement, direct peer transport and requester recovery implemented; actual operation and independent review outstanding |
 
 The [worker console](worker-console.md) displays actual local machine observations and these admission requirements. Its paid-worker control is unavailable. Canonical addresses, the opening time and operational claims will be published only after their evidence is verified. Source checks and automated tests do not replace independent review.
 
@@ -23,7 +23,10 @@ The [worker console](worker-console.md) displays actual local machine observatio
 
 The preparation command checks reviewed dependency pins against finalized and current canonical chain state, then exports unsigned deployment data, constructor arguments, exact dates, allocations, dependency observations, ABI and complete compiler input. It does not load a key or broadcast a transaction. See [dependency verification](dependency-verification.md) for the source checks, configuration format and evidence limits.
 
-This tool prepares the token creation transaction, not the complete computing network. The final release must also review and pin both payment escrows and the [shared market contract](decentralized-compute.md), prove operation without a mandatory founder service and complete genuine protected paid acceptance. A token-only draft does not satisfy that release.
+`prepare:launch` prepares the token creation transaction. Use the complete network
+package below to review the registrar, both payment escrows and the
+[shared market contract](decentralized-compute.md) together. Actual protected paid
+acceptance and operation without a mandatory founder service remain release requirements.
 
 ~~~sh
 npm run prepare:launch -- --founder YOUR_PUBLIC_ADDRESS --launch YYYY-MM-DDTHH:MM:SSZ --network ethereum --minimum-claim-members 1 --semaphore VERIFIED_SEMAPHORE_ADDRESS --registrar REVIEWED_REGISTRAR_ADDRESS --semaphore-code-hash VERIFIED_RUNTIME_CODE_HASH --dependency-config config/ethereum-dependencies.json --out ../private/launch-review
@@ -38,3 +41,131 @@ The constructor creates immutable founder vesting and an append-only enrollment 
 Before signing, check chain ID, complete creation-data hash, founder address, initial claim minimum, bounded threshold authority, dates, Semaphore implementation/verifier, registrar controls and expected fee. After deployment, verify source and constructor values on the explorer, publish canonical addresses, validate the founder allocation, and test real ceremony enrollment and claims.
 
 Earlier proof-of-work packages are superseded and must not be deployed.
+
+## Complete network package
+
+`prepare:network-release` exports five unsigned creation transactions for Ethereum
+mainnet, the selected release target. It introduces no deployment factory or
+administrator. The sender uses their own wallet to review and sign each transaction.
+
+| Order | Contract | Bound relationships |
+| --- | --- | --- |
+| 1 | CommunityRegistrar | Predicted enrollment address, sorted reviewer wallets and reviewed quorum |
+| 2 | Cannabis | Registrar, Semaphore, founder, opening/vesting dates and initial claim minimum |
+| 3 | Native ETH ComputeEscrow | Native asset and fixed founder fee recipient |
+| 4 | Cannabis ComputeEscrow | Cannabis token and the same fee recipient |
+| 5 | ComputeMarket | Both immutable escrow addresses |
+
+Cannabis creates the enrollment controller and founder vesting contract itself.
+Their predicted addresses are included. The registrar can therefore bind the
+future enrollment address before the token exists. The package records exact
+consecutive sender nonces, constructor arguments, creation data and hashes for
+every transaction, plus compiler input and all six contract artifacts.
+
+Create a private JSON configuration with exactly these fields:
+
+| Field | Value |
+| --- | --- |
+| `schema` | `cannabis.release-configuration.v1` |
+| `chainId` | String `"1"` |
+| `deployer`, `founder` | Owner-selected wallet addresses; they may be the same |
+| `firstNonce` | Canonical decimal string for the sender's next transaction nonce |
+| `launch` | Explicit UTC opening timestamp, with at least seven days' notice |
+| `minimumClaimMembers` | Explicit integer, normally `1`; other reviewed values are supported |
+| `registryReviewers` | Three to nine actual reviewer wallet addresses, strictly increasing by numeric address |
+| `registryQuorum` | Integer from two-thirds rounded up through the reviewer count |
+
+Reviewers are the initial ceremony registry quorum. Later additions or removals
+need approval from the then-current quorum, recorded on-chain with a new reviewer
+epoch. Wallet addresses alone do not establish independent people, real ceremony
+operations or completed review. Disclose who controls the initial reviewer keys.
+Choose real reviewers through that process; do not fill the configuration with
+synthetic people. The claim minimum and the registry quorum serve different purposes.
+
+~~~sh
+npm run prepare:network-release -- --config ../private/release-configuration.json --dependency-config ../private/release-dependencies.json --out ../private/network-release-review
+~~~
+
+The output directory must be new, outside the source directory, with an existing
+parent. The separate dependency configuration uses the format from
+[dependency verification](dependency-verification.md). Its RPC credentials are
+not included in the exported package.
+
+Preparation checks the dependency implementations and links against finalized
+and current canonical state. It then checks the same anchors for an undelegated
+EOA sender, the exact nonce, and empty code/zero nonce at all seven predicted
+addresses. A different pending nonce, occupied target, changed canonical block
+or advancing head during the observation refuses preparation. Retry against
+fresh state after resolving the cause. These observations do not reserve addresses.
+
+`network-release.json` is written last. Its file hashes bind compiler input and
+artifacts; `packageSHA256` hashes the UTF-8 JSON encoding of `{ plan, files }`,
+where `plan` is the manifest without `preparedAt`, `files`, `packageSHA256`,
+`dependencyObservation` and `stateObservation`, and `files` is its file-hash map.
+Preserve JSON property order when reproducing that commitment.
+
+The package is an unsigned review draft. It contains no gas estimate and does
+not authorize a transaction. Use the [complete Ethereum release quote](deployment-fees.md#complete-ethereum-release)
+with its independently reviewed package hash to simulate all five creations in
+order and check their combined fee budget. The older single-creation checker
+does not cover this sequence. Subsequent operational transactions still require
+separate cost review before signing.
+
+Recheck nonce, dependency state and exact transaction data before each signature.
+Require successful confirmed receipts in order, and verify each sender, nonce,
+creation address, runtime, constructor state and cross-contract link. An
+intervening sender transaction or failed creation invalidates the remaining
+predictions; stop and prepare a new reviewed plan. Never alter a nonce in the
+exported data to continue. Publish canonical addresses and live status only after
+the complete release and operating evidence have been verified.
+
+## Verify the deployed network
+
+After all five owner-signed creation transactions are finalized, retain the
+independently reviewed package hash and their hashes in deployment order.
+The read-only `verify:network-release` tool checks the complete release:
+
+~~~json
+{
+  "rpc": "https://YOUR_TRUSTED_ETHEREUM_RPC",
+  "manifestFile": "/absolute/protected/path/network-release.json",
+  "expectedPackageSHA256": "YOUR_SEPARATELY_REVIEWED_64_CHARACTER_SHA256",
+  "transactionHashes": [
+    "0xREGISTRAR_TRANSACTION_HASH",
+    "0xTOKEN_TRANSACTION_HASH",
+    "0xNATIVE_ESCROW_TRANSACTION_HASH",
+    "0xCANNABIS_ESCROW_TRANSACTION_HASH",
+    "0xMARKET_TRANSACTION_HASH"
+  ]
+}
+~~~
+
+~~~sh
+npm run verify:network-release -- --config /protected/deployed-config.json --out /protected/deployed-verification.json
+~~~
+
+The verifier reconstructs the unsigned package, recompiles its complete inline
+source using the exact compiler, and checks every canonical transaction and
+successful receipt. Sender, consecutive nonce, creation data, zero value,
+predicted address, block membership, ordering, type-2 fees and finalized inclusion
+must agree. It verifies the founder mint into the fixed vesting contract.
+
+All seven deployed runtime templates must match outside the compiler's declared
+immutable slots. Repeated immutable values must agree; fixed contract links,
+allocation constants, vesting dates, recipient and fee fields, claim scope and
+Semaphore group control are read from finalized state. These templates follow
+the [Solidity compiler output specification](https://docs.soliditylang.org/en/latest/using-the-compiler.html#output-description).
+The original creation data must also reproduce from the packaged compiler input.
+
+Normal later activity can change balances, enrollment, claim totals and escrow
+liabilities. The verifier checks the origin and fixed contract configuration
+without requiring those mutable values to remain at their initial zeroes.
+Historical package parsing is allowed here; it does not establish that the
+opening notice was published. Preparation and fee quoting retain their current
+seven-day notice requirement.
+
+The output records the selected RPC view and actual deployment network fees.
+It does not independently prove consensus, supply an audit, validate people,
+admit confidential hardware or establish paid service. Successful output retains
+`liveStatusAuthorized: false` and `sent: false`. Complete the separate operational
+and review requirements before publishing a live announcement.
